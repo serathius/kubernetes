@@ -39,6 +39,8 @@ import (
 	kubeletconfigvalidation "k8s.io/kubernetes/pkg/kubelet/apis/config/validation"
 	"k8s.io/kubernetes/pkg/kubelet/config"
 	utilflag "k8s.io/kubernetes/pkg/util/flag"
+
+	"k8s.io/kubernetes/pkg/kubelet/kuberuntime"
 )
 
 const defaultRootDir = "/var/lib/kubelet"
@@ -304,6 +306,11 @@ func (f *KubeletFlags) AddFlags(mainfs *pflag.FlagSet) {
 
 	fs.StringVar(&f.RootDirectory, "root-dir", f.RootDirectory, "Directory path for managing kubelet files (volume mounts,etc).")
 	fs.BoolVar(&f.SeccompDefault, "seccomp-default", f.SeccompDefault, "Enable the use of `RuntimeDefault` as the default seccomp profile for all workloads.")
+
+	// GKE FLAGS
+	bindablePodSysctls := cliflag.ConfigurationMap(kuberuntime.PodSysctls)
+	fs.Var(&bindablePodSysctls, "pod-sysctls", "List of Linux kernel parameters (sysctls) that will be applied to the pods running on this node. Must be specified as key=value pairs separated by ','.")
+	// END GKE FLAGS
 
 	// EXPERIMENTAL FLAGS
 	bindableNodeLabels := cliflag.ConfigurationMap(f.NodeLabels)
