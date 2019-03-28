@@ -39,6 +39,8 @@ import (
 	kubeletconfigvalidation "k8s.io/kubernetes/pkg/kubelet/apis/config/validation"
 	"k8s.io/kubernetes/pkg/kubelet/kubeletconfig"
 	utilflag "k8s.io/kubernetes/pkg/util/flag"
+
+	"k8s.io/kubernetes/pkg/kubelet/kuberuntime"
 )
 
 const defaultRootDir = "/var/lib/kubelet"
@@ -301,6 +303,11 @@ func (f *KubeletFlags) AddFlags(mainfs *pflag.FlagSet) {
 
 	bindableNodeLabels := cliflag.ConfigurationMap(f.NodeLabels)
 	fs.Var(&bindableNodeLabels, "node-labels", fmt.Sprintf("Labels to add when registering the node in the cluster.  Labels must be key=value pairs separated by ','. Labels in the 'kubernetes.io' namespace must begin with an allowed prefix (%s) or be in the specifically allowed set (%s)", strings.Join(kubeletapis.KubeletLabelNamespaces(), ", "), strings.Join(kubeletapis.KubeletLabels(), ", ")))
+
+	// GKE FLAGS
+	bindablePodSysctls := cliflag.ConfigurationMap(kuberuntime.PodSysctls)
+	fs.Var(&bindablePodSysctls, "pod-sysctls", "List of Linux kernel parameters (sysctls) that will be applied to the pods running on this node. Must be specified as key=value pairs separated by ','.")
+	// END GKE FLAGS
 
 	// EXPERIMENTAL FLAGS
 	fs.StringVar(&f.LockFilePath, "lock-file", f.LockFilePath, "<Warning: Alpha feature> The path to file for kubelet to use as a lock file.")
