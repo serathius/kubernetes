@@ -140,6 +140,12 @@ function config-ip-firewall {
   # routing. This enables the use of 127/8 for local routing purposes.
   sysctl -w net.ipv4.conf.all.route_localnet=1
 
+  # Per recommendation by COS team, add this to master VM to reduce SSH
+  # flakiness (context: http://b/174052325#comment178).
+  if [[ "${KUBERNETES_MASTER:-}" == "true" ]]; then
+    sysctl -w net.netfilter.nf_conntrack_tcp_be_liberal=1
+  fi
+
   # The GCI image has host firewall which drop most inbound/forwarded packets.
   # We need to add rules to accept all TCP/UDP/ICMP/SCTP packets.
   if iptables -w -L INPUT | grep "Chain INPUT (policy DROP)" > /dev/null; then
@@ -155,6 +161,15 @@ function config-ip-firewall {
     iptables -w -A FORWARD -w -p UDP -j ACCEPT
     iptables -w -A FORWARD -w -p ICMP -j ACCEPT
     iptables -w -A FORWARD -w -p SCTP -j ACCEPT
+  fi
+
+  # BLOCK_GCE_METADATA_SERVER blocks GCE metadata server access from all
+  # non-hostnetwork pods.
+  if [[ "${BLOCK_GCE_METADATA_SERVER:-}" == "true" ]]; then
+    # Calico adds iptables rules that accepts all traffic. Make it a PREROUTING
+    # rule to get earlier in the chain and ensure the metadata server is
+    # blocked.
+    iptables -t mangle -A PREROUTING -d 169.254.169.254/32 -j DROP
   fi
 
   # Flush iptables nat table
@@ -183,7 +198,7 @@ function config-ip-firewall {
   # node because we don't expect the daemonset to run on this node.
   if [[ "${ENABLE_METADATA_CONCEALMENT:-}" == "true" ]] && [[ ! "${METADATA_CONCEALMENT_NO_FIREWALL:-}" == "true" ]]; then
     echo "Add rule for metadata concealment"
-    ip addr add dev lo 169.254.169.252/32
+    ip addr add dev lo 169.254.169.252/32 scope host
     iptables -w -t nat -I PREROUTING -p tcp ! -i eth0 -d "${METADATA_SERVER_IP}" --dport 80 -m comment --comment "metadata-concealment: bridge traffic to metadata server goes to metadata proxy" -j DNAT --to-destination 169.254.169.252:988
     iptables -w -t nat -I PREROUTING -p tcp ! -i eth0 -d "${METADATA_SERVER_IP}" --dport 8080 -m comment --comment "metadata-concealment: bridge traffic to metadata server goes to metadata proxy" -j DNAT --to-destination 169.254.169.252:987
   fi
