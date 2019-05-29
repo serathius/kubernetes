@@ -1521,6 +1521,18 @@ EOF
 	fi
 }
 
+function detect_mtu {
+  local MTU=1460
+  if [[ "${DETECT_MTU:-}" == "true" ]];then
+    local default_nic=$(ip route get 8.8.8.8 | sed -nr "s/.*dev ([^\ ]+).*/\1/p")
+    if [ -f "/sys/class/net/$default_nic/mtu" ]; then
+      MTU=$(cat /sys/class/net/$default_nic/mtu)
+    fi
+  fi
+  echo $MTU
+
+}
+
 function set_docker_options_non_ubuntu() {
   # set docker options mtu and storage driver for non-ubuntu
   # as it is default for ubuntu
@@ -1529,7 +1541,8 @@ function set_docker_options_non_ubuntu() {
       return
    fi
 
-   addockeropt "\"mtu\": 1460,"
+   local MTU="$(detect_mtu)"
+   addockeropt "\"mtu\": ${MTU},"
    addockeropt "\"storage-driver\": \"overlay2\","
 
    echo "setting live restore"
@@ -1633,8 +1646,16 @@ function start-kubelet {
   echo "Using kubelet binary at ${kubelet_bin}"
 
   local -r kubelet_env_file="/etc/default/kubelet"
+
+  local kubelet_cgroup_driver=""
+  # Default to systemd cgroup driver for cgroupv2
+  # TODO(b/203597173): Consider if this needs to be disabled for gvisor
+  if [[ "${CGROUP_CONFIG-}" == "cgroup2fs" ]]; then
+    kubelet_cgroup_driver="--cgroup-driver=systemd"
+  fi
+
   # POD_SYSCTLS is set in function configure-node-sysctls.
-  local kubelet_opts="${KUBELET_ARGS} ${KUBELET_CONFIG_FILE_ARG:-} --pod-sysctls='${POD_SYSCTLS:-}'"
+  local kubelet_opts="${KUBELET_ARGS} ${KUBELET_CONFIG_FILE_ARG:-} --pod-sysctls='${POD_SYSCTLS:-}' ${kubelet_cgroup_driver:-}"
   echo "KUBELET_OPTS=\"${kubelet_opts}\"" > "${kubelet_env_file}"
   echo "KUBE_COVERAGE_FILE=\"/var/log/kubelet.cov\"" >> "${kubelet_env_file}"
 
@@ -2914,6 +2935,11 @@ function override-kubectl {
     fi
 }
 
+function detect-cgroup-config {
+  CGROUP_CONFIG=$(stat -fc %T /sys/fs/cgroup/)
+  echo "Detected cgroup config as ${CGROUP_CONFIG}"
+}
+
 function override-pv-recycler {
   if [[ -z "${PV_RECYCLER_OVERRIDE_TEMPLATE:-}" ]]; then
     echo "PV_RECYCLER_OVERRIDE_TEMPLATE is not set"
@@ -2968,6 +2994,7 @@ function setup-containerd {
   local config_path="${CONTAINERD_CONFIG_PATH:-"/etc/containerd/config.toml"}"
   mkdir -p "$(dirname "${config_path}")"
   local cni_template_path="${KUBE_HOME}/cni.template"
+  local MTU="$(detect_mtu)"
   cat > "${cni_template_path}" <<EOF
 {
   "name": "k8s-pod-network",
@@ -2975,7 +3002,7 @@ function setup-containerd {
   "plugins": [
     {
       "type": "ptp",
-      "mtu": 1460,
+      "mtu": ${MTU},
       "ipam": {
         "type": "host-local",
         "subnet": "{{.PodCIDR}}",
@@ -3337,6 +3364,7 @@ function main() {
     fi
   fi
 
+  log-wrap 'DetectCgroupConfig' detect-cgroup-config
   log-wrap 'OverrideKubectl' override-kubectl
   container_runtime="${CONTAINER_RUNTIME:-docker}"
   # Run the containerized mounter once to pre-cache the container image.
@@ -3351,7 +3379,11 @@ function main() {
       # (b/174523058) stopping docker breaks COS toolbox and some other scripts
       # log-wrap 'StopDocker' systemctl stop docker || echo "unable to stop docker"
     fi
-    log-wrap 'SetupContainerd' setup-containerd
+    if [[ -e "${KUBE_HOME}/bin/gke-internal-configure-helper.sh" ]]; then
+      log-wrap 'GKESetupContainerd' gke-setup-containerd
+    else
+      log-wrap 'SetupContainerd' setup-containerd
+    fi
   fi
 
   log-start 'SetupKubePodLogReadersGroupDir'

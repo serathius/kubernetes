@@ -235,3 +235,245 @@ function configure-node-sysctls {
     /lib/systemd/systemd-sysctl
   fi
 }
+
+function detect_mtu {
+  local MTU=1460
+  if [[ "${DETECT_MTU:-}" == "true" ]];then
+    local default_nic=$(ip route get 8.8.8.8 | sed -nr "s/.*dev ([^\ ]+).*/\1/p")
+    if [ -f "/sys/class/net/$default_nic/mtu" ]; then
+      MTU=$(cat /sys/class/net/$default_nic/mtu)
+    fi
+  fi
+  echo $MTU
+
+}
+
+function _gke_cni_template {
+  local MTU="$(detect_mtu)"
+  cat <<EOF
+{
+  "name": "k8s-pod-network",
+  "cniVersion": "0.3.1",
+  "plugins": [
+    {
+      "type": "ptp",
+      "mtu": ${MTU},
+      "ipam": {
+        "type": "host-local",
+        "subnet": "{{.PodCIDR}}",
+        "routes": [
+          {
+            "dst": "0.0.0.0/0"
+          }
+        ]
+      }
+    },
+    {
+      "type": "portmap",
+      "capabilities": {
+        "portMappings": true
+      }
+    }
+  ]
+}
+EOF
+}
+
+function gke-setup-containerd {
+  local -r CONTAINERD_HOME="/home/containerd"
+  mkdir -p "${CONTAINERD_HOME}"
+
+  echo "Generating containerd config"
+  local -r config_path="${CONTAINERD_CONFIG_PATH:-"/etc/containerd/config.toml"}"
+  mkdir -p "$(dirname "${config_path}")"
+  local cni_template_path="${CONTAINERD_HOME}/cni.template"
+  _gke_cni_template > "${cni_template_path}"
+  if [[ "${KUBERNETES_MASTER:-}" != "true" ]]; then
+    if [[ "${NETWORK_POLICY_PROVIDER:-"none"}" != "none" || "${ENABLE_NETD:-}" == "true" ]]; then
+      # Use Kubernetes cni daemonset on node if network policy provider is specified
+      # or netd is enabled.
+      cni_template_path=""
+    fi
+  fi
+  # Use systemd cgroup driver when running on cgroupv2
+  local systemdCgroup="false"
+  if [[ "${CGROUP_CONFIG-}" == "cgroup2fs" ]]; then
+    systemdCgroup="true"
+  fi
+  # Reuse docker group for containerd.
+  local -r containerd_gid="$(cat /etc/group | grep ^docker: | cut -d: -f 3)"
+  cat > "${config_path}" <<EOF
+version = 2
+required_plugins = ["io.containerd.grpc.v1.cri"]
+# Kubernetes doesn't use containerd restart manager.
+disabled_plugins = ["io.containerd.internal.v1.restart"]
+oom_score = -999
+
+[debug]
+  level = "${CONTAINERD_LOG_LEVEL:-"info"}"
+
+[grpc]
+  gid = ${containerd_gid}
+
+[plugins."io.containerd.grpc.v1.cri"]
+  stream_server_address = "127.0.0.1"
+  max_container_log_line_size = ${CONTAINERD_MAX_CONTAINER_LOG_LINE:-262144}
+[plugins."io.containerd.grpc.v1.cri".cni]
+  bin_dir = "${KUBE_HOME}/bin"
+  conf_dir = "/etc/cni/net.d"
+  conf_template = "${cni_template_path}"
+[plugins."io.containerd.grpc.v1.cri".registry.mirrors."docker.io"]
+  endpoint = ["https://mirror.gcr.io","https://registry-1.docker.io"]
+[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
+  SystemdCgroup = ${systemdCgroup}
+EOF
+
+  if [[ "${ENABLE_GCFS:-}" == "true" ]]; then
+    gke-setup-gcfs
+    cat >> "${config_path}" <<EOF
+[plugins."io.containerd.grpc.v1.cri".containerd]
+  default_runtime_name = "runc"
+  snapshotter = "gcfs"
+  disable_snapshot_annotations = false
+[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
+  runtime_type = "io.containerd.runc.v2"
+[proxy_plugins]
+  [proxy_plugins.gcfs]
+    type = "snapshot"
+    address = "/run/containerd-gcfs-grpc/containerd-gcfs-grpc.sock"
+EOF
+  else
+  cat >> "${config_path}" <<EOF
+[plugins."io.containerd.grpc.v1.cri".containerd]
+  default_runtime_name = "runc"
+[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
+  runtime_type = "io.containerd.runc.v2"
+EOF
+  fi
+
+  local -r sandbox_root="${CONTAINERD_SANDBOX_RUNTIME_ROOT:-"/run/containerd/runsc"}"
+  # shim_config_path is the path of gvisor-containerd-shim config file.
+  local -r shim_config_path="${GVISOR_CONTAINERD_SHIM_CONFIG_PATH:-"${sandbox_root}/config.toml"}"
+
+  if [[ -n "${CONTAINERD_SANDBOX_RUNTIME_HANDLER:-}" ]]; then
+    # Setup opt directory for containerd plugins.
+    local -r containerd_opt_path="${CONTAINERD_HOME}/opt/containerd"
+    mkdir -p "${containerd_opt_path}"
+    mkdir -p "${containerd_opt_path}/bin"
+    mkdir -p "${containerd_opt_path}/lib"
+
+    local -r containerd_sandbox_pod_annotations=${CONTAINERD_SANDBOX_POD_ANNOTATIONS:-'"dev.gvisor.*"'}
+    cat >> "${config_path}" <<EOF
+[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.${CONTAINERD_SANDBOX_RUNTIME_HANDLER}]
+  runtime_type = "${CONTAINERD_SANDBOX_RUNTIME_TYPE:-}"
+  pod_annotations = [ ${containerd_sandbox_pod_annotations} ]
+[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.${CONTAINERD_SANDBOX_RUNTIME_HANDLER}.options]
+  TypeUrl = "io.containerd.runsc.v1.options"
+  ConfigPath = "${shim_config_path}"
+
+[plugins."io.containerd.internal.v1.opt"]
+  path = "${containerd_opt_path}"
+EOF
+  fi
+  chmod 644 "${config_path}"
+
+  # Generate gvisor containerd shim config
+  if [[ -n "${GVISOR_CONTAINERD_SHIM_PATH:-}" ]]; then
+    cp "${GVISOR_CONTAINERD_SHIM_PATH}" "${containerd_opt_path}/bin"
+    # gvisor_platform is the platform to use for gvisor.
+    local -r gvisor_platform="${GVISOR_PLATFORM:-"ptrace"}"
+    local -r gvisor_net_raw="${GVISOR_NET_RAW:-"true"}"
+    mkdir -p "${sandbox_root}"
+    cat > "${shim_config_path}" <<EOF
+binary_name = "${CONTAINERD_SANDBOX_RUNTIME_ENGINE:-}"
+root = "${sandbox_root}"
+[runsc_config]
+  platform = "${gvisor_platform}"
+  net-raw = "${gvisor_net_raw}"
+EOF
+    if [[ "${gvisor_platform}" == "xemu" ]]; then
+      if [[ -f "${CONTAINERD_HOME}/xemu.ko.der" ]]; then
+        keyctl padd asymmetric xemu_key \
+          "%keyring:.secondary_trusted_keys" < "${CONTAINERD_HOME}/xemu.ko.der"
+      fi
+      insmod "${CONTAINERD_HOME}/xemu.ko"
+    fi
+  fi
+
+  # Mount /home/containerd as readonly to avoid security issues.
+  mount --bind -o ro,exec "${CONTAINERD_HOME}" "${CONTAINERD_HOME}"
+
+  echo "Restart containerd to load the config change"
+  systemctl restart containerd
+}
+
+# Set up GCFS daemons.
+function gke-setup-gcfs {
+  # Write the systemd service file for GCFS FUSE client.
+  local -r gcfsd_mnt_dir="/run/gcfsd/mnt"
+  local -r layer_cache_dir="/var/lib/containerd/io.containerd.snapshotter.v1.gcfs/snapshotter/layers"
+  local -r images_in_use_db_path="/var/lib/containerd/io.containerd.snapshotter.v1.gcfs/gcfsd/images_in_use.db"
+
+  local each_cache_size
+  local gcfs_cache_size_flag
+  if [[ -z "${GCFSD_CACHE_SIZE_MIB}" ]]; then
+    gcfs_cache_size_flag=""
+  else
+    # GCFSD maintains two caches, each being allocated half of GCFSD_CACHE_SIZE_MIB
+    each_cache_size=$((${GCFSD_CACHE_SIZE_MIB} / 2))
+    gcfs_cache_size_flag="--max_content_cache_size_mb=${each_cache_size} --max_large_files_cache_size_mb=${each_cache_size}"
+  fi
+
+  local gcfs_layer_caching_flag=""
+  if [[ "${ENABLE_GCFS_LAYER_CACHING:-false}" == "true" ]]; then
+    gcfs_layer_caching_flag="--layer_cache_dir=${layer_cache_dir}"
+  fi
+
+
+  cat <<EOF >/etc/systemd/system/gcfsd.service
+# Systemd configuration for Google Container File System service
+[Unit]
+Description=Google Container File System service
+After=network.target
+[Service]
+Type=simple
+LimitNOFILE=infinity
+# More aggressive Go garbage collection setting (go/fast/19).
+Environment=GOGC=10
+ExecStartPre=-/bin/umount -f ${gcfsd_mnt_dir}
+ExecStartPre=/bin/mkdir -p ${gcfsd_mnt_dir}
+ExecStartPre=/bin/mkdir -p ${layer_cache_dir}
+ExecStartPre=/bin/mkdir -p $(dirname ${images_in_use_db_path})
+ExecStart=${KUBE_HOME}/bin/gcfsd --mount_point=${gcfsd_mnt_dir} ${gcfs_cache_size_flag} ${gcfs_layer_caching_flag} --images_in_use_db_path=${images_in_use_db_path}
+ExecStop=/bin/umount -f ${gcfsd_mnt_dir}
+RuntimeDirectory=gcfsd
+Restart=always
+RestartSec=10
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  # Write the configuration file for GCFS snapshotter.
+  # An empty file would work for now.
+  mkdir -p /etc/containerd-gcfs-grpc
+  touch /etc/containerd-gcfs-grpc/config.toml
+  # Write the systemd service file for GCFS snapshotter
+  cat <<EOF >/etc/systemd/system/gcfs-snapshotter.service
+# Systemd configuration for Google Container File System snapshotter
+[Unit]
+Description=GCFS snapshotter
+After=network.target
+Before=containerd.service
+[Service]
+Environment=HOME=/root
+ExecStart=${KUBE_HOME}/bin/containerd-gcfs-grpc --log-level=info --config=/etc/containerd-gcfs-grpc/config.toml
+Restart=always
+RestartSec=1
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  systemctl daemon-reload
+  systemctl start gcfsd.service
+  systemctl start gcfs-snapshotter.service
+}
