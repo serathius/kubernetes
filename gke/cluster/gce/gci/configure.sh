@@ -26,10 +26,9 @@ set -o pipefail
 ### Hardcoded constants
 DEFAULT_CNI_VERSION='v0.9.1'
 DEFAULT_CNI_HASH='b5a59660053a5f1a33b5dd5624d9ed61864482d9dc8e5b79c9b3afc3d6f62c9830e1c30f9ccba6ee76f5fb1ff0504e58984420cc0680b26cb643f1cb07afbd1c'
-DEFAULT_NPD_VERSION='v0.8.8'
-DEFAULT_NPD_HASH_AMD64='ba8315a29368bfc33bdc602eb02d325b0b80e295c8739da35616de5b562c372bd297a2553f3ccd4daaecd67698b659b2c7068a2d2a0b9418ad29233fb75ff3f2'
-# TODO (SergeyKanzhelev): fill up for npd 0.8.9+
-DEFAULT_NPD_HASH_ARM64='N/A'
+DEFAULT_NPD_VERSION='v0.8.13-57-gc3c5389'
+DEFAULT_NPD_HASH_AMD64='2cb0f1610adb5d8d3c077d8ce7a65fb4066f419e82c3ed4ce72a7c4b337bcef7ab9e53d006d97bea70acd980565e2df80466858e6b5291cb1d10587bf0fb9d6c'
+DEFAULT_NPD_HASH_ARM64='e049d37298cbcb3479b3fdc2927ca169fdbe7661dc5c6b1f7cd8f9fb66634eb1c12858155b40f32f86262ebca1171061ce92a520668ce898f89936c668214207'
 DEFAULT_CRICTL_VERSION='v1.21.0'
 DEFAULT_CRICTL_HASH='e4fb9822cb5f71ab8f85021c66170613aae972f4b32030e42868fb36a3bc3ea8642613df8542bf716fad903ed4d7528021ecb28b20c6330448cd2bd2b76bd776'
 DEFAULT_MOUNTER_TAR_SHA='7956fd42523de6b3107ddc3ce0e75233d2fcb78436ff07a1389b6eaac91fb2b1b72a08f7a219eaf96ba1ca4da8d45271002e0d60e0644e796c665f99bb356516'
@@ -274,13 +273,8 @@ function install-node-problem-detector {
     DEFAULT_NPD_HASH='N/A'
   fi
 
-  if [[ -n "${NODE_PROBLEM_DETECTOR_VERSION:-}" ]]; then
-      local -r npd_version="${NODE_PROBLEM_DETECTOR_VERSION}"
-      local -r npd_hash="${NODE_PROBLEM_DETECTOR_TAR_HASH}"
-  else
-      local -r npd_version="${DEFAULT_NPD_VERSION}"
-      local -r npd_hash="${DEFAULT_NPD_HASH}"
-  fi
+  local -r npd_version="${DEFAULT_NPD_VERSION}"
+  local -r npd_hash="${DEFAULT_NPD_HASH}"
   local -r npd_tar="node-problem-detector-${npd_version}-${HOST_PLATFORM}_${HOST_ARCH}.tar.gz"
 
   if is-preloaded "${npd_tar}" "${npd_hash}"; then
@@ -289,7 +283,7 @@ function install-node-problem-detector {
   fi
 
   echo "Downloading ${npd_tar}."
-  local -r npd_release_path="${NODE_PROBLEM_DETECTOR_RELEASE_PATH:-https://storage.googleapis.com/kubernetes-release}"
+  local -r npd_release_path="${NODE_PROBLEM_DETECTOR_RELEASE_PATH:-https://storage.googleapis.com/gke-release}"
   download-or-bust "${npd_hash}" "${npd_release_path}/node-problem-detector/${npd_tar}"
   local -r npd_dir="${KUBE_HOME}/node-problem-detector"
   mkdir -p "${npd_dir}"
@@ -416,6 +410,9 @@ function install-kube-manifests {
   fi
   cp "${dst_dir}/kubernetes/gci-trusty/gci-configure-helper.sh" "${KUBE_BIN}/configure-helper.sh"
   cp "${dst_dir}/kubernetes/gci-trusty/configure-kubeapiserver.sh" "${KUBE_BIN}/configure-kubeapiserver.sh"
+  if [[ -e "${dst_dir}/kubernetes/gci-trusty/gke-internal-configure.sh" ]]; then
+    cp "${dst_dir}/kubernetes/gci-trusty/gke-internal-configure.sh" "${KUBE_BIN}/"
+  fi
   if [[ -e "${dst_dir}/kubernetes/gci-trusty/gke-internal-configure-helper.sh" ]]; then
     cp "${dst_dir}/kubernetes/gci-trusty/gke-internal-configure-helper.sh" "${KUBE_BIN}/"
   fi
@@ -667,11 +664,6 @@ function install-kube-binary-config {
     mv "${KUBE_HOME}/kubernetes/kubernetes-src.tar.gz" "${KUBE_HOME}"
   fi
 
-  if [[ "${KUBERNETES_MASTER:-}" == "false" ]] && \
-     [[ "${ENABLE_NODE_PROBLEM_DETECTOR:-}" == "standalone" ]]; then
-    install-node-problem-detector
-  fi
-
   if [[ "${NETWORK_PROVIDER:-}" == "kubenet" ]] || \
      [[ "${NETWORK_PROVIDER:-}" == "cni" ]]; then
     install-cni-binaries
@@ -694,6 +686,23 @@ function install-kube-binary-config {
 
   # TODO(awly): include the binary and license in the OS image.
   install-exec-auth-plugin
+
+  # Source GKE specific scripts.
+  #
+  # This must be done after install-kube-manifests where the
+  # gke-internal-configure.sh is downloaded.
+  if [[ -e "${KUBE_HOME}/bin/gke-internal-configure.sh" ]]; then
+    echo "Running GKE internal configuration script gke-internal-configure.sh"
+    . "${KUBE_HOME}/bin/gke-internal-configure.sh"
+  fi
+
+  if [[ "${KUBERNETES_MASTER:-}" == "false" ]] && \
+     [[ "${ENABLE_NODE_PROBLEM_DETECTOR:-}" == "standalone" ]]; then
+    install-node-problem-detector
+    if [[ -e "${KUBE_HOME}/bin/gke-internal-configure.sh" ]]; then
+      install-npd-custom-plugins
+    fi
+  fi
 
   # Clean up.
   rm -rf "${KUBE_HOME}/kubernetes"
