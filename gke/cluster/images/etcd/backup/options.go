@@ -1,6 +1,3 @@
-//go:build !windows
-// +build !windows
-
 /*
 Copyright 2020 The Kubernetes Authors.
 
@@ -20,9 +17,32 @@ limitations under the License.
 package main
 
 import (
-	"github.com/mrunalp/fileutils"
+	"log"
+	"os"
 )
 
-func copyDirectory(source string, dest string) error {
-	return fileutils.CopyDirectory(source, dest)
+const (
+	dataDirEnv         = "DATA_DIRECTORY"
+	defaultEtcdDataDir = "/var/etcd/data/"
+)
+
+type backupOpts struct {
+	dataDir string
+}
+
+func (opts *backupOpts) validateAndDefault() error {
+	if opts.dataDir == "" {
+		// fallback to env
+		val, ok := os.LookupEnv(dataDirEnv)
+		if ok && len(val) != 0 {
+			log.Printf("--data-dir unset, falling back to %s variable", dataDirEnv)
+			opts.dataDir = val
+		} else {
+			// fallback to default
+			log.Printf("--data-dir unset, defaulting to %s", defaultEtcdDataDir)
+			opts.dataDir = defaultEtcdDataDir
+
+		}
+	}
+	return nil
 }
