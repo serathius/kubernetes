@@ -127,7 +127,7 @@ func (config Config) New() (authorizer.Authorizer, authorizer.RuleResolver, erro
 			default:
 				return nil, nil, fmt.Errorf("unknown failurePolicy %q", configuredAuthorizer.Webhook.FailurePolicy)
 			}
-			webhookAuthorizer, err := webhook.New(clientConfig,
+			webhookAuthorizer, err := webhook.NewGkeApiserverWebhookAuthorizer(clientConfig,
 				configuredAuthorizer.Webhook.SubjectAccessReviewVersion,
 				configuredAuthorizer.Webhook.AuthorizedTTL.Duration,
 				configuredAuthorizer.Webhook.UnauthorizedTTL.Duration,
