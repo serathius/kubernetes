@@ -38,6 +38,7 @@ import (
 	"k8s.io/kubernetes/plugin/pkg/admission/eventratelimit"
 	"k8s.io/kubernetes/plugin/pkg/admission/extendedresourcetoleration"
 	"k8s.io/kubernetes/plugin/pkg/admission/gc"
+	"k8s.io/kubernetes/plugin/pkg/admission/gvisor"
 	"k8s.io/kubernetes/plugin/pkg/admission/imagepolicy"
 	jobadmission "k8s.io/kubernetes/plugin/pkg/admission/job"
 	"k8s.io/kubernetes/plugin/pkg/admission/limitranger"
@@ -106,6 +107,8 @@ var AllOrderedPlugins = []string{
 	jobadmission.PluginName,                 // JobValidation, only active when feature gate WorkloadWithJob is enabled.
 	podresize.PluginName,                    // PodResizeValidator
 
+	gvisor.PluginName, // GKE Gvisor admission carry patch
+
 	// new admission plugins should generally be inserted above here
 	// webhook, resourcequota, and deny plugins must go at the end
 
@@ -136,6 +139,7 @@ func RegisterAllAdmissionPlugins(plugins *admission.Plugins) {
 	eventratelimit.Register(plugins)
 	extendedresourcetoleration.Register(plugins)
 	gc.Register(plugins)
+	gvisor.Register(plugins)
 	imagepolicy.Register(plugins)
 	limitranger.Register(plugins)
 	autoprovision.Register(plugins)
