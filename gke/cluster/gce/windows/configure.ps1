@@ -170,6 +170,7 @@ try {
   Configure-HostDnsConf
   Configure-GcePdTools
   Configure-Kubelet
+  DownloadAndInstall-GKEMetadataServer
   Configure-NodeProblemDetector
 
   # Even if Logging agent is already installed, the function will still [re]start the service.
@@ -186,9 +187,16 @@ try {
   Start-Sleep 15
   Verify-WorkerServices
 
+  # gke-metadata-server requires cri pipe to exist, starting after
+  # kubelet\dockershim or containerd is started.
+  Start-GKEMetadataServer
+
   $config = New-FileRotationConfig
   # TODO(random-liu): Generate containerd log into the log directory.
   Schedule-LogRotation -Pattern '.*\.log$' -Path ${env:LOGS_DIR} -RepetitionInterval $(New-Timespan -Hour 1) -Config $config
+  if (Test-EnableWorkloadIdentity $kube_env) {
+    Schedule-LogRotation -Pattern '.*\.log.*' -Path ${env:LOGS_DIR}\gke-metadata-server -RepetitionInterval $(New-Timespan -Hour 1) -Config $config
+  }
 
   Pull-InfraContainer
   # Flush cache to disk to persist the setup status
