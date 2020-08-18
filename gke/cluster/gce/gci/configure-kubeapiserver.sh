@@ -48,6 +48,10 @@ function configure-etcd-params {
   if [[ -n "${ETCD_COMPACTION_INTERVAL_SEC:-}" ]]; then
     params_ref+=" --etcd-compaction-interval=${ETCD_COMPACTION_INTERVAL_SEC}s"
   fi
+
+  if [[ -n "${KUBE_APISERVER_EVENT_TTL_SEC:-}" ]]; then
+    params_ref+=" --event-ttl=${KUBE_APISERVER_EVENT_TTL_SEC}s"
+  fi
 }
 
 # Starts kubernetes apiserver.
@@ -59,7 +63,6 @@ function configure-etcd-params {
 #   CLOUD_CONFIG_VOLUME
 #   CLOUD_CONFIG_MOUNT
 #   DOCKER_REGISTRY
-#   INSECURE_PORT_MAPPING
 function start-kube-apiserver {
   echo "Start kubernetes api-server"
   prepare-log-file "${KUBE_API_SERVER_LOG_PATH:-/var/log/kube-apiserver.log}" "${KUBE_API_SERVER_RUNASUSER:-0}"
@@ -67,7 +70,6 @@ function start-kube-apiserver {
 
   # Calculate variables and assemble the command line.
   local params="${API_SERVER_TEST_LOG_LEVEL:-"--v=2"} ${APISERVER_TEST_ARGS:-} ${CLOUD_CONFIG_OPT}"
-  params+=" --address=127.0.0.1"
   params+=" --allow-privileged=true"
   params+=" --cloud-provider=gce"
   params+=" --client-ca-file=${CA_CERT_BUNDLE_PATH}"
@@ -76,10 +78,6 @@ function start-kube-apiserver {
   configure-etcd-params params
 
   params+=" --secure-port=443"
-  if [[ "${ENABLE_APISERVER_INSECURE_PORT:-false}" != "true" ]]; then
-    # Default is :8080
-    params+=" --insecure-port=0"
-  fi
   params+=" --tls-cert-file=${APISERVER_SERVER_CERT_PATH}"
   params+=" --tls-private-key-file=${APISERVER_SERVER_KEY_PATH}"
   if [[ -n "${OLD_MASTER_IP:-}" ]]; then
@@ -137,16 +135,12 @@ function start-kube-apiserver {
       params=$(append-param-if-not-present "${params}" "max-requests-inflight" 1500)
       params=$(append-param-if-not-present "${params}" "max-mutating-requests-inflight" 500)
     fi
-    # Set amount of memory available for apiserver based on number of nodes.
-    # TODO: Once we start setting proper requests and limits for apiserver
-    # we should reuse the same logic here instead of current heuristic.
-    params=$(append-param-if-not-present "${params}" "target-ram-mb" $((NUM_NODES * 60)))
   fi
   if [[ -n "${SERVICE_CLUSTER_IP_RANGE:-}" ]]; then
     params+=" --service-cluster-ip-range=${SERVICE_CLUSTER_IP_RANGE}"
   fi
   params+=" --service-account-issuer=${SERVICEACCOUNT_ISSUER}"
-  params+=" --service-account-api-audiences=${SERVICEACCOUNT_ISSUER}"
+  params+=" --api-audiences=${SERVICEACCOUNT_ISSUER}"
   params+=" --service-account-signing-key-file=${SERVICEACCOUNT_KEY_PATH}"
 
   local audit_policy_config_mount=""
@@ -314,6 +308,7 @@ function start-kube-apiserver {
 
     params+=" --authorization-policy-file=/etc/srv/kubernetes/abac-authz-policy.jsonl"
     authorization_mode+=",ABAC"
+    chown "${KUBE_API_SERVER_RUNASUSER:-0}":"${KUBE_API_SERVER_RUNASGROUP:-0}" /etc/srv/kubernetes/abac-authz-policy.jsonl
   fi
 
   local webhook_config_mount=""
@@ -361,9 +356,20 @@ function start-kube-apiserver {
     fi
     container_env+="{\"name\": \"KUBE_PATCH_CONVERSION_DETECTOR\", \"value\": \"${ENABLE_PATCH_CONVERSION_DETECTOR}\"}"
   fi
+
+  # b/227456358
+  if [[ -n "${container_env}" ]]; then
+    container_env="${container_env}, "
+  fi
+  container_env+='{"name": "GODEBUG", "value": "x509sha1=1"}'
+
   if [[ -n "${container_env}" ]]; then
     container_env="\"env\":[${container_env}],"
   fi
+
+  # Create directory for debug socket.
+  mkdir -p /etc/srv/kubernetes/kube-apiserver/
+  chown -R "${KUBE_API_SERVER_RUNASUSER:-0}":"${KUBE_API_SERVER_RUNASGROUP:-0}" /etc/srv/kubernetes/kube-apiserver/
 
   local -r src_file="${src_dir}/kube-apiserver.manifest"
 
@@ -373,6 +379,11 @@ function start-kube-apiserver {
   local healthcheck_ip="127.0.0.1"
   if [[ ${KUBE_APISERVER_HEALTHCHECK_ON_HOST_IP:-} == "true" ]]; then
     healthcheck_ip=$(hostname -i)
+  fi
+
+  local termination_grace_period_seconds=""
+  if [[ -n "${KUBE_APISERVER_TERMINATION_GRACE_PERIOD_SECONDS:-}" ]]; then
+    termination_grace_period_seconds="\"terminationGracePeriodSeconds\": ${KUBE_APISERVER_TERMINATION_GRACE_PERIOD_SECONDS},"
   fi
 
   params="$(convert-manifest-params "${params}")"
@@ -386,9 +397,10 @@ function start-kube-apiserver {
   sed -i -e "s@{{pillar\['kube_docker_registry'\]}}@${DOCKER_REGISTRY}@g" "${src_file}"
   sed -i -e "s@{{pillar\['kube-apiserver_docker_tag'\]}}@${kube_apiserver_docker_tag}@g" "${src_file}"
   sed -i -e "s@{{pillar\['allow_privileged'\]}}@true@g" "${src_file}"
+  sed -i -e "s@{{kube_apiserver_memory_limit}}@${KUBE_APISERVER_MEMORY_LIMIT:-1Ti}@g" "${src_file}"
   sed -i -e "s@{{liveness_probe_initial_delay}}@${KUBE_APISERVER_LIVENESS_PROBE_INITIAL_DELAY_SEC:-15}@g" "${src_file}"
+  sed -i -e "s@{{liveness_probe_timeout}}@${KUBE_APISERVER_LIVENESS_PROBE_TIMEOUT_SEC:-15}@g" "${src_file}"
   sed -i -e "s@{{secure_port}}@443@g" "${src_file}"
-  sed -i -e "s@{{insecure_port_mapping}}@${INSECURE_PORT_MAPPING}@g" "${src_file}"
   sed -i -e "s@{{additional_cloud_config_mount}}@@g" "${src_file}"
   sed -i -e "s@{{additional_cloud_config_volume}}@@g" "${src_file}"
   sed -i -e "s@{{webhook_authn_config_mount}}@${webhook_authn_config_mount}@g" "${src_file}"
@@ -406,6 +418,7 @@ function start-kube-apiserver {
   sed -i -e "s@{{konnectivity_socket_mount}}@${default_konnectivity_socket_mnt}@g" "${src_file}"
   sed -i -e "s@{{konnectivity_socket_volume}}@${default_konnectivity_socket_vol}@g" "${src_file}"
   sed -i -e "s@{{healthcheck_ip}}@${healthcheck_ip}@g" "${src_file}"
+  sed -i -e "s@{{termination_grace_period_seconds}}@${termination_grace_period_seconds}@g" "${src_file}"
 
   if [[ -n "${KUBE_API_SERVER_RUNASUSER:-}" && -n "${KUBE_API_SERVER_RUNASGROUP:-}" && -n "${KUBE_PKI_READERS_GROUP:-}" ]]; then
     sed -i -e "s@{{runAsUser}}@\"runAsUser\": ${KUBE_API_SERVER_RUNASUSER},@g" "${src_file}"

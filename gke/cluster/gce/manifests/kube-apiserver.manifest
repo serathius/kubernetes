@@ -21,6 +21,7 @@
 "priorityClassName": "system-node-critical",
 "priority": 2000001000,
 "hostNetwork": true,
+{{termination_grace_period_seconds}}
 "containers":[
     {
     "name": "kube-apiserver",
@@ -28,13 +29,19 @@
     "image": "{{pillar['kube_docker_registry']}}/kube-apiserver-amd64:{{pillar['kube-apiserver_docker_tag']}}",
     "resources": {
       "requests": {
+        "memory": "0",
         "cpu": "250m"
+      },
+      "limits": {
+        "memory": "{{kube_apiserver_memory_limit}}"
       }
     },
     "command": [
                  "/go-runner", "--log-file=/var/log/kube-apiserver.log", "--also-stdout=false", "--redirect-stderr=true",
                  "/usr/local/bin/kube-apiserver",
                  "--allow-privileged={{pillar['allow_privileged']}}",
+                 "--profiling=false",
+                 "--debug-socket-path=/etc/srv/kubernetes/kube-apiserver/debug.socket",
                  {{params}}
                ],
     {{container_env}}
@@ -46,7 +53,9 @@
         "path": "/livez?exclude=etcd&exclude=kms-provider-0&exclude=kms-provider-1"
       },
       "initialDelaySeconds": {{liveness_probe_initial_delay}},
-      "timeoutSeconds": 15
+      "timeoutSeconds": {{liveness_probe_timeout}},
+      "periodSeconds": 5,
+      "failureThreshold": 6
     },
     "readinessProbe": {
       "httpGet": {
@@ -59,7 +68,6 @@
       "timeoutSeconds": 15
     },
     "ports":[
-      {{insecure_port_mapping}}
       { "name": "https",
       "containerPort": {{secure_port}},
       "hostPort": {{secure_port}}}
@@ -79,6 +87,9 @@
         { "name": "srvkube",
         "mountPath": "/etc/srv/kubernetes",
         "readOnly": true},
+        { "name": "srvkubeapiserver",
+        "mountPath": "/etc/srv/kubernetes/kube-apiserver",
+        "readOnly": false},
         { "name": "logfile",
         "mountPath": "/var/log/kube-apiserver.log",
         "readOnly": false},
@@ -121,6 +132,11 @@
   { "name": "srvkube",
     "hostPath": {
         "path": "/etc/srv/kubernetes"}
+  },
+  { "name": "srvkubeapiserver",
+    "hostPath": {
+        "path": "/etc/srv/kubernetes/kube-apiserver",
+        "type": "DirectoryOrCreate"}
   },
   { "name": "logfile",
     "hostPath": {
