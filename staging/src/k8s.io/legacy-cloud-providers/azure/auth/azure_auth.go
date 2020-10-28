@@ -53,7 +53,7 @@ type AzureAuthConfig struct {
 	// The path of a client certificate for an AAD application with RBAC access to talk to Azure RM APIs
 	AADClientCertPath string `json:"aadClientCertPath,omitempty" yaml:"aadClientCertPath,omitempty"`
 	// The password of the client certificate for an AAD application with RBAC access to talk to Azure RM APIs
-	AADClientCertPassword string `json:"aadClientCertPassword,omitempty" yaml:"aadClientCertPassword,omitempty"`
+	AADClientCertPassword string `json:"aadClientCertPassword,omitempty" yaml:"aadClientCertPassword,omitempty" datapolicy:"password"`
 	// Use managed service identity for the virtual machine to access Azure ARM APIs
 	UseManagedIdentityExtension bool `json:"useManagedIdentityExtension,omitempty" yaml:"useManagedIdentityExtension,omitempty"`
 	// UserAssignedIdentityID contains the Client ID of the user assigned MSI which is assigned to the underlying VMs. If empty the user assigned identity is not used.

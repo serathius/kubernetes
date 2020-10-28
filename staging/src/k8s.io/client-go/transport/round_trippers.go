@@ -167,7 +167,7 @@ func (rt *userAgentRoundTripper) WrappedRoundTripper() http.RoundTripper { retur
 
 type basicAuthRoundTripper struct {
 	username string
-	password string
+	password string `datapolicy:"password"`
 	rt       http.RoundTripper
 }
 

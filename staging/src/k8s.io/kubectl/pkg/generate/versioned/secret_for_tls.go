@@ -32,7 +32,7 @@ type SecretForTLSGeneratorV1 struct {
 	// Name is the name of this TLS secret.
 	Name string
 	// Key is the path to the user's private key.
-	Key string
+	Key string datapolicy:"security-key"
 	// Cert is the path to the user's public key certificate.
 	Cert string
 	// AppendHash; if true, derive a hash from the Secret and append it to the name

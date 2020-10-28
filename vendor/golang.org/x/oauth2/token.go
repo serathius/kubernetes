@@ -31,7 +31,7 @@ const expiryDelta = 10 * time.Second
 type Token struct {
 	// AccessToken is the token that authorizes and authenticates
 	// the requests.
-	AccessToken string `json:"access_token"`
+	AccessToken string `json:"access_token" datapolicy:"token"`
 
 	// TokenType is the type of token.
 	// The Type method returns either this or "Bearer", the default.

@@ -32,7 +32,7 @@ import (
 type tlsKeyPair struct {
 	name string
 	cert string
-	key  string
+	key  string `datapolicy:"security-key"`
 }
 
 func apiServerCertificatesVolumeSource() v1.VolumeSource {

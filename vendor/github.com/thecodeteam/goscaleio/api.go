@@ -36,7 +36,7 @@ type ConfigConnect struct {
 	Endpoint string
 	Version  string
 	Username string
-	Password string
+	Password string `datapolicy:"password"`
 }
 
 type ClientPersistent struct {

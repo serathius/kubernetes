@@ -341,7 +341,7 @@ type Discovery struct {
 	// TLSBootstrapToken is a token used for TLS bootstrapping.
 	// If .BootstrapToken is set, this field is defaulted to .BootstrapToken.Token, but can be overridden.
 	// If .File is set, this field **must be set** in case the KubeConfigFile does not contain any other authentication information
-	TLSBootstrapToken string `json:"tlsBootstrapToken"`
+	TLSBootstrapToken string `json:"tlsBootstrapToken" datapolicy:"token"`
 
 	// Timeout modifies the discovery timeout
 	Timeout *metav1.Duration `json:"timeout,omitempty"`
@@ -351,7 +351,7 @@ type Discovery struct {
 type BootstrapTokenDiscovery struct {
 	// Token is a token used to validate cluster information
 	// fetched from the control-plane.
-	Token string `json:"token"`
+	Token string `json:"token" datapolicy:"token"`
 
 	// APIServerEndpoint is an IP or domain name to the API server from which info will be fetched.
 	APIServerEndpoint string `json:"apiServerEndpoint,omitempty"`

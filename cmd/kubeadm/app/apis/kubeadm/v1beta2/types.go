@@ -49,7 +49,7 @@ type InitConfiguration struct {
 
 	// CertificateKey sets the key with which certificates and keys are encrypted prior to being uploaded in
 	// a secret in the cluster during the uploadcerts init phase.
-	CertificateKey string `json:"certificateKey,omitempty"`
+	CertificateKey string `json:"certificateKey,omitempty" datapolicy:"security-key"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
@@ -327,7 +327,7 @@ type JoinControlPlane struct {
 
 	// CertificateKey is the key that is used for decryption of certificates after they are downloaded from the secret
 	// upon joining a new control plane node. The corresponding encryption key is in the InitConfiguration.
-	CertificateKey string `json:"certificateKey,omitempty"`
+	CertificateKey string `json:"certificateKey,omitempty" datapolicy:"security-key"`
 }
 
 // Discovery specifies the options for the kubelet to use during the TLS Bootstrap process
@@ -343,7 +343,7 @@ type Discovery struct {
 	// TLSBootstrapToken is a token used for TLS bootstrapping.
 	// If .BootstrapToken is set, this field is defaulted to .BootstrapToken.Token, but can be overridden.
 	// If .File is set, this field **must be set** in case the KubeConfigFile does not contain any other authentication information
-	TLSBootstrapToken string `json:"tlsBootstrapToken,omitempty"`
+	TLSBootstrapToken string `json:"tlsBootstrapToken,omitempty" datapolicy:"token"`
 
 	// Timeout modifies the discovery timeout
 	Timeout *metav1.Duration `json:"timeout,omitempty"`
@@ -353,7 +353,7 @@ type Discovery struct {
 type BootstrapTokenDiscovery struct {
 	// Token is a token used to validate cluster information
 	// fetched from the control-plane.
-	Token string `json:"token"`
+	Token string `json:"token" datapolicy:"token"`
 
 	// APIServerEndpoint is an IP or domain name to the API server from which info will be fetched.
 	APIServerEndpoint string `json:"apiServerEndpoint,omitempty"`
