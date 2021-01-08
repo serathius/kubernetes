@@ -32,7 +32,7 @@ def get_kernel_version():
 def get_namespaced_sysctl_names(namespaced_sysctl_names):
   names = set()
   kernel_major, kernel_minor = get_kernel_version()
-  for entry in yaml.load(open(namespaced_sysctl_names, 'r')):
+  for entry in yaml.safe_load(open(namespaced_sysctl_names, 'r')):
     fields = entry['kernel'].split('.')
     if len(fields) < 2:
       sys.exit('Found invalid kernel %s in %s' %
