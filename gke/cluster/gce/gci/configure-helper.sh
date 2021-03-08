@@ -3497,6 +3497,10 @@ function main() {
       fi
       log-wrap 'StartNodeProblemDetector' start-node-problem-detector
     fi
+    if [ -n "${GPU_PARTITION_SIZE:-}" ] || [ -n "${MAX_TIME_SHARED_CLIENTS_PER_GPU:-}" ] ||
+     [ -n "${MAX_SHARED_CLIENTS_PER_GPU:-}" ] || [ -n "${GPU_SHARING_STRATEGY:-}" ]; then
+      log-wrap 'GKECreateGPUConfig' gke-create-gpu-config
+    fi
   fi
   log-wrap 'ResetMotd' reset-motd
   log-wrap 'PrepareMounterRootfs' prepare-mounter-rootfs

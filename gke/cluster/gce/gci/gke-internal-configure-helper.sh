@@ -589,6 +589,39 @@ EOF
   systemctl start gcfs-snapshotter.service
 }
 
+function gke-create-gpu-config {
+  local -r gpu_config_file="/etc/nvidia/gpu_config.json"
+  mkdir -p "$(dirname "${gpu_config_file}")"
+  local -r dir="${KUBE_HOME}/kube-manifests/kubernetes/gci-trusty/gpu"
+
+  local gpu_partition_size=""
+  if [ -n "${GPU_PARTITION_SIZE:-}" ]; then
+    gpu_partition_size="${GPU_PARTITION_SIZE}"
+  fi
+
+  local max_time_shared_clients_per_gpu=""
+  if [ -n "${MAX_TIME_SHARED_CLIENTS_PER_GPU:-}" ]; then
+      max_time_shared_clients_per_gpu="${MAX_TIME_SHARED_CLIENTS_PER_GPU}"
+  fi
+
+  local max_shared_clients_per_gpu=""
+  if [ -n "${MAX_SHARED_CLIENTS_PER_GPU:-}" ]; then
+      max_shared_clients_per_gpu="${MAX_SHARED_CLIENTS_PER_GPU}"
+  fi
+
+  local gpu_sharing_strategy=""
+  if [ -n "${GPU_SHARING_STRATEGY:-}" ]; then
+      gpu_sharing_strategy="${GPU_SHARING_STRATEGY}"
+  fi
+
+  python3 "${dir}/generate-gpu-config.py" \
+    --gpu-partition-size="${gpu_partition_size}" \
+    --max-time-shared-clients-per-gpu=${max_time_shared_clients_per_gpu} \
+    --max-shared-clients-per-gpu=${max_shared_clients_per_gpu} \
+    --gpu-sharing-strategy=${gpu_sharing_strategy} \
+    --file-path=${gpu_config_file}
+}
+
 # Set up the inplace agent.
 function gke-setup-inplace {
   # Setup inplace master pod manifests: inplace-run-once downloads the
