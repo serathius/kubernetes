@@ -611,3 +611,13 @@ EOF
   systemctl daemon-reload
   systemctl start inplace.service
 }
+
+# Setup inplace master pods manifests
+function setup-inplace-master-pod-manifests {
+  echo "Setup inplace master pod manifests"
+  local src_dir="${KUBE_HOME}/kube-manifests/kubernetes/gci-trusty/in-place"
+  if [[ -d  "${src_dir}" ]]; then
+    copy-manifests "${src_dir}" "/etc/kubernetes/manifests"
+  fi
+  mv ${KUBE_HOME}/inplace/in-place-status.yaml ${KUBE_HOME}/inplace/in-place-status.init.yaml
+}
