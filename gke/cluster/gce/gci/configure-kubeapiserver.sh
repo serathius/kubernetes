@@ -289,6 +289,16 @@ function start-kube-apiserver {
   local authorization_mode="RBAC"
   local -r src_dir="${KUBE_HOME}/kube-manifests/kubernetes/gci-trusty"
 
+  ##### BEGIN specialwebhooks config file creation.
+  # Create GKEWarden special webhooks config file, if its env variable is set.
+  if [ -n "${GKEWARDEN_SPECIALWEBHOOKS_CONFIG_YAML:-}" ]; then
+    echo "Creating GKEWarden special webhooks config file"
+    cat > "/etc/srv/kubernetes/specialwebhooks-config.yaml" <<EOF
+$GKEWARDEN_SPECIALWEBHOOKS_CONFIG_YAML
+EOF
+  fi
+  ##### END
+
   # Enable ABAC mode unless the user explicitly opts out with ENABLE_LEGACY_ABAC=false
   if [[ "${ENABLE_LEGACY_ABAC:-}" != "false" ]]; then
     echo "Warning: Enabling legacy ABAC policy. All service accounts will have superuser API access. Set ENABLE_LEGACY_ABAC=false to disable this."
