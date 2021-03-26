@@ -622,6 +622,9 @@ EOF
   systemctl start inplace.service
 }
 
+function deploy-etcd-via-kube-up {
+  [[ "${ETCD_CRP:-}" != "true" ]]
+}
 function deploy-kube-scheduler-via-kube-up {
   [[ "${KUBE_SCHEDULER_CRP:-}" != "true" ]]
 }
