@@ -440,13 +440,11 @@ function kube::release::package_kube_manifests_tarball() {
   mkdir -p "${dst_dir}"
   cp "${src_dir}/kube-proxy.manifest" "${dst_dir}/"
   cp "${src_dir}/cluster-autoscaler.manifest" "${dst_dir}/"
-  cp "${src_dir}/etcd.manifest" "${dst_dir}"
   cp "${src_dir}/kube-scheduler.manifest" "${dst_dir}"
   cp "${src_dir}/kube-apiserver.manifest" "${dst_dir}"
   cp "${src_dir}/konnectivity-server.yaml" "${dst_dir}"
   cp "${src_dir}/abac-authz-policy.jsonl" "${dst_dir}"
   cp "${src_dir}/kube-controller-manager.manifest" "${dst_dir}"
-  cp "${src_dir}/kube-addon-manager.yaml" "${dst_dir}"
   cp "${src_dir}/glbc.manifest" "${dst_dir}"
   find "${src_dir}" -name 'internal-*' -exec cp {} "${dst_dir}" \;
   cp "${KUBE_ROOT}/cluster/gce/gci/configure-helper.sh" "${dst_dir}/gci-configure-helper.sh"
