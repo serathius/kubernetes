@@ -1521,6 +1521,13 @@ EOF
 	fi
 }
 
+function disable_aufs() {
+  # disable aufs module if aufs is loaded
+  if lsmod | grep "aufs" &> /dev/null ; then
+    sudo modprobe -r aufs
+  fi
+}
+
 function detect_mtu {
   local MTU=1460
   if [[ "${DETECT_MTU:-}" == "true" ]];then
@@ -1595,6 +1602,7 @@ addockeropt "\"pidfile\": \"/var/run/docker.pid\",
       docker_opts+="--registry-mirror=${DOCKER_REGISTRY_MIRROR_URL} "
   fi
 
+  disable_aufs
   set_docker_options_non_ubuntu
 
   echo "setting docker logging options"
