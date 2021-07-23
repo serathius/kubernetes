@@ -2727,11 +2727,6 @@ function start-kube-addons {
   local -r src_dir="${KUBE_HOME}/kube-manifests/kubernetes/gci-trusty"
   local -r dst_dir="/etc/kubernetes/addons"
 
-  create-kubeconfig "addon-manager" "${ADDON_MANAGER_TOKEN}"
-  # User and group should never contain characters that need to be quoted
-  # shellcheck disable=SC2086
-  prepare-log-file /var/log/kube-addon-manager.log ${KUBE_ADDON_MANAGER_RUNASUSER:-2002}
-
   # prep addition kube-up specific rbac objects
   setup-addon-manifests "addons" "rbac/kubelet-api-auth"
   setup-addon-manifests "addons" "rbac/kubelet-cert-rotation"
@@ -2865,6 +2860,15 @@ EOF
     copy-manifests "${src_dir}/gce-extras/in-place" "${dst_dir}/gce-extras/in-place"
   fi
 
+  create-kubeconfig "addon-manager" "${ADDON_MANAGER_TOKEN}"
+
+  if [[ "${KUBE_ADDON_MANAGER_CRP:-false}" == "true" ]]; then
+    echo "kube-addon-manager is configured to not be deployed through kube-up."
+    return
+  fi
+  # User and group should never contain characters that need to be quoted
+  # shellcheck disable=SC2086
+  prepare-log-file /var/log/kube-addon-manager.log ${KUBE_ADDON_MANAGER_RUNASUSER:-2002}
 
   # Place addon manager pod manifest.
   src_file="${src_dir}/kube-addon-manager.yaml"
