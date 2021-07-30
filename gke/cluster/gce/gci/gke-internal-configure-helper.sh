@@ -735,6 +735,14 @@ function gke-create-gpu-config {
     --file-path=${gpu_config_file}
 }
 
+# Configure sshd as required for Autopilot nodes
+function gke-configure-autopilot-sshd {
+  echo "Reconfiguring sshd for Autopilot"
+  echo "${GKE_AUTOPILOT_SSHD_CONFIG}" >> "/etc/ssh/sshd_config"
+  systemctl restart sshd
+  echo "Restarted sshd"
+}
+
 function deploy-kube-scheduler-via-kube-up {
   [[ "${KUBE_SCHEDULER_CRP:-}" != "true" ]]
 }
