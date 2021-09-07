@@ -165,9 +165,9 @@ try {
   Create-KubeproxyKubeconfig
   Create-NodeProblemDetectorKubeConfig
   Set-PodCidr
-  Configure-HostNetworkingService
+
   Prepare-CniNetworking
-  Configure-HostDnsConf
+
   Configure-GcePdTools
   Configure-Kubelet
   DownloadAndInstall-GKEMetadataServer
@@ -190,6 +190,12 @@ try {
   # gke-metadata-server requires cri pipe to exist, starting after
   # kubelet\dockershim or containerd is started.
   Start-GKEMetadataServer
+
+  # It needs to run after kubelet joins the cluster
+  if (Is-Antrea-Enabled $kube_env) {
+    Configure-AntreaCniNetworking
+    Start-AntreaService
+  }
 
   $config = New-FileRotationConfig
   # TODO(random-liu): Generate containerd log into the log directory.
