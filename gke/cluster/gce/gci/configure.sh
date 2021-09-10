@@ -195,8 +195,7 @@ function valid-storage-scope {
 
 # Determine if this node is a master using metadata
 function is-master {
-  local -r is_master_val=$(get-metadata-value "instance/attributes/is-master-node")
-
+  local -r is_master_val=${KUBERNETES_MASTER:-$(get-metadata-value "instance/attributes/is-master-node")}
   local result="false"
   if [[ ${is_master_val:-} == "true" ]]; then
     result="true"
@@ -206,7 +205,7 @@ function is-master {
 
 # A function that returns "true" if hurl should be used, "false" otherwise.
 function use-hurl {
-  local -r enable_hms_read=$(get-metadata-value "instance/attributes/enable_hms_read")
+  local -r enable_hms_read=${ENABLE_HMS_READ:-$(get-metadata-value "instance/attributes/enable_hms_read")}
   local result="false"
 
   if [[ -f "${KUBE_HOME}/bin/hurl" && "${enable_hms_read}" == "true" ]]; then
@@ -482,7 +481,7 @@ function install-hurl {
   fi
 
   local -r hurl_gcs_att="instance/attributes/hurl-gcs-url"
-  local -r hurl_gcs_url=$(get-metadata-value "${hurl_gcs_att}")
+  local -r hurl_gcs_url=${HURL_GCS_URL:-$(get-metadata-value "${hurl_gcs_att}")}
 
   if [[ -z "${hurl_gcs_url}" ]]; then
     # URL not present in GCE Instance Metadata
@@ -848,7 +847,7 @@ function retry-forever {
 # should be duplicated there as well.
 function log-init {
   # Used by log-* functions.
-  LOG_CLUSTER_ID=$(get-metadata-value 'instance/attributes/cluster-uid' 'get-metadata-value-error')
+  LOG_CLUSTER_ID=${LOG_CLUSTER_ID:-$(get-metadata-value 'instance/attributes/cluster-uid' 'get-metadata-value-error')}
   LOG_INSTANCE_NAME=$(hostname)
   LOG_BOOT_ID=$(journalctl --list-boots | grep -E '^ *0' | awk '{print $2}')
   declare -Ag LOG_START_TIMES
