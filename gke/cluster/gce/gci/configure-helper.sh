@@ -2298,7 +2298,7 @@ attributes:
   processKind: none
 EOF
 
-  ${KUBE_HOME}/bin/hurl --hms_address $endpoint --attribute_config $attribute_config
+  retry-forever 30 ${KUBE_HOME}/bin/hurl --hms_address $endpoint --attribute_config $attribute_config
   # setup addons
   setup-addon-manifests "addons" "gce-extras"
 }
@@ -3059,6 +3059,20 @@ function detect_host_info() {
       exit 2
       ;;
   esac
+}
+
+# Retries a command forever with a delay between retries.
+# Args:
+#  $1    : delay between retries, in seconds.
+#  $2... : the command to run.
+function retry-forever {
+  local -r delay="$1"
+  shift 1
+
+  until "$@"; do
+    echo "== $* failed, retrying after ${delay}s"
+    sleep "${delay}"
+  done
 }
 
 # Initializes variables used by the log-* functions.
