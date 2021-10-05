@@ -1669,8 +1669,16 @@ function start-kubelet {
     kubelet_cgroup_driver="--cgroup-driver=systemd"
   fi
 
+
+  if [[ "${ENABLE_GCFS:-""}" == "true" ]]; then
+    # Use Riptide-snapshotter as image service proxy on Riptide nodes.
+    # This is needed for image pull secret support on Riptide nodes.
+    # See go/image-pull-secret-on-riptide
+    kubelet_image_service_endpoint="--image-service-endpoint=unix:///run/containerd-gcfs-grpc/containerd-gcfs-grpc.sock"
+  fi
+
   # POD_SYSCTLS is set in function configure-node-sysctls.
-  local kubelet_opts="${KUBELET_ARGS} ${KUBELET_CONFIG_FILE_ARG:-} --pod-sysctls='${POD_SYSCTLS:-}' ${kubelet_cgroup_driver:-}"
+  local kubelet_opts="${KUBELET_ARGS} ${KUBELET_CONFIG_FILE_ARG:-} --pod-sysctls='${POD_SYSCTLS:-}' ${kubelet_cgroup_driver:-} ${kubelet_image_service_endpoint:-}"
   echo "KUBELET_OPTS=\"${kubelet_opts}\"" > "${kubelet_env_file}"
   echo "KUBE_COVERAGE_FILE=\"/var/log/kubelet.cov\"" >> "${kubelet_env_file}"
 

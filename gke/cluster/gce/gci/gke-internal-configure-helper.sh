@@ -661,10 +661,10 @@ ExecStartPre=-/bin/umount -f ${gcfsd_mnt_dir}
 ExecStartPre=/bin/mkdir -p ${gcfsd_mnt_dir}
 ExecStartPre=/bin/mkdir -p ${layer_cache_dir}
 ExecStartPre=/bin/mkdir -p $(dirname ${images_in_use_db_path})
-ExecStart=${KUBE_HOME}/bin/gcfsd --mount_point=${gcfsd_mnt_dir} ${gcfs_cache_size_flag} ${gcfs_layer_caching_flag} --images_in_use_db_path=${images_in_use_db_path}
-ExecStop=/bin/umount -f ${gcfsd_mnt_dir}
+ExecStart=${KUBE_HOME}/bin/gcfsd --mount_point=${gcfsd_mnt_dir} ${gcfs_cache_size_flag} ${gcfs_layer_caching_flag} --images_in_use_db_path=${images_in_use_db_path} --enable_pull_secret_keychain
+ExecStop=-/bin/umount -f ${gcfsd_mnt_dir}
 RuntimeDirectory=gcfsd
-Restart=always
+Restart=on-failure
 RestartSec=10
 [Install]
 WantedBy=multi-user.target
@@ -681,9 +681,11 @@ EOF
 Description=GCFS snapshotter
 After=network.target
 Before=containerd.service
+# Disable restart rate limiting
+StartLimitIntervalSec=0
 [Service]
 Environment=HOME=/root
-ExecStart=${KUBE_HOME}/bin/containerd-gcfs-grpc --log-level=info --config=/etc/containerd-gcfs-grpc/config.toml
+ExecStart=${KUBE_HOME}/bin/containerd-gcfs-grpc --log-level=info --config=/etc/containerd-gcfs-grpc/config.toml --enable-image-proxy-keychain-client
 Restart=always
 RestartSec=1
 [Install]
