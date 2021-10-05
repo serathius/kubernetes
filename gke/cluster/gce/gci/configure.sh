@@ -35,6 +35,17 @@ DEFAULT_CRICTL_HASH='e4fb9822cb5f71ab8f85021c66170613aae972f4b32030e42868fb36a3b
 DEFAULT_MOUNTER_TAR_SHA='7956fd42523de6b3107ddc3ce0e75233d2fcb78436ff07a1389b6eaac91fb2b1b72a08f7a219eaf96ba1ca4da8d45271002e0d60e0644e796c665f99bb356516'
 ###
 
+RIPTIDE_FUSE_VERSION="v0.188.0"
+RIPTIDE_FUSE_ARM64_SHA512='47122aa005f6c540f1da7c1a31a14dbba1e09ac07bdb835ccec163f4aa30c011ba413046933eb1064a0ecdf387db3371dad7b0d53c6d0f8ffeb931b8e693af01'
+RIPTIDE_FUSE_BIN_ARM64_SHA512='ff07d70a17b42979577e6417d618979b1820b951accad38d25883cc34916cddb24fa9ce1607d09c45f925ef19aec4f6271ca5aabfef52e4c63f03e0ab8bdd40c'
+RIPTIDE_FUSE_AMD64_SHA512='c4ed26cf30866104b3d82da3e8bdc161c705b3a52491b0c609783c71a12fbfce0ae613b389bf96dc36bc322e8a06c3b84ad1b6b46c9884d2c5b5676867b6fa6b'
+RIPTIDE_FUSE_BIN_AMD64_SHA512='10893116b18596f420bc1b3fea35c7a6dd3c119fd2dd3d86b943c75dadbf1f081e8e0f17ed899ef309b36aec6a8a704e7644824cd4382bfc1424533ba21b1be2'
+
+RIPTIDE_SNAPSHOTTER_VERSION="v1.29-0"
+RIPTIDE_SNAPSHOTTER_SHA512='febd83738553f4da2d54f411e88dabc95c25f76478bd71618890884965cb258e2577c6b1c66c143ecd7be84771bd383d72be82db2fdeb3dda4a7d99aea86d820'
+RIPTIDE_SNAPSHOTTER_BIN_ARM64_SHA512='5346486aa951cfb1373d0289cc7c94ded16296149af7492770d462773956907495c8512ef0e4fac53db0b432f3f149762abb854e7ce897cbf6353317b7d239b5'
+RIPTIDE_SNAPSHOTTER_BIN_AMD64_SHA512='72aef987bac71887670ba816453fb09479dab709b81f7e6d223e131d198e0de52241368f26d89de0ef3979746f0e1dd29552dd32d32cd2e03b8d7b0e7340518c'
+
 # Standard curl flags.
 CURL_FLAGS='--fail --silent --show-error --retry 5 --retry-delay 3 --connect-timeout 10 --retry-connrefused'
 
@@ -516,6 +527,63 @@ function install-hurl {
     echo "install-hurl: hurl installed to ${KUBE_BIN}/${hurl_bin}"
     return
   fi
+}
+
+function install-gcfsd {
+  echo "Downloading Riptide FUSE client"
+  if is-preloaded "gcfsd" "${RIPTIDE_FUSE_VERSION}"; then
+    echo "gcfsd is preloaded."
+    return
+  fi
+
+  if [[ "${HOST_ARCH}" == "arm64" ]]; then
+    RIPTIDE_FUSE_STORE_PATH="https://storage.googleapis.com/${RIPTIDE_FUSE_BUCKET}/gcfsd/${RIPTIDE_FUSE_VERSION}/arm64"
+    TAR_SHA="${RIPTIDE_FUSE_ARM64_SHA512}"
+    BIN_SHA="${RIPTIDE_FUSE_BIN_ARM64_SHA512}"
+  else
+    RIPTIDE_FUSE_STORE_PATH="https://storage.googleapis.com/${RIPTIDE_FUSE_BUCKET}/gcfsd/${RIPTIDE_FUSE_VERSION}"
+    TAR_SHA="${RIPTIDE_FUSE_AMD64_SHA512}"
+    BIN_SHA="${RIPTIDE_FUSE_BIN_AMD64_SHA512}"
+  fi
+
+  echo "Downloading tarball for gcfsd"
+  download-or-bust "${TAR_SHA}" "${RIPTIDE_FUSE_STORE_PATH}/gcfsd.tar.gz"
+
+  download-or-bust "${BIN_SHA}" "${RIPTIDE_FUSE_STORE_PATH}/gcfsd"
+  mv "${KUBE_HOME}/gcfsd" "${KUBE_HOME}/bin/gcfsd"
+  chmod a+x "${KUBE_HOME}/bin/gcfsd"
+  record-preload-info "gcfsd" "${RIPTIDE_FUSE_VERSION}"
+}
+
+function install-riptide-snapshotter {
+  echo "Downloading Riptide snapshotter"
+  if is-preloaded "containerd-gcfs-grpc" "${RIPTIDE_SNAPSHOTTER_VERSION}"; then
+    echo "containerd-gcfs-grpc is preloaded."
+    return
+  fi
+  RIPTIDE_SNAPSHOTTER_STORE_PATH="https://storage.googleapis.com/${RIPTIDE_SNAPSHOTTER_BUCKET}/gcfs-snapshotter/${RIPTIDE_SNAPSHOTTER_VERSION}"
+
+  echo "Downloading tarball for riptide-snapshotter"
+  download-or-bust "${RIPTIDE_SNAPSHOTTER_SHA512}" "${RIPTIDE_SNAPSHOTTER_STORE_PATH}/containerd-gcfs-grpc.tar.gz"
+
+  if [[ "${HOST_ARCH}" == "arm64" ]]; then
+    RIPTIDE_SNAPSHOTTER_BINARY="containerd-gcfs-grpc-arm64"
+    RIPTIDE_SNAPSHOTTER_BIN_SHA512="${RIPTIDE_SNAPSHOTTER_BIN_ARM64_SHA512}"
+  else
+    RIPTIDE_SNAPSHOTTER_BINARY="containerd-gcfs-grpc"
+    RIPTIDE_SNAPSHOTTER_BIN_SHA512="${RIPTIDE_SNAPSHOTTER_BIN_AMD64_SHA512}"
+  fi
+
+  download-or-bust "${RIPTIDE_SNAPSHOTTER_BIN_SHA512}" "${RIPTIDE_SNAPSHOTTER_STORE_PATH}/${RIPTIDE_SNAPSHOTTER_BINARY}"
+  mv "${KUBE_HOME}/${RIPTIDE_SNAPSHOTTER_BINARY}" "${KUBE_HOME}/bin/containerd-gcfs-grpc"
+  chmod a+x "${KUBE_HOME}/bin/containerd-gcfs-grpc"
+  record-preload-info "containerd-gcfs-grpc" "${RIPTIDE_SNAPSHOTTER_VERSION}"
+}
+
+# Install Riptide FUSE client and Riptide snapshotter
+function install-riptide {
+  install-gcfsd
+  install-riptide-snapshotter
 }
 
 # A helper function for loading a docker image. It keeps trying up to 5 times.
@@ -1011,9 +1079,9 @@ detect_host_info
 
 # Preloader will source this script, and skip the main function. The preloader
 # will choose what to preload by calling install-X functions directly.
-# When configure.sh is sourced by the preload script, $0 and $BASH_SOURCE are 
+# When configure.sh is sourced by the preload script, $0 and $BASH_SOURCE are
 # different. $BASH_SOURCE still contains the path of configure.sh, while $0 is
-# the path of the preload script. 
+# the path of the preload script.
 if [[ "$0" != "$BASH_SOURCE" && "${IS_PRELOADER:-"false"}" == "true" ]]; then
   echo "Running in preloader instead of VM bootsrapping. Skipping installation steps as preloader script will source configure.sh and call corresponding functions."
   return
@@ -1047,6 +1115,10 @@ log-wrap 'EnsureContainerRuntime' ensure-container-runtime
 
 # binaries and kube-system manifests
 log-wrap 'InstallKubeBinaryConfig' install-kube-binary-config
+
+if [[ "${ENABLE_GCFS:-""}" == "true" ]]; then
+  log-wrap 'InstallRiptide' install-riptide
+fi
 
 echo "Done for installing kubernetes files"
 log-end 'ConfigureMain'
