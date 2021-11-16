@@ -3505,6 +3505,7 @@ function main() {
       log-wrap 'GKEConfigureAutopilotSSHD' gke-configure-autopilot-sshd
     fi
   fi
+  log-wrap 'InstallNodeRegistrationChecker' install-node-registration-checker
   log-wrap 'StartKubelet' start-kubelet
 
   if [[ "${KUBERNETES_MASTER:-}" == "true" ]]; then
