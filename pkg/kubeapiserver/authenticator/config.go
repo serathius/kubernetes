@@ -285,7 +285,7 @@ func newWebhookTokenAuthenticator(config Config) (authenticator.Token, error) {
 	if err != nil {
 		return nil, err
 	}
-	webhookTokenAuthenticator, err := webhook.New(clientConfig, config.WebhookTokenAuthnVersion, config.APIAudiences, *config.WebhookRetryBackoff)
+	webhookTokenAuthenticator, err := webhook.NewGKE(clientConfig, config.WebhookTokenAuthnVersion, config.APIAudiences, *config.WebhookRetryBackoff, config.CustomDial)
 	if err != nil {
 		return nil, err
 	}

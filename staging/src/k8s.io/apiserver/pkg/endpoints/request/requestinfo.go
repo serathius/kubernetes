@@ -19,6 +19,7 @@ package request
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 
@@ -40,6 +41,10 @@ type RequestInfoResolver interface {
 
 // RequestInfo holds information parsed from the http.Request
 type RequestInfo struct {
+	// RemoteAddr is the network address of the network peer from which we
+	// received this request.
+	RemoteAddr string
+
 	// IsResourceRequest indicates whether or not the request is for an API resource or subresource
 	IsResourceRequest bool
 	// Path is the URL path of the request
@@ -121,6 +126,13 @@ func (r *RequestInfoFactory) NewRequestInfo(req *http.Request) (*RequestInfo, er
 		Path:              req.URL.Path,
 		Verb:              strings.ToLower(req.Method),
 	}
+
+	// set the remote address for the request
+	host, _, err := net.SplitHostPort(req.RemoteAddr)
+	if err != nil {
+		klog.Errorf("failed to parse RemoteAddr %s: %v", req.RemoteAddr, err)
+	}
+	requestInfo.RemoteAddr = host
 
 	currentParts := splitPath(req.URL.Path)
 	if len(currentParts) < 3 {

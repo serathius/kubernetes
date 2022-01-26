@@ -53,6 +53,7 @@ type tokenReviewer interface {
 }
 
 type WebhookTokenAuthenticator struct {
+	gkeHooks       gkeHooks
 	tokenReview    tokenReviewer
 	retryBackoff   wait.Backoff
 	implicitAuds   authenticator.Audiences
@@ -87,6 +88,7 @@ func New(config *rest.Config, version string, implicitAuds authenticator.Audienc
 // newWithBackoff allows tests to skip the sleep.
 func newWithBackoff(tokenReview tokenReviewer, retryBackoff wait.Backoff, implicitAuds authenticator.Audiences, requestTimeout time.Duration, metrics AuthenticatorMetrics) (*WebhookTokenAuthenticator, error) {
 	return &WebhookTokenAuthenticator{
+		gkeHooks{},
 		tokenReview,
 		retryBackoff,
 		implicitAuds,
@@ -115,6 +117,7 @@ func (w *WebhookTokenAuthenticator) AuthenticateToken(ctx context.Context, token
 			Audiences: wantAuds,
 		},
 	}
+	w.maybeDecorateReview(ctx, r)
 	var (
 		result *authenticationv1.TokenReview
 		auds   authenticator.Audiences
@@ -281,7 +284,10 @@ type tokenReviewV1beta1ClientGW struct {
 
 func (t *tokenReviewV1beta1ClientGW) Create(ctx context.Context, review *authenticationv1.TokenReview, _ metav1.CreateOptions) (*authenticationv1.TokenReview, int, error) {
 	var statusCode int
-	v1beta1Review := &authenticationv1beta1.TokenReview{Spec: v1SpecToV1beta1Spec(&review.Spec)}
+	v1beta1Review := &authenticationv1beta1.TokenReview{
+		ObjectMeta: review.ObjectMeta,
+		Spec:       v1SpecToV1beta1Spec(&review.Spec),
+	}
 	v1beta1Result := &authenticationv1beta1.TokenReview{}
 
 	restResult := t.client.Post().Body(v1beta1Review).Do(ctx)

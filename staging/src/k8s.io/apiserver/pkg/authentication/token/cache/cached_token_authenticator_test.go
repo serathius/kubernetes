@@ -166,7 +166,7 @@ func BenchmarkKeyFunc(b *testing.B) {
 	b.Run("has audiences", func(b *testing.B) {
 		var key string
 		for n := 0; n < b.N; n++ {
-			key = keyFunc(hashPool, auds, jwtToken)
+			key = keyFunc(hashPool, auds, jwtToken, "")
 		}
 		bKey = key
 	})
@@ -174,7 +174,7 @@ func BenchmarkKeyFunc(b *testing.B) {
 	b.Run("nil audiences", func(b *testing.B) {
 		var key string
 		for n := 0; n < b.N; n++ {
-			key = keyFunc(hashPool, nil, jwtToken)
+			key = keyFunc(hashPool, nil, jwtToken, "")
 		}
 		bKey = key
 	})
@@ -637,14 +637,14 @@ func TestKeyFunc(t *testing.T) {
 	// use realistic audiences
 	auds := []string{"7daf30b7-a85c-429b-8b21-e666aecbb235", "c22aa267-bdde-4acb-8505-998be7818400", "44f9b4f3-7125-4333-b04c-1446a16c6113"}
 
-	keyWithAuds := "\"\xf7\xac\xcd\x12\xf5\x83l\xa9;@\n\xa13a;\nd\x1f\xdelL\xd1\xe1!\x8a\xdahٛ\xbb\xf0"
+	keyWithAuds := "e\x8e\x93\xc0je2ډ\u0080\x91:Iez?\x1e\xb51\xe1\xc6\xd3\xce\x18\xa13\xee+\x03\x9e\xa3"
 
-	keyWithoutAuds := "\x054a \xa5\x8e\xea\xb2?\x8c\x88\xb9,e\n5\xe7ȵ>\xfdK\x0e\x93+\x02˿&\xf98\x1e"
+	keyWithoutAuds := "p\xe5#v=\xdc\x1a\xb7\xc1\x80d?\x91\xcc\r\xf4t\xddE#n\x14\x87\x93j\x17\xaa\xae\xd5\xc66\xf9"
 
 	t.Run("has audiences", func(t *testing.T) {
 		t.Parallel()
 
-		key := keyFunc(hashPool, auds, jwtToken)
+		key := keyFunc(hashPool, auds, jwtToken, "")
 		if key != keyWithAuds {
 			t.Errorf("unexpected equality failure: %#v", key)
 		}
@@ -653,7 +653,7 @@ func TestKeyFunc(t *testing.T) {
 	t.Run("nil audiences", func(t *testing.T) {
 		t.Parallel()
 
-		key := keyFunc(hashPool, nil, jwtToken)
+		key := keyFunc(hashPool, nil, jwtToken, "")
 		if key != keyWithoutAuds {
 			t.Errorf("unexpected equality failure: %#v", key)
 		}

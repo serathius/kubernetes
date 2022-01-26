@@ -36,6 +36,7 @@ import (
 	auditinternal "k8s.io/apiserver/pkg/apis/audit"
 	"k8s.io/apiserver/pkg/audit"
 	"k8s.io/apiserver/pkg/authentication/authenticator"
+	"k8s.io/apiserver/pkg/endpoints/request"
 	"k8s.io/apiserver/pkg/warning"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/clock"
@@ -146,7 +147,13 @@ func (a *cachedTokenAuthenticator) doAuthenticateToken(ctx context.Context, toke
 
 	auds, audsOk := authenticator.AudiencesFrom(ctx)
 
-	key := keyFunc(a.hashPool, auds, token)
+	var ipAddr = ""
+	reqInfo, reqOk := request.RequestInfoFrom(ctx)
+	if reqOk {
+		ipAddr = reqInfo.RemoteAddr
+	}
+
+	key := keyFunc(a.hashPool, auds, token, ipAddr)
 	if record, ok := a.cache.get(key); ok {
 		// Record cache hit
 		doneAuthenticating(true)
@@ -197,6 +204,10 @@ func (a *cachedTokenAuthenticator) doAuthenticateToken(ctx context.Context, toke
 		recorder := &recorder{}
 		ctx = warning.WithWarningRecorder(ctx, recorder)
 
+		if reqOk {
+			ctx = request.WithRequestInfo(ctx, reqInfo)
+		}
+
 		ctx = audit.WithAuditContext(ctx)
 		ac := audit.AuditContextFrom(ctx)
 		// since this is shared work between multiple requests, we have no way of knowing if any
@@ -233,7 +244,7 @@ func (a *cachedTokenAuthenticator) doAuthenticateToken(ctx context.Context, toke
 
 // keyFunc generates a string key by hashing the inputs.
 // This lowers the memory requirement of the cache and keeps tokens out of memory.
-func keyFunc(hashPool *sync.Pool, auds []string, token string) string {
+func keyFunc(hashPool *sync.Pool, auds []string, token, ipAddr string) string {
 	h := hashPool.Get().(hash.Hash)
 
 	h.Reset()
@@ -243,6 +254,7 @@ func keyFunc(hashPool *sync.Pool, auds []string, token string) string {
 	b := a[:]
 
 	writeLengthPrefixedString(h, b, token)
+	writeLengthPrefixedString(h, b, ipAddr)
 	// encode the length of audiences to avoid ambiguities
 	writeLength(h, b, len(auds))
 	for _, aud := range auds {
