@@ -31,7 +31,8 @@ DEFAULT_NPD_VERSION='v0.8.13-57-gc3c5389'
 DEFAULT_NPD_HASH_AMD64='2cb0f1610adb5d8d3c077d8ce7a65fb4066f419e82c3ed4ce72a7c4b337bcef7ab9e53d006d97bea70acd980565e2df80466858e6b5291cb1d10587bf0fb9d6c'
 DEFAULT_NPD_HASH_ARM64='e049d37298cbcb3479b3fdc2927ca169fdbe7661dc5c6b1f7cd8f9fb66634eb1c12858155b40f32f86262ebca1171061ce92a520668ce898f89936c668214207'
 DEFAULT_CRICTL_VERSION='v1.23.0'
-DEFAULT_CRICTL_SHA512='f8c40c66c8d9a85e857399506f4977564890815b02658eec591114e04bd8bc6b8ea08bcc159af0088b5eda7bf0dfd16096bf0c174819c204193fb7343ae7d9d5'
+DEFAULT_CRICTL_AMD64_SHA512='f8c40c66c8d9a85e857399506f4977564890815b02658eec591114e04bd8bc6b8ea08bcc159af0088b5eda7bf0dfd16096bf0c174819c204193fb7343ae7d9d5'
+DEFAULT_CRICTL_ARM64_SHA512='261ac360b0ac3fc88c81f1cc348f84b0df0b07ca4db61b0e647c142882d129ba11d21d0de373a27ecfd984436a08a11b19cde2ad5e3412e5d03203caedd62d92'
 DEFAULT_MOUNTER_TAR_SHA='7956fd42523de6b3107ddc3ce0e75233d2fcb78436ff07a1389b6eaac91fb2b1b72a08f7a219eaf96ba1ca4da8d45271002e0d60e0644e796c665f99bb356516'
 ###
 
@@ -326,20 +327,30 @@ function install-gci-mounter-tools {
 
 # Install node problem detector binary.
 function install-node-problem-detector {
-  if [[ "${HOST_ARCH}" == "amd64" ]]; then
-    DEFAULT_NPD_HASH=${DEFAULT_NPD_HASH_AMD64}
-  elif [[ "${HOST_ARCH}" == "arm64" ]]; then
-    DEFAULT_NPD_HASH=${DEFAULT_NPD_HASH_ARM64}
+  if [[ -n "${NODE_PROBLEM_DETECTOR_VERSION:-}" ]]; then
+      local -r npd_version="${NODE_PROBLEM_DETECTOR_VERSION}"
+      local -r npd_hash="${NODE_PROBLEM_DETECTOR_TAR_HASH}"
   else
-    # no other architectures are supported currently.
-    # Assumption is that this script only runs on linux,
-    # see cluster/gce/windows/k8s-node-setup.psm1 for windows
-    # https://github.com/kubernetes/node-problem-detector/releases/
-    DEFAULT_NPD_HASH='N/A'
+      local -r npd_version="${DEFAULT_NPD_VERSION}"
+      case "${HOST_PLATFORM}/${HOST_ARCH}" in
+        linux/amd64)
+          local -r npd_hash="${DEFAULT_NPD_HASH_AMD64}"
+          ;;
+        linux/arm64)
+          local -r npd_hash="${DEFAULT_NPD_HASH_ARM64}"
+          ;;
+        # no other architectures are supported currently.
+        # Assumption is that this script only runs on linux,
+        # see cluster/gce/windows/k8s-node-setup.psm1 for windows
+        # https://github.com/kubernetes/node-problem-detector/releases/
+        *)
+          echo "Unrecognized version and platform/arch combination:"
+          echo "$DEFAULT_NPD_VERSION $HOST_PLATFORM/$HOST_ARCH"
+          echo "Set NODE_PROBLEM_DETECTOR_VERSION and NODE_PROBLEM_DETECTOR_TAR_HASH to overwrite"
+          exit 1
+          ;;
+      esac
   fi
-
-  local -r npd_version="${DEFAULT_NPD_VERSION}"
-  local -r npd_hash="${DEFAULT_NPD_HASH}"
   local -r npd_tar="node-problem-detector-${npd_version}-${HOST_PLATFORM}_${HOST_ARCH}.tar.gz"
 
   if is-preloaded "${npd_tar}" "${npd_hash}"; then
@@ -398,7 +409,19 @@ function install-crictl {
     local -r crictl_hash="${CRICTL_TAR_HASH}"
   else
     local -r crictl_version="${DEFAULT_CRICTL_VERSION}"
-    local -r crictl_hash="${DEFAULT_CRICTL_SHA512}"
+    case "${HOST_PLATFORM}/${HOST_ARCH}" in
+      linux/amd64)
+        local -r crictl_hash="${DEFAULT_CRICTL_AMD64_SHA512}"
+        ;;
+      linux/arm64)
+        local -r crictl_hash="${DEFAULT_CRICTL_ARM64_SHA512}"
+        ;;
+      *)
+        echo "Unrecognized version and platform/arch combination:"
+        echo "$DEFAULT_CRICTL_VERSION $HOST_PLATFORM/$HOST_ARCH"
+        echo "Set CRICTL_VERSION and CRICTL_TAR_HASH to overwrite"
+        exit 1
+    esac
   fi
   local -r crictl="crictl-${crictl_version}-${HOST_PLATFORM}-${HOST_ARCH}.tar.gz"
 
