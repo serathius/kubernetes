@@ -539,6 +539,17 @@ EOF
   systemctl restart containerd
 }
 
+# Manipulate SMT settings for the node. GKE Sandbox by default
+# disables SMT for vulnerable nodes.
+function configure-smt {
+  if [[ "${GVISOR_ENABLE_SMT:-}" == "true" ]]; then
+    echo "Enabling SMT for node."
+    echo "on" > "/sys/devices/system/cpu/smt/control"
+    return
+  fi
+  echo "Using default SMT settings."
+}
+
 # If we specify GKE_ADDON_REGISTRY_OVERRIDE, it will replace all occurrences
 # of 'gke.gcr.io', with the specified value in all the manifests.
 # This is useful when running in test or staging, example:
