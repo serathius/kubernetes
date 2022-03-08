@@ -3486,6 +3486,7 @@ function main() {
       # log-wrap 'StopDocker' systemctl stop docker || echo "unable to stop docker"
     fi
     if [[ -e "${KUBE_HOME}/bin/gke-internal-configure-helper.sh" ]]; then
+      log-wrap 'ConfigureSMT' configure-smt
       log-wrap 'GKESetupContainerd' gke-setup-containerd
     else
       log-wrap 'SetupContainerd' setup-containerd
