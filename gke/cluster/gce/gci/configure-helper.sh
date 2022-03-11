@@ -3164,6 +3164,33 @@ EOF
   systemctl restart containerd
 }
 
+function install-bfq {
+  if ! modinfo bfq >/dev/null 2>&1; then
+    echo "bfq kernel module does not exist"
+    return
+  fi
+
+  modprobe bfq
+  echo 'bfq' > /sys/block/sda/queue/scheduler
+
+  CGROUP_CONFIG=$(stat -fc %T /sys/fs/cgroup/)
+
+  if [[ -n "${NODE_BFQ_IO_SCHEDULER_IO_WEIGHT:-}" ]]; then
+    systemctl set-property system.slice IOWeight="${NODE_BFQ_IO_SCHEDULER_IO_WEIGHT}"
+  fi
+
+  if [[ -n "${NODE_BFQ_IO_SCHEDULER_BLK_WEIGHT:-}" ]] ; then
+    if [[ "${CGROUP_CONFIG}" == "cgroup2fs" ]]; then
+      echo "${NODE_BFQ_IO_SCHEDULER_BLK_WEIGHT}" > /sys/fs/cgroup/system.slice/io.bfq.weight
+    fi
+
+    # tmpfs is cgroupv1 hybrid mode
+    if [[ "${CGROUP_CONFIG}" == "tmpfs" ]]; then
+      echo "${NODE_BFQ_IO_SCHEDULER_BLK_WEIGHT}" > /sys/fs/cgroup/blkio/system.slice/blkio.bfq.weight
+    fi
+  fi
+}
+
 # This function detects the platform/arch of the machine where the script runs,
 # and sets the HOST_PLATFORM and HOST_ARCH environment variables accordingly.
 # Callers can specify HOST_PLATFORM_OVERRIDE and HOST_ARCH_OVERRIDE to skip the detection.
@@ -3542,6 +3569,13 @@ function main() {
     if [ -n "${GPU_PARTITION_SIZE:-}" ] || [ -n "${MAX_TIME_SHARED_CLIENTS_PER_GPU:-}" ] ||
      [ -n "${MAX_SHARED_CLIENTS_PER_GPU:-}" ] || [ -n "${GPU_SHARING_STRATEGY:-}" ]; then
       log-wrap 'GKECreateGPUConfig' gke-create-gpu-config
+    fi
+
+    # This must be the last step as part of configure-helper.sh, we want to ensure
+    # `systemctl-daemon reload` will not be run after this step.
+    # See b/231636376
+    if [[ "${ENABLE_NODE_BFQ_IO_SCHEDULER:-}" == "true" ]]; then
+      log-wrap 'InstallBfq' install-bfq
     fi
   fi
   log-wrap 'ResetMotd' reset-motd
