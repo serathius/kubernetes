@@ -1035,8 +1035,8 @@ function retry-forever {
 function log-init {
   # Used by log-* functions.
   LOG_CLUSTER_ID=${LOG_CLUSTER_ID:-$(get-metadata-value 'instance/attributes/cluster-uid' 'get-metadata-value-error')}
-  LOG_INSTANCE_NAME=$(hostname)
-  LOG_BOOT_ID=$(journalctl --list-boots | grep -E '^ *0' | awk '{print $2}')
+  LOG_INSTANCE_NAME=$(hostname || echo 'hostname-error')
+  LOG_BOOT_ID=$(journalctl --list-boots | grep -E '^ *0' | awk '{print $2}' || echo 'journalctl-error')
   declare -Ag LOG_START_TIMES
   declare -ag LOG_TRAP_STACK
 
