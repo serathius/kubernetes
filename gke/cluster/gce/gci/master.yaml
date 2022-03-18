@@ -12,7 +12,7 @@ users:
 
 write_files:
   - path: /etc/systemd/system/kube-bootstrap-logs-forwarder.service
-    permissions: 0644
+    permissions: '0644'
     owner: root
     content: |
       [Unit]
@@ -31,7 +31,7 @@ write_files:
       WantedBy=kubernetes.target
 
   - path: /etc/systemd/system/kube-master-installation.service
-    permissions: 0644
+    permissions: '0644'
     owner: root
     content: |
       [Unit]
@@ -53,7 +53,7 @@ write_files:
       WantedBy=kubernetes.target
 
   - path: /etc/systemd/system/kube-master-configuration.service
-    permissions: 0644
+    permissions: '0644'
     owner: root
     content: |
       [Unit]
@@ -72,7 +72,7 @@ write_files:
       WantedBy=kubernetes.target
 
   - path: /etc/systemd/system/kube-container-runtime-monitor.service
-    permissions: 0644
+    permissions: '0644'
     owner: root
     content: |
       [Unit]
@@ -90,7 +90,7 @@ write_files:
       WantedBy=kubernetes.target
 
   - path: /etc/systemd/system/kubelet-monitor.service
-    permissions: 0644
+    permissions: '0644'
     owner: root
     content: |
       [Unit]
@@ -108,7 +108,7 @@ write_files:
       WantedBy=kubernetes.target
 
   - path: /etc/systemd/system/networkd-monitor.service
-    permissions: 0644
+    permissions: '0644'
     owner: root
     content: |
       [Unit]
@@ -124,7 +124,7 @@ write_files:
       WantedBy=kubernetes.target
 
   - path: /etc/systemd/system/kube-logrotate.timer
-    permissions: 0644
+    permissions: '0644'
     owner: root
     content: |
       [Unit]
@@ -137,7 +137,7 @@ write_files:
       WantedBy=kubernetes.target
 
   - path: /etc/systemd/system/kube-logrotate.service
-    permissions: 0644
+    permissions: '0644'
     owner: root
     content: |
       [Unit]
@@ -152,7 +152,7 @@ write_files:
       WantedBy=kubernetes.target
 
   - path: /etc/systemd/system/kubernetes.target
-    permissions: 0644
+    permissions: '0644'
     owner: root
     content: |
       [Unit]

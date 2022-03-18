@@ -2,7 +2,7 @@
 
 write_files:
   - path: /etc/systemd/system/kube-node-installation.service
-    permissions: 0644
+    permissions: '0644'
     owner: root
     content: |
       [Unit]
@@ -24,7 +24,7 @@ write_files:
       WantedBy=kubernetes.target
 
   - path: /etc/systemd/system/kube-node-configuration.service
-    permissions: 0644
+    permissions: '0644'
     owner: root
     content: |
       [Unit]
@@ -42,7 +42,7 @@ write_files:
       WantedBy=kubernetes.target
 
   - path: /etc/systemd/system/kube-container-runtime-monitor.service
-    permissions: 0644
+    permissions: '0644'
     owner: root
     content: |
       [Unit]
@@ -61,7 +61,7 @@ write_files:
       WantedBy=kubernetes.target
 
   - path: /etc/systemd/system/kubelet-monitor.service
-    permissions: 0644
+    permissions: '0644'
     owner: root
     content: |
       [Unit]
@@ -80,7 +80,7 @@ write_files:
       WantedBy=kubernetes.target
 
   - path: /etc/systemd/system/kube-logrotate.timer
-    permissions: 0644
+    permissions: '0644'
     owner: root
     content: |
       [Unit]
@@ -93,7 +93,7 @@ write_files:
       WantedBy=kubernetes.target
 
   - path: /etc/systemd/system/kube-logrotate.service
-    permissions: 0644
+    permissions: '0644'
     owner: root
     content: |
       [Unit]
@@ -108,7 +108,7 @@ write_files:
       WantedBy=kubernetes.target
 
   - path: /etc/systemd/system/kubernetes.target
-    permissions: 0644
+    permissions: '0644'
     owner: root
     content: |
       [Unit]
@@ -118,7 +118,7 @@ write_files:
       WantedBy=multi-user.target
 
   - path: /etc/modprobe.d/sunrpc.conf
-    permissions: 0644
+    permissions: '0644'
     owner: root
     # The GKE metadata server uses ports 987-989, so the sunrpc range should be restricted to be below.
     content: |
