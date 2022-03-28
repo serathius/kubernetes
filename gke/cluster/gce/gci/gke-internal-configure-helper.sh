@@ -739,6 +739,39 @@ function gke-create-gpu-config {
     --max-shared-clients-per-gpu=${max_shared_clients_per_gpu} \
     --gpu-sharing-strategy=${gpu_sharing_strategy} \
     --file-path=${gpu_config_file}
+
+  if [[ "${GPU_SHARING_STRATEGY:-}" == "mps" ]]; then
+    cat <<EOF >/etc/systemd/system/nvidia-mps.service
+[Unit]
+Description=NVIDIA MPS
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=10
+RemainAfterExit=yes
+ExecStart=/home/kubernetes/bin/nvidia/bin/nvidia-cuda-mps-control -d
+ExecStop=echo quit | nvidia-cuda-mps-control
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    cat <<EOF >/etc/systemd/system/nvidia-mps.path
+[Unit]
+Description=NVIDIA MPS path
+
+[Path]
+PathModified=/home/kubernetes/bin/nvidia/bin/nvidia-cuda-mps-control
+Unit=nvidia-mps.service
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl start nvidia-mps.path
+  fi
 }
 
 # Set up the inplace agent.
