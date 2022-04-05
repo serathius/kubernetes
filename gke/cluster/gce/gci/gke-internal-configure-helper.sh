@@ -515,6 +515,7 @@ EOF
     # gvisor_platform is the platform to use for gvisor.
     local -r gvisor_platform="${GVISOR_PLATFORM:-"ptrace"}"
     local -r gvisor_net_raw="${GVISOR_NET_RAW:-"true"}"
+    local -r gvisor_seccomp="${GVISOR_SECCOMP:-"true"}"
     mkdir -p "${sandbox_root}"
     cat > "${shim_config_path}" <<EOF
 binary_name = "${CONTAINERD_SANDBOX_RUNTIME_ENGINE:-}"
@@ -522,6 +523,7 @@ root = "${sandbox_root}"
 [runsc_config]
   platform = "${gvisor_platform}"
   net-raw = "${gvisor_net_raw}"
+  oci-seccomp = "${gvisor_seccomp}"
 EOF
     if [[ "${gvisor_platform}" == "xemu" ]]; then
       if [[ -f "${CONTAINERD_HOME}/xemu.ko.der" ]]; then
