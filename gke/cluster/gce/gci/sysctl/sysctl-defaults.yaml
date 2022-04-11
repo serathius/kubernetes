@@ -21,10 +21,8 @@
 # cases.
 kernel.pid_max: "4194304"
 
-# Do not set kernel.threads-max because it cannot be set to arbitary value and
-# kernel may use different values for different machine types. This parameter
-# seems to be auto-tuned by kernel.
-# kernel.threads-max: ""
+# Same as kernel.pid_max. It can be set only with kernel older than 5.4.
+kernel.threads-max: "4194304"
 
 # Enforce the OS default value (16384).
 fs.inotify.max_queued_events: "16384"
