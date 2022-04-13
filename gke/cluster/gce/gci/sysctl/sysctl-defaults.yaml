@@ -31,6 +31,10 @@ fs.inotify.max_user_instances: "8192"
 # Override the OS default value (8192), which is too small for most use cases.
 fs.inotify.max_user_watches: "12288"
 
+# Override the OS default value (mem_bytes()/10240), which is too small for
+# machines with less than 80GiB ram. See b/222843948.
+fs.file-max: "int(max(8388608,mem_bytes()/10240))"
+
 # Override the TCP keepalive time to align with GCP's default reply-allowed
 # rule (10 minutes) and defaults in COS-M85. See b/153915988 and
 # https://github.com/kubernetes/kubernetes/issues/32457
