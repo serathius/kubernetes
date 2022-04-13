@@ -32,7 +32,9 @@ DEFAULT_NPD_HASH_ARM64='8ccb42a862efdfc1f25ca9a22f3fd36f9fdff1ac618dd7d39e3b5991
 DEFAULT_CRICTL_VERSION='v1.23.0'
 DEFAULT_CRICTL_AMD64_SHA512='f8c40c66c8d9a85e857399506f4977564890815b02658eec591114e04bd8bc6b8ea08bcc159af0088b5eda7bf0dfd16096bf0c174819c204193fb7343ae7d9d5'
 DEFAULT_CRICTL_ARM64_SHA512='261ac360b0ac3fc88c81f1cc348f84b0df0b07ca4db61b0e647c142882d129ba11d21d0de373a27ecfd984436a08a11b19cde2ad5e3412e5d03203caedd62d92'
-DEFAULT_MOUNTER_TAR_SHA='7956fd42523de6b3107ddc3ce0e75233d2fcb78436ff07a1389b6eaac91fb2b1b72a08f7a219eaf96ba1ca4da8d45271002e0d60e0644e796c665f99bb356516'
+DEFAULT_MOUNTER_ROOTFS_VERSION='v1.0.0'
+DEFAULT_MOUNTER_ROOTFS_TAR_AMD64_SHA512='631330b7fa911d67e400b1d014df65a7763667d4afd4ecefe11a4a89dc9b8be626e5610d53b536c255a3ab488408ab2da8a0699d9fdad280cb3aa24bc2f30ab0'
+DEFAULT_MOUNTER_ROOTFS_TAR_ARM64_SHA512='83cf9ab7961627359654131abd2d4c4b72875d395c50cda9e417149b2eb53b784dfe5c2f744ddbccfe516e36dd64c716d69d161d8bc8b4f42a9207fe676d0bc1'
 ###
 
 RIPTIDE_FUSE_BUCKET="${RIPTIDE_FUSE_BUCKET:-gke-release}"
@@ -304,8 +306,28 @@ function remount-flexvolume-directory {
 
 function install-gci-mounter-tools {
   CONTAINERIZED_MOUNTER_HOME="${KUBE_HOME}/containerized_mounter"
-  local -r mounter_tar_sha="${DEFAULT_MOUNTER_TAR_SHA}"
-  if is-preloaded "mounter" "${mounter_tar_sha}"; then
+  if [[ -n "${MOUNTER_ROOTFS_VERSION:-}" ]]; then
+      local -r mounter_rootfs_version="${MOUNTER_ROOTFS_VERSION}"
+      local -r mounter_rootfs_tar_sha="${MOUNTER_ROOTFS_TAR_SHA512}"
+  else
+    local -r mounter_rootfs_version="${DEFAULT_MOUNTER_ROOTFS_VERSION}"
+    case "${HOST_PLATFORM}/${HOST_ARCH}" in
+      linux/amd64)
+        local -r mounter_rootfs_tar_sha="${DEFAULT_MOUNTER_ROOTFS_TAR_AMD64_SHA512}"
+        ;;
+      linux/arm64)
+        local -r mounter_rootfs_tar_sha="${DEFAULT_MOUNTER_ROOTFS_TAR_ARM64_SHA512}"
+        ;;
+      *)
+        echo "Unrecognized version and platform/arch combination:"
+        echo "$mounter_rootfs_version $HOST_PLATFORM/$HOST_ARCH"
+        echo "Set MOUNTER_ROOTFS_VERSION and MOUNTER_ROOTFS_TAR_SHA512 to overwrite"
+        exit 1
+        ;;
+    esac
+  fi
+
+  if is-preloaded "mounter" "${mounter_rootfs_tar_sha}"; then
     echo "mounter is preloaded."
     return
   fi
@@ -313,16 +335,20 @@ function install-gci-mounter-tools {
   echo "Downloading gci mounter tools."
   mkdir -p "${CONTAINERIZED_MOUNTER_HOME}"
   chmod a+x "${CONTAINERIZED_MOUNTER_HOME}"
-  mkdir -p "${CONTAINERIZED_MOUNTER_HOME}/rootfs"
-  download-or-bust "${mounter_tar_sha}" "https://storage.googleapis.com/kubernetes-release/gci-mounter/mounter.tar"
+
+  # Copy the mounter binary downloaded with the k8s binaries tar file
   cp "${KUBE_HOME}/kubernetes/server/bin/mounter" "${CONTAINERIZED_MOUNTER_HOME}/mounter"
   chmod a+x "${CONTAINERIZED_MOUNTER_HOME}/mounter"
-  mv "${KUBE_HOME}/mounter.tar" /tmp/mounter.tar
-  tar xf /tmp/mounter.tar -C "${CONTAINERIZED_MOUNTER_HOME}/rootfs"
-  rm /tmp/mounter.tar
+  # Download the debian rootfs required for the mounter container
+  mkdir -p "${CONTAINERIZED_MOUNTER_HOME}/rootfs"
+  local -r mounter_rootfs_tar="containerized-mounter-${mounter_rootfs_version}_${HOST_PLATFORM}_${HOST_ARCH}.tar.gz"
+  download-or-bust "${mounter_rootfs_tar_sha}" "https://storage.googleapis.com/gke-release/containerized-mounter/${mounter_rootfs_version}/${mounter_rootfs_tar}"
+  mv "${KUBE_HOME}/${mounter_rootfs_tar}" "/tmp/${mounter_rootfs_tar}"
+  tar xzf "/tmp/${mounter_rootfs_tar}" -C "${CONTAINERIZED_MOUNTER_HOME}/rootfs"
+  rm "/tmp/${mounter_rootfs_tar}"
   mkdir -p "${CONTAINERIZED_MOUNTER_HOME}/rootfs/var/lib/kubelet"
 
-  record-preload-info "mounter" "${mounter_tar_sha}"
+  record-preload-info "mounter" "${mounter_rootfs_tar_sha}"
 }
 
 # Install node problem detector binary.
