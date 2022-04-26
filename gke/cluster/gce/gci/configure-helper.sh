@@ -1035,7 +1035,7 @@ EOF
   if [[ -n "${ADMISSION_CONTROL:-}" ]]; then
     # Emit a basic admission control configuration file, with no plugins specified.
     cat <<EOF >/etc/srv/kubernetes/admission_controller_config.yaml
-apiVersion: apiserver.k8s.io/v1alpha1
+apiVersion: apiserver.config.k8s.io/v1
 kind: AdmissionConfiguration
 plugins:
 EOF
@@ -1052,6 +1052,12 @@ EOF
       - scopeName: PriorityClass
         operator: In
         values: ["system-node-critical", "system-cluster-critical"]
+- name: "PodSecurity"
+  configuration:
+    apiVersion: pod-security.admission.config.k8s.io/v1beta1
+    kind: PodSecurityConfiguration
+    exemptions:
+      namespaces: ["kube-system"]
 EOF
 
     if [[ "${ADMISSION_CONTROL:-}" == *"ImagePolicyWebhook"* ]]; then
@@ -1107,13 +1113,13 @@ EOF
       cat <<EOF >>/etc/srv/kubernetes/admission_controller_config.yaml
 - name: ValidatingAdmissionWebhook
   configuration:
-    apiVersion: apiserver.config.k8s.io/v1alpha1
-    kind: WebhookAdmission
+    apiVersion: apiserver.config.k8s.io/v1
+    kind: WebhookAdmissionConfiguration
     kubeConfigFile: /etc/srv/kubernetes/webhook.kubeconfig
 - name: MutatingAdmissionWebhook
   configuration:
-    apiVersion: apiserver.config.k8s.io/v1alpha1
-    kind: WebhookAdmission
+    apiVersion: apiserver.config.k8s.io/v1
+    kind: WebhookAdmissionConfiguration
     kubeConfigFile: /etc/srv/kubernetes/webhook.kubeconfig
 EOF
     fi
