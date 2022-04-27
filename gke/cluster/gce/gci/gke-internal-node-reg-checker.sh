@@ -6,6 +6,7 @@ KUBE_HOME="/home/kubernetes"
 KUBE_BIN=${KUBE_HOME}/bin
 #timeout command
 TIMEOUT=("timeout" "--foreground" "10s")
+KUBECTL_TIMEOUT=("timeout" "--foreground" "1m")
 #curl options
 CURL_TIMEOUT=("--connect-timeout" "2")
 CURL_RETRY=("--retry" "2" "--retry-delay" "2")
@@ -292,7 +293,7 @@ function node-registered {
   set -e # re-enable errexit
   if exists "${KUBE_BIN}/kubectl" ; then
     log 2 "Checking node status with the K8s API Server..."
-    if [[  $(KUBECONFIG=/var/lib/kubelet/kubeconfig "${KUBE_BIN}/kubectl" --request-timeout=10s get node "$(hostname)" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}') == "True" ]]; then
+    if [[  $(KUBECONFIG=/var/lib/kubelet/kubeconfig "${KUBECTL_TIMEOUT[@]}" "${KUBE_BIN}/kubectl" --request-timeout=10s get node "$(hostname)" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}') == "True" ]]; then
       log 4 "Node ready and registered."
       return 0
     else
@@ -307,9 +308,9 @@ function node-registered {
 function main {
   # this script is installed and started as part of the kube-node-configuration.service(configure-helper.sh) which is preloaded in COS images
   # by the time this script is started kube-node-installation.service(configure.sh) has already ran but we will wait a bit before executing this checks.
-  # 2 minutes is usually enough but shielded nodes seem to take a bit longer. 4 minutes is enough.
+  # 4 minutes is usually enough but shielded nodes seem to take a bit longer. 7 minutes is enough.
   # we don't want to check too early(things might not be ready) neither too late(auto-repair might kick in)
-  readonly SLEEP_TIME="4m"
+  readonly SLEEP_TIME="7m"
   log "Starting Node Registration Checker"
   log "Loading variables from kube-env"
   if [[ ! -e "${KUBE_HOME}/kube-env" ]]; then
