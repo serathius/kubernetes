@@ -544,12 +544,18 @@ EOF
 # Manipulate SMT settings for the node. GKE Sandbox by default
 # disables SMT for vulnerable nodes.
 function configure-smt {
-  if [[ "${GVISOR_ENABLE_SMT:-}" == "true" ]]; then
+  declare -r smt_path="/sys/devices/system/cpu/smt/control"
+  smt_state=$(cat ${smt_path})
+  echo "SMT in initial state: ${smt_state}"
+  if [[ "${GVISOR_ENABLE_SMT:-}" == "true" &&  "${smt_state}" ==  "off" ]]; then
+    # Only try to turn SMT on if it is currently "off". One
+    # core machines will return "notsupported" from this file.
     echo "Enabling SMT for node."
-    echo "on" > "/sys/devices/system/cpu/smt/control"
+    echo "on" > "${smt_path}"
     return
   fi
-  echo "Using default SMT settings."
+  smt_state=$(cat ${smt_path})
+  echo "SMT in final state: ${smt_state}"
 }
 
 # If we specify GKE_ADDON_REGISTRY_OVERRIDE, it will replace all occurrences
