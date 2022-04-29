@@ -526,11 +526,7 @@ root = "${sandbox_root}"
   oci-seccomp = "${gvisor_seccomp}"
 EOF
     if [[ "${gvisor_platform}" == "xemu" ]]; then
-      if [[ -f "${CONTAINERD_HOME}/xemu.ko.der" ]]; then
-        keyctl padd asymmetric xemu_key \
-          "%keyring:.secondary_trusted_keys" < "${CONTAINERD_HOME}/xemu.ko.der"
-      fi
-      insmod "${CONTAINERD_HOME}/xemu.ko"
+      load_xemu_module
     fi
   fi
 
@@ -539,6 +535,27 @@ EOF
 
   echo "Restart containerd to load the config change"
   systemctl restart containerd
+}
+
+# In COS_CONTAINERD images starting with cos-97-16919-29-21, xemu is
+# loaded as a signed module. If this is the case, we just load it as
+# a signed kernel module.
+function load_xemu_module {
+  local status=0
+  modprobe xemu >/dev/null || status="$?"
+  if [[ "${status}" -eq 0 ]]; then
+    echo "xemu module found in COS image"
+    return
+  fi
+
+  # TODO(zkoopmans): Remove fallback once preloader changes are made removing
+  # install of the non-COS image version.
+  echo "xemu module not found in COS image: preloaded version"
+  if [[ -f "${CONTAINERD_HOME}/xemu.ko.der" ]]; then
+    keyctl padd asymmetric xemu_key \
+      "%keyring:.secondary_trusted_keys" < "${CONTAINERD_HOME}/xemu.ko.der"
+  fi
+  insmod "${CONTAINERD_HOME}/xemu.ko"
 }
 
 # Manipulate SMT settings for the node. GKE Sandbox by default
