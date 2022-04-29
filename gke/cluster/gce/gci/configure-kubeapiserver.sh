@@ -299,6 +299,22 @@ EOF
   fi
   ##### END
 
+  ##### BEGIN GKEWarden authz config file creation.
+  # Create GKEWarden authz config file, if its env variable is set.
+  if [ -n "${GKEWARDEN_AUTHZ_KUBECONFIG:-}" ]; then
+    echo "Enabling GKEWarden authz plugin"
+
+    #Add GKEWarden mode to the list apiserver auth plugins
+    authorization_mode="GKEWarden,${authorization_mode}"
+
+    # Create webhook kubeconfig file off of $GKEWARDEN_AUTHZ_KUBECONFIG env var
+    cat > "/etc/srv/kubernetes/gke-warden-authz.config" <<EOF
+$GKEWARDEN_AUTHZ_KUBECONFIG
+EOF
+  fi
+
+  ##### END GKEWarden authz config file creation.
+
   # Enable ABAC mode unless the user explicitly opts out with ENABLE_LEGACY_ABAC=false
   if [[ "${ENABLE_LEGACY_ABAC:-}" != "false" ]]; then
     echo "Warning: Enabling legacy ABAC policy. All service accounts will have superuser API access. Set ENABLE_LEGACY_ABAC=false to disable this."

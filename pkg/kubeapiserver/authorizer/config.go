@@ -19,6 +19,7 @@ package authorizer
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -149,6 +150,23 @@ func (config Config) New() (authorizer.Authorizer, authorizer.RuleResolver, erro
 			)
 			authorizers = append(authorizers, rbacAuthorizer)
 			ruleResolvers = append(ruleResolvers, rbacAuthorizer)
+		case authzconfig.AuthorizerType(modes.ModeGKEWarden):
+			clientConfig, err := webhookutil.LoadKubeconfig("/etc/srv/kubernetes/gke-warden-authz.config", nil)
+			if err != nil {
+				return nil, nil, err
+			}
+			gkewardenAuthorizer, err := webhook.NewWithDecisionOnError(clientConfig,
+				"v1",
+				// Values from kubernetes/pkg/kubeapiserver/options/authorization.go
+				5 * time.Minute,
+				30 * time.Second,
+				*config.WebhookRetryBackoff,
+				authorizer.DecisionDeny)
+			if err != nil {
+				return nil, nil, err
+			}
+			authorizers = append(authorizers, gkewardenAuthorizer)
+			ruleResolvers = append(ruleResolvers, gkewardenAuthorizer)
 		default:
 			return nil, nil, fmt.Errorf("unknown authorization mode %s specified", configuredAuthorizer.Type)
 		}
