@@ -712,6 +712,20 @@ function install-riptide {
   install-riptide-snapshotter
 }
 
+function configure-cgroup-mode {
+  if which cgroup_helper > /dev/null 2>&1; then
+    if [[ "${CGROUP_MODE:-}" == "v1" ]] && cgroup_helper show | grep -q 'unified'; then
+      cgroup_helper set hybrid
+      echo "set cgroup config to hybrid, now rebooting..."
+      reboot
+    elif [[ "${CGROUP_MODE:-}" == "v2" ]] && cgroup_helper show | grep -q 'hybrid'; then
+      cgroup_helper set unified
+      echo "set cgroup config to unified, now rebooting..."
+      reboot
+    fi
+  fi
+}
+
 # A helper function for loading a docker image. It keeps trying up to 5 times.
 #
 # $1: Full path of the docker image
@@ -1230,6 +1244,8 @@ fi
 # download and source kube-env
 log-wrap 'DownloadKubeEnv' download-kube-env
 log-wrap 'SourceKubeEnv' source "${KUBE_HOME}/kube-env"
+
+log-wrap 'ConfigureCgroupMode' configure-cgroup-mode
 
 log-wrap 'DownloadKubeletConfig' download-kubelet-config "${KUBE_HOME}/kubelet-config.yaml"
 
