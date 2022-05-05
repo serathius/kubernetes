@@ -2697,7 +2697,6 @@ EOF
   if [[ "${ENABLE_DNS_HORIZONTAL_AUTOSCALER:-}" == "true" ]]; then
     setup-addon-manifests "addons" "dns-horizontal-autoscaler" "gce"
     local -r dns_autoscaler_file="${dst_dir}/dns-horizontal-autoscaler/dns-horizontal-autoscaler.yaml"
-    sed -i'' -e "s@{{.Target}}@${KUBEDNS_AUTOSCALER}@g" "${dns_autoscaler_file}"
   fi
 }
 
@@ -3370,7 +3369,6 @@ function main() {
   readonly UUID_MNT_PREFIX="/mnt/disks/by-uuid/google-local-ssds"
   readonly UUID_BLOCK_PREFIX="/dev/disk/by-uuid/google-local-ssds"
   readonly COREDNS_AUTOSCALER="Deployment/coredns"
-  readonly KUBEDNS_AUTOSCALER="Deployment/kube-dns"
 
   # Resource requests of master components.
   KUBE_CONTROLLER_MANAGER_CPU_REQUEST="${KUBE_CONTROLLER_MANAGER_CPU_REQUEST:-200m}"
