@@ -563,15 +563,16 @@ function load_xemu_module {
 # Manipulate SMT settings for the node. GKE Sandbox by default
 # disables SMT for vulnerable nodes.
 function configure-smt {
+  declare -r smt_op="${GVISOR_ENABLE_SMT:-}"
   declare -r smt_path="/sys/devices/system/cpu/smt/control"
-  smt_state=$(cat ${smt_path})
+  local smt_state=$(cat ${smt_path})
   echo "SMT in initial state: ${smt_state}"
-  if [[ "${GVISOR_ENABLE_SMT:-}" == "true" &&  "${smt_state}" ==  "off" ]]; then
-    # Only try to turn SMT on if it is currently "off". One
-    # core machines will return "notsupported" from this file.
+  if [[ "${smt_op}" == "true" ]]; then
     echo "Enabling SMT for node."
-    echo "on" > "${smt_path}"
-    return
+    echo "on" > "${smt_path}" > /dev/null || true
+  elif [[ "${smt_op}" == "false" ]]; then
+    echo "Disabling SMT for node."
+    echo "off" > "${smt_path}" > /dev/null || true
   fi
   smt_state=$(cat ${smt_path})
   echo "SMT in final state: ${smt_state}"
