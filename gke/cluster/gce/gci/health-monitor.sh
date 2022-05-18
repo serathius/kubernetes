@@ -27,7 +27,10 @@ set -o pipefail
 function container_runtime_monitoring {
   local -r max_attempts=5
   local attempt=1
-  local -r crictl="${KUBE_HOME}/bin/crictl"
+  local crictl="${KUBE_HOME}/bin/crictl"
+  if [[ -f "${HEALTHCHECK_SHM_DIR}/bin/crictl" ]]; then
+    crictl="${HEALTHCHECK_SHM_DIR}/bin/crictl"
+  fi
   local -r container_runtime_name="${CONTAINER_RUNTIME_NAME:-docker}"
   # We still need to use `docker ps` when container runtime is "docker". This is because
   # dockershim is still part of kubelet today. When kubelet is down, crictl pods
@@ -71,8 +74,12 @@ function kubelet_monitoring {
   sleep 120
   local -r max_seconds=10
   local output=""
+  local curl="$(which curl)"
+  if [[ -f "${HEALTHCHECK_SHM_DIR}/bin/curl" ]]; then
+    curl="${HEALTHCHECK_SHM_DIR}/bin/curl"
+  fi
   while true; do
-    if ! output=$(curl -m "${max_seconds}" -f -s -S http://127.0.0.1:10248/healthz 2>&1); then
+    if ! output=$(${curl} -m "${max_seconds}" -f -s -S http://127.0.0.1:10248/healthz 2>&1); then
       # Print the response and/or errors.
       echo "${output}"
       echo "Kubelet is unhealthy!"
@@ -99,6 +106,7 @@ if [[ ! -e "${KUBE_ENV}" ]]; then
   exit 1
 fi
 
+HEALTHCHECK_SHM_DIR="${HEALTHCHECK_SHM_DIR:-/dev/kube_shm}"
 SLEEP_SECONDS=10
 component=$1
 echo "Start kubernetes health monitoring for ${component}"

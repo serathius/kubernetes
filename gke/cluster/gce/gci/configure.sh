@@ -989,6 +989,9 @@ function install-kube-binary-config {
   # Install crictl on each node.
   install-crictl
 
+  # Copy health check binaries to a tmpfs mount to reduce block IO usage.
+  setup-shm-healthcheck-binaries
+
   # TODO(awly): include the binary and license in the OS image.
   install-exec-auth-plugin
 
@@ -1015,6 +1018,24 @@ function install-kube-binary-config {
   rm -f "${KUBE_HOME}/${server_binary_tar}.sha512"
 }
 
+function setup-shm-healthcheck-binaries() {
+  if [[ "${KUBERNETES_MASTER:-}" == "true" ]]; then
+    return
+  fi
+  if [[ "${ENABLE_SHM_HEALTHCHECK_BINARIES:-}" != "true" ]];then
+    return
+  fi
+
+  local -r shm_dir="${HEALTHCHECK_SHM_DIR:-/dev/kube_shm}"
+  local -r shm_bin_dir="${shm_dir}/bin"
+
+  mkdir -p "$shm_dir"
+  mount -t tmpfs -o exec none "$shm_dir"
+  mkdir "${shm_bin_dir}"
+
+  cp -f "${KUBE_BIN}/crictl" "${shm_bin_dir}/crictl"
+  cp -f "$(which curl)" "${shm_bin_dir}/curl"
+}
 
 # This function detects the platform/arch of the machine where the script runs,
 # and sets the HOST_PLATFORM and HOST_ARCH environment variables accordingly.
