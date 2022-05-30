@@ -2110,6 +2110,47 @@ function prepare-mounter-rootfs {
   cp /etc/resolv.conf "${CONTAINERIZED_MOUNTER_ROOTFS}/etc/"
 }
 
+# Applies lease permissions for KCM-to-CCM migration until successful
+function retry-reconcile-kcm-ccm-migration-lease-permission() {
+  retry-forever 2 reconcile-kcm-ccm-migration-lease-permission
+}
+
+# Applies lease permissions required for KCM-to-CCM migration
+function reconcile-kcm-ccm-migration-lease-permission() {
+  cat <<EOF | kubectl auth reconcile -f -
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: system:gke-kcm-ccm-leader-election
+  namespace: kube-system
+rules:
+- apiGroups: ["coordination.k8s.io"]
+  resources: ["leases"]
+  verbs: ["create"]
+- apiGroups: ["coordination.k8s.io"]
+  resources: ["leases"]
+  resourceNames: ["cloud-provider-extraction-migration-pt1"]
+  verbs: ["get","list","watch","patch","update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: system:gke-kcm-ccm-leader-election
+  namespace: kube-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: system:gke-kcm-ccm-leader-election
+subjects:
+- apiGroup: rbac.authorization.k8s.io
+  kind: User
+  name: system:kube-controller-manager
+- kind: ServiceAccount
+  name: kube-controller-manager
+  namespace: kube-system
+EOF
+}
+
 # Updates node labels used by addons.
 function update-legacy-addon-node-labels() {
   # need kube-apiserver to be ready
@@ -3553,6 +3594,7 @@ function main() {
     log-wrap 'StartKubeControllerManager' start-kube-controller-manager
     log-wrap 'StartKubeScheduler' start-kube-scheduler
     log-wrap 'WaitTillApiserverReady' wait-till-apiserver-ready
+    log-wrap 'ReconcileKcmCcmMigrationLeasePermission' retry-reconcile-kcm-ccm-migration-lease-permission
     log-wrap 'StartKubeAddons' start-kube-addons
     log-wrap 'StartClusterAutoscaler' start-cluster-autoscaler
     log-wrap 'StartLBController' start-lb-controller
