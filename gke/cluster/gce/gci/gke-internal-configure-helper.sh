@@ -272,6 +272,9 @@ function gke-internal-master-start {
   start_internal_cluster_autoscaler
   start_pod_autoscaler
   setup_master_prom_to_sd_monitor_component
+  if generate-token-for-mastertest; then
+    create-static-auth-kubeconfig-for-component mastertest
+  fi
 
   if [[ -n "${KUBE_BEARER_TOKEN:-}" ]]; then
     echo "setting up local admin kubeconfig"
@@ -838,6 +841,10 @@ function deploy-kube-scheduler-via-kube-up {
 
 function deploy-kube-controller-manager-via-kube-up {
   [[ "${KUBE_CONTROLLER_MANAGER_CRP:-}" != "true" ]]
+}
+
+function generate-token-for-mastertest {
+  [[ "${MASTERTEST_TOKEN_ENABLED:-false}" == "true" ]]
 }
 
 # Tweak SSH daemon config.
