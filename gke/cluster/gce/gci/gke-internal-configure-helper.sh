@@ -550,10 +550,10 @@ function configure-smt {
   echo "SMT in initial state: ${smt_state}"
   if [[ "${smt_op}" == "true" ]]; then
     echo "Enabling SMT for node."
-    echo "on" > "${smt_path}" > /dev/null || true
+    echo "on" > "${smt_path}" || true
   elif [[ "${smt_op}" == "false" ]]; then
     echo "Disabling SMT for node."
-    echo "off" > "${smt_path}" > /dev/null || true
+    echo "off" > "${smt_path}" || true
   fi
   smt_state=$(cat ${smt_path})
   echo "SMT in final state: ${smt_state}"
