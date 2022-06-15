@@ -220,6 +220,25 @@ function config-ip-firewall {
       gce-metadata-fw-helper -I LOG "MetadataServerFirewallAccept"
       ;;
   esac
+
+  if [[ "${CONNTRACK_EXEMPT_HC_MS:-}" == "true" ]];then
+    echo "Add rules for exempting kubelet healthcheck and access to metadata server from connection tracking"
+    # Traffic coming from metadata server
+    iptables -w -t raw -A PREROUTING -s "${METADATA_SERVER_IP}" -p tcp --sport 80  -j NOTRACK
+
+    # Traffic going to metadata server
+    iptables -w -t raw -A OUTPUT -d "${METADATA_SERVER_IP}" -p tcp --dport 80 -j NOTRACK
+
+    # Traffic going to metadata server and forwarded by host (ie. Pod traffic
+    # going to metadata server)
+    iptables -w -t raw -A PREROUTING -d "${METADATA_SERVER_IP}" -p tcp --dport 80  -j NOTRACK
+
+    # Traffic coming from localhost:10248 (ie. lo & kubelet healthz)
+    iptables -w -t raw -A PREROUTING -s 127.0.0.1 -p tcp --sport 10248 -j NOTRACK
+
+    # Traffic going to localhost:10248 (ie. lo & kubelet healthz)
+    iptables -w -t raw -A OUTPUT -d 127.0.0.1 -p tcp --dport 10248 -j NOTRACK
+  fi
 }
 
 function create-dirs {
