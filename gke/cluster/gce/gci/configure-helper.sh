@@ -227,6 +227,7 @@ function config-ip-firewall {
     iptables -w -t raw -A PREROUTING -s "${METADATA_SERVER_IP}" -p tcp --sport 80  -j NOTRACK
 
     # Traffic going to metadata server
+    iptables -w -A OUTPUT -d "${METADATA_SERVER_IP}" -p tcp --dport 80 -j ACCEPT
     iptables -w -t raw -A OUTPUT -d "${METADATA_SERVER_IP}" -p tcp --dport 80 -j NOTRACK
 
     # Traffic going to metadata server and forwarded by host (ie. Pod traffic
