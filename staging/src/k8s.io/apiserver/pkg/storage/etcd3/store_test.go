@@ -1348,7 +1348,7 @@ func TestCount(t *testing.T) {
 
 func TestLeaseMaxObjectCount(t *testing.T) {
 	ctx, store, _ := testSetup(t, withLeaseConfig(etcd.LeaseManagerConfig{
-		ReuseDurationSeconds: defaultLeaseReuseDurationSeconds,
+		ReuseDurationSeconds: 60,
 		MaxObjectCount:       2,
 	}))
 
