@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"io/ioutil"
+	"k8s.io/apiserver/pkg/storage/clients/etcd"
 	"os"
 	"reflect"
 	"strconv"
@@ -377,14 +378,14 @@ func TestGuaranteedUpdateChecksStoredData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp, err := store.client.Put(ctx, key, "test! "+string(data)+" ")
+	headerRV, err := store.mvccClient.OptimisticCreate(context.Background(), key, []byte("test! "+string(data)+" "), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// this update should write the canonical value to etcd because the new serialization differs
 	// from the stored serialization
-	input.ResourceVersion = strconv.FormatInt(resp.Header.Revision, 10)
+	input.ResourceVersion = strconv.FormatInt(headerRV, 10)
 	out := &example.Pod{}
 	err = store.GuaranteedUpdate(ctx, key, out, true, nil,
 		func(_ runtime.Object, _ storage.ResponseMeta) (runtime.Object, *uint64, error) {
@@ -393,7 +394,7 @@ func TestGuaranteedUpdateChecksStoredData(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Update failed: %v", err)
 	}
-	if out.ResourceVersion == strconv.FormatInt(resp.Header.Revision, 10) {
+	if out.ResourceVersion == strconv.FormatInt(headerRV, 10) {
 		t.Errorf("guaranteed update should have updated the serialized data, got %#v", out)
 	}
 
@@ -1017,8 +1018,8 @@ func TestListInconsistentContinuation(t *testing.T) {
 	}
 }
 
-func newTestLeaseManagerConfig() LeaseManagerConfig {
-	cfg := NewDefaultLeaseManagerConfig()
+func newTestLeaseManagerConfig() etcd.LeaseManagerConfig {
+	cfg := etcd.NewDefaultLeaseManagerConfig()
 	// As 30s is the default timeout for testing in global configuration,
 	// we cannot wait longer than that in a single time: change it to 1s
 	// for testing purposes. See wait.ForeverTestTimeout
@@ -1038,7 +1039,7 @@ type setupOptions struct {
 	groupResource schema.GroupResource
 	transformer   value.Transformer
 	pagingEnabled bool
-	leaseConfig   LeaseManagerConfig
+	leaseConfig   etcd.LeaseManagerConfig
 }
 
 type setupOption func(*setupOptions)
@@ -1083,7 +1084,7 @@ func withTransformer(transformer value.Transformer) setupOption {
 	}
 }
 
-func withLeaseConfig(leaseConfig LeaseManagerConfig) setupOption {
+func withLeaseConfig(leaseConfig etcd.LeaseManagerConfig) setupOption {
 	return func(options *setupOptions) {
 		options.leaseConfig = leaseConfig
 	}
@@ -1346,7 +1347,7 @@ func TestCount(t *testing.T) {
 }
 
 func TestLeaseMaxObjectCount(t *testing.T) {
-	ctx, store, _ := testSetup(t, withLeaseConfig(LeaseManagerConfig{
+	ctx, store, _ := testSetup(t, withLeaseConfig(etcd.LeaseManagerConfig{
 		ReuseDurationSeconds: defaultLeaseReuseDurationSeconds,
 		MaxObjectCount:       2,
 	}))
@@ -1379,8 +1380,8 @@ func TestLeaseMaxObjectCount(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Set failed: %v", err)
 		}
-		if store.leaseManager.leaseAttachedObjectCount != tc.expectAttachedCount {
-			t.Errorf("Lease manager recorded count %v should be %v", store.leaseManager.leaseAttachedObjectCount, tc.expectAttachedCount)
+		if store.leaseManager.GetLeaseAttachedObjectCount() != tc.expectAttachedCount {
+			t.Errorf("Lease manager recorded count %v should be %v", store.leaseManager.GetLeaseAttachedObjectCount(), tc.expectAttachedCount)
 		}
 	}
 }

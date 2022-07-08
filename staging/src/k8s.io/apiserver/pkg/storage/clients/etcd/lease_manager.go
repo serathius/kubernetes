@@ -14,11 +14,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package etcd3
+package etcd
 
 import (
 	"context"
-	"k8s.io/apiserver/pkg/storage"
 	"sync"
 	"time"
 
@@ -67,7 +66,7 @@ type leaseManager struct {
 }
 
 // newDefaultLeaseManager creates a new lease manager using default setting.
-func newDefaultLeaseManager(client *clientv3.Client, config LeaseManagerConfig) storage.LeaseManager {
+func newDefaultLeaseManager(client *clientv3.Client, config LeaseManagerConfig) *leaseManager {
 	if config.MaxObjectCount <= 0 {
 		config.MaxObjectCount = defaultLeaseMaxObjectCount
 	}

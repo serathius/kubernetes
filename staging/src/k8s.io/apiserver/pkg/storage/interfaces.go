@@ -19,6 +19,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	clientv3 "go.etcd.io/etcd/client/v3"
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -268,4 +269,39 @@ type ListOptions struct {
 	// ProgressNotify determines whether storage-originated bookmark (progress notify) events should
 	// be delivered to the users. The option is ignored for non-watch requests.
 	ProgressNotify bool
+}
+
+type KV struct {
+	Key   []byte
+	Value []byte
+	RV    int64
+}
+
+type Event struct {
+	Key              string
+	Value            []byte
+	PrevValue        []byte
+	RV               int64
+	IsDeleted        bool
+	IsCreated        bool
+	IsProgressNotify bool
+}
+
+type MvccKVClient interface {
+	Get(ctx context.Context, key string) (fullKey []byte, value []byte, modRevision int64, headerRev int64, err error)
+	List(ctx context.Context, key string, opts []clientv3.OpOption) (kvs []*KV, hasMore bool, count int64, headerRev int64, err error)
+	Count(ctx context.Context, key string) (count int64, err error)
+	OptimisticCreate(ctx context.Context, key string, data []byte, ttl int64) (headerRev int64, err error)
+	OptimisticUpdate(ctx context.Context, key string, newData []byte, ttl int64, expectedRV int64) (kv *KV, succeeded bool, txnRV int64, err error)
+	OptimisticDelete(ctx context.Context, key string, expectedRV int64) (bool, *KV, error)
+	Compact(ctx context.Context, t int64, rev int64) (curTime int64, curRev int64, err error)
+	GrantLease(ctx context.Context, ttl int64) (leaseID int64, err error)
+	Watch(ctx context.Context, cancelFunc context.CancelFunc, key string, startRV int64, withPrefix bool, withProgressNotify bool, errCh chan<- error) <-chan *Event
+	GetLeaseManager() LeaseManager
+}
+
+type LeaseManager interface {
+	GetLease(ctx context.Context, ttl int64) (clientv3.LeaseID, error)
+	GetLeaseAttachedObjectCount() int64
+	GetReuseDurationSecondsLocked(ttl int64) int64
 }

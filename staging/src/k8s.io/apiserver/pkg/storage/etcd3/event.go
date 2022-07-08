@@ -20,52 +20,43 @@ import (
 	"fmt"
 	"go.etcd.io/etcd/api/v3/mvccpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"k8s.io/apiserver/pkg/storage"
 )
 
-type event struct {
-	key              string
-	value            []byte
-	prevValue        []byte
-	rev              int64
-	isDeleted        bool
-	isCreated        bool
-	isProgressNotify bool
-}
-
 // parseKV converts a KeyValue retrieved from an initial sync() listing to a synthetic isCreated event.
-func parseKV(kv *mvccpb.KeyValue) *event {
-	return &event{
-		key:       string(kv.Key),
-		value:     kv.Value,
-		prevValue: nil,
-		rev:       kv.ModRevision,
-		isDeleted: false,
-		isCreated: true,
+func parseKV(kv *mvccpb.KeyValue) *storage.Event {
+	return &storage.Event{
+		Key:       string(kv.Key),
+		Value:     kv.Value,
+		PrevValue: nil,
+		RV:        kv.ModRevision,
+		IsDeleted: false,
+		IsCreated: true,
 	}
 }
 
-func parseEvent(e *clientv3.Event) (*event, error) {
+func parseEvent(e *clientv3.Event) (*storage.Event, error) {
 	if !e.IsCreate() && e.PrevKv == nil {
 		// If the previous value is nil, error. One example of how this is possible is if the previous value has been compacted already.
 		return nil, fmt.Errorf("etcd event received with PrevKv=nil (key=%q, modRevision=%d, type=%s)", string(e.Kv.Key), e.Kv.ModRevision, e.Type.String())
 
 	}
-	ret := &event{
-		key:       string(e.Kv.Key),
-		value:     e.Kv.Value,
-		rev:       e.Kv.ModRevision,
-		isDeleted: e.Type == clientv3.EventTypeDelete,
-		isCreated: e.IsCreate(),
+	ret := &storage.Event{
+		Key:       string(e.Kv.Key),
+		Value:     e.Kv.Value,
+		RV:        e.Kv.ModRevision,
+		IsDeleted: e.Type == clientv3.EventTypeDelete,
+		IsCreated: e.IsCreate(),
 	}
 	if e.PrevKv != nil {
-		ret.prevValue = e.PrevKv.Value
+		ret.PrevValue = e.PrevKv.Value
 	}
 	return ret, nil
 }
 
-func progressNotifyEvent(rev int64) *event {
-	return &event{
-		rev:              rev,
-		isProgressNotify: true,
+func progressNotifyEvent(rev int64) *storage.Event {
+	return &storage.Event{
+		RV:               rev,
+		IsProgressNotify: true,
 	}
 }

@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/api/v3/mvccpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"k8s.io/apiserver/pkg/storage"
 	"testing"
 )
 
@@ -28,7 +29,7 @@ func TestParseEvent(t *testing.T) {
 	for _, tc := range []struct {
 		name          string
 		etcdEvent     *clientv3.Event
-		expectedEvent *event
+		expectedEvent *storage.Event
 		expectedErr   string
 	}{
 		{
@@ -44,13 +45,13 @@ func TestParseEvent(t *testing.T) {
 					Value:          []byte("value"),
 				},
 			},
-			expectedEvent: &event{
-				key:       "key",
-				value:     []byte("value"),
-				prevValue: nil,
-				rev:       1,
-				isDeleted: false,
-				isCreated: true,
+			expectedEvent: &storage.Event{
+				Key:       "key",
+				Value:     []byte("value"),
+				PrevValue: nil,
+				RV:        1,
+				IsDeleted: false,
+				IsCreated: true,
 			},
 			expectedErr: "",
 		},
@@ -85,13 +86,13 @@ func TestParseEvent(t *testing.T) {
 					Value:          nil,
 				},
 			},
-			expectedEvent: &event{
-				key:       "key",
-				value:     nil,
-				prevValue: []byte("value"),
-				rev:       2,
-				isDeleted: true,
-				isCreated: false,
+			expectedEvent: &storage.Event{
+				Key:       "key",
+				Value:     nil,
+				PrevValue: []byte("value"),
+				RV:        2,
+				IsDeleted: true,
+				IsCreated: false,
 			},
 			expectedErr: "",
 		},

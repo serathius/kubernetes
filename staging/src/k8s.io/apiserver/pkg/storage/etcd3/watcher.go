@@ -87,7 +87,7 @@ type watchChan struct {
 	internalPred      storage.SelectionPredicate
 	ctx               context.Context
 	cancel            context.CancelFunc
-	incomingEventChan chan *event
+	incomingEventChan chan *storage.Event
 	resultChan        chan watch.Event
 	errChan           chan error
 }
@@ -140,7 +140,7 @@ func (w *watcher) createWatchChan(ctx context.Context, key string, rev int64, re
 		recursive:         recursive,
 		progressNotify:    progressNotify,
 		internalPred:      pred,
-		incomingEventChan: make(chan *event, incomingBufSize),
+		incomingEventChan: make(chan *storage.Event, incomingBufSize),
 		resultChan:        make(chan watch.Event, outgoingBufSize),
 		errChan:           make(chan error, 1),
 	}
@@ -156,7 +156,7 @@ func (w *watcher) createWatchChan(ctx context.Context, key string, rev int64, re
 	// smooth. (leader transfers its leadership before stopping). If leader is
 	// hard killed, other servers will take an election timeout to realize
 	// leader lost and start campaign.
-	wc.ctx, wc.cancel = context.WithCancel(clientv3.WithRequireLeader(ctx))
+	wc.ctx, wc.cancel = context.WithCancel(ctx)
 	return wc
 }
 
@@ -321,7 +321,7 @@ func (wc *watchChan) acceptAll() bool {
 }
 
 // transform transforms an event into a result for user if not filtered.
-func (wc *watchChan) transform(e *event) (res *watch.Event) {
+func (wc *watchChan) transform(e *storage.Event) (res *watch.Event) {
 	curObj, oldObj, err := wc.prepareObjs(e)
 	if err != nil {
 		klog.Errorf("failed to prepare current and previous objects: %v", err)
@@ -330,12 +330,12 @@ func (wc *watchChan) transform(e *event) (res *watch.Event) {
 	}
 
 	switch {
-	case e.isProgressNotify:
+	case e.IsProgressNotify:
 		if wc.watcher.newFunc == nil {
 			return nil
 		}
 		object := wc.watcher.newFunc()
-		if err := wc.watcher.versioner.UpdateObject(object, uint64(e.rev)); err != nil {
+		if err := wc.watcher.versioner.UpdateObject(object, uint64(e.RV)); err != nil {
 			klog.Errorf("failed to propagate object version: %v", err)
 			return nil
 		}
@@ -343,7 +343,7 @@ func (wc *watchChan) transform(e *event) (res *watch.Event) {
 			Type:   watch.Bookmark,
 			Object: object,
 		}
-	case e.isDeleted:
+	case e.IsDeleted:
 		if !wc.filter(oldObj) {
 			return nil
 		}
@@ -351,7 +351,7 @@ func (wc *watchChan) transform(e *event) (res *watch.Event) {
 			Type:   watch.Deleted,
 			Object: oldObj,
 		}
-	case e.isCreated:
+	case e.IsCreated:
 		if !wc.filter(curObj) {
 			return nil
 		}
@@ -409,7 +409,7 @@ func (wc *watchChan) sendError(err error) {
 	}
 }
 
-func (wc *watchChan) sendEvent(e *event) {
+func (wc *watchChan) sendEvent(e *storage.Event) {
 	if len(wc.incomingEventChan) == incomingBufSize {
 		klog.V(3).InfoS("Fast watcher, slow processing. Probably caused by slow decoding, user not receiving fast, or other processing logic", "incomingEvents", incomingBufSize, "objectType", wc.watcher.objectType)
 	}
@@ -419,18 +419,18 @@ func (wc *watchChan) sendEvent(e *event) {
 	}
 }
 
-func (wc *watchChan) prepareObjs(e *event) (curObj runtime.Object, oldObj runtime.Object, err error) {
-	if e.isProgressNotify {
+func (wc *watchChan) prepareObjs(e *storage.Event) (curObj runtime.Object, oldObj runtime.Object, err error) {
+	if e.IsProgressNotify {
 		// progressNotify events doesn't contain neither current nor previous object version,
 		return nil, nil, nil
 	}
 
-	if !e.isDeleted {
-		data, _, err := wc.watcher.transformer.TransformFromStorage(wc.ctx, e.value, authenticatedDataString(e.key))
+	if !e.IsDeleted {
+		data, _, err := wc.watcher.transformer.TransformFromStorage(wc.ctx, e.Value, authenticatedDataString(e.Key))
 		if err != nil {
 			return nil, nil, err
 		}
-		curObj, err = decodeObj(wc.watcher.codec, wc.watcher.versioner, data, e.rev)
+		curObj, err = decodeObj(wc.watcher.codec, wc.watcher.versioner, data, e.RV)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -440,14 +440,14 @@ func (wc *watchChan) prepareObjs(e *event) (curObj runtime.Object, oldObj runtim
 	// know that the filter for previous object will return true and
 	// we need the object only to compute whether it was filtered out
 	// before).
-	if len(e.prevValue) > 0 && (e.isDeleted || !wc.acceptAll()) {
-		data, _, err := wc.watcher.transformer.TransformFromStorage(wc.ctx, e.prevValue, authenticatedDataString(e.key))
+	if len(e.PrevValue) > 0 && (e.IsDeleted || !wc.acceptAll()) {
+		data, _, err := wc.watcher.transformer.TransformFromStorage(wc.ctx, e.PrevValue, authenticatedDataString(e.Key))
 		if err != nil {
 			return nil, nil, err
 		}
 		// Note that this sends the *old* object with the etcd revision for the time at
 		// which it gets deleted.
-		oldObj, err = decodeObj(wc.watcher.codec, wc.watcher.versioner, data, e.rev)
+		oldObj, err = decodeObj(wc.watcher.codec, wc.watcher.versioner, data, e.RV)
 		if err != nil {
 			return nil, nil, err
 		}

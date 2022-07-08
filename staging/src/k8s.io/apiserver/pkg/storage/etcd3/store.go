@@ -21,6 +21,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"k8s.io/apiserver/pkg/storage/clients/etcd"
 	"path"
 	"reflect"
 	"strings"
@@ -70,7 +71,7 @@ func (d authenticatedDataString) AuthenticatedData() []byte {
 var _ value.Context = authenticatedDataString("")
 
 type store struct {
-	client              *clientv3.Client
+	mvccClient          storage.MvccKVClient
 	codec               runtime.Codec
 	versioner           storage.Versioner
 	transformer         value.Transformer
@@ -79,7 +80,7 @@ type store struct {
 	groupResourceString string
 	watcher             *watcher
 	pagingEnabled       bool
-	leaseManager        *leaseManager
+	leaseManager        storage.LeaseManager
 }
 
 type objState struct {
@@ -91,14 +92,15 @@ type objState struct {
 }
 
 // New returns an etcd3 implementation of storage.Interface.
-func New(c *clientv3.Client, codec runtime.Codec, newFunc func() runtime.Object, prefix string, groupResource schema.GroupResource, transformer value.Transformer, pagingEnabled bool, leaseManagerConfig LeaseManagerConfig) storage.Interface {
+func New(c *clientv3.Client, codec runtime.Codec, newFunc func() runtime.Object, prefix string, groupResource schema.GroupResource, transformer value.Transformer, pagingEnabled bool, leaseManagerConfig etcd.LeaseManagerConfig) storage.Interface {
 	return newStore(c, codec, newFunc, prefix, groupResource, transformer, pagingEnabled, leaseManagerConfig)
 }
 
-func newStore(c *clientv3.Client, codec runtime.Codec, newFunc func() runtime.Object, prefix string, groupResource schema.GroupResource, transformer value.Transformer, pagingEnabled bool, leaseManagerConfig LeaseManagerConfig) *store {
+func newStore(c *clientv3.Client, codec runtime.Codec, newFunc func() runtime.Object, prefix string, groupResource schema.GroupResource, transformer value.Transformer, pagingEnabled bool, leaseManagerConfig etcd.LeaseManagerConfig) *store {
 	versioner := storage.APIObjectVersioner{}
+	mvccClient := etcd.NewClient(c, leaseManagerConfig)
 	result := &store{
-		client:        c,
+		mvccClient:    mvccClient,
 		codec:         codec,
 		versioner:     versioner,
 		transformer:   transformer,
@@ -110,7 +112,7 @@ func newStore(c *clientv3.Client, codec runtime.Codec, newFunc func() runtime.Ob
 		groupResource:       groupResource,
 		groupResourceString: groupResource.String(),
 		watcher:             newWatcher(c, codec, newFunc, versioner, transformer),
-		leaseManager:        newDefaultLeaseManager(c, leaseManagerConfig),
+		leaseManager:        mvccClient.GetLeaseManager(),
 	}
 	return result
 }
@@ -124,36 +126,36 @@ func (s *store) Versioner() storage.Versioner {
 func (s *store) Get(ctx context.Context, key string, opts storage.GetOptions, out runtime.Object) error {
 	key = path.Join(s.pathPrefix, key)
 	startTime := time.Now()
-	getResp, err := s.client.KV.Get(ctx, key)
+	//getResp, err := s.client.KV.Get(ctx, key)
+	_, val, modRV, headerRV, err := s.mvccClient.Get(ctx, key)
 	metrics.RecordEtcdRequestLatency("get", getTypeName(out), startTime)
 	if err != nil {
 		return err
 	}
-	if err = s.validateMinimumResourceVersion(opts.ResourceVersion, uint64(getResp.Header.Revision)); err != nil {
+	if err = s.validateMinimumResourceVersion(opts.ResourceVersion, uint64(headerRV)); err != nil {
 		return err
 	}
 
-	if len(getResp.Kvs) == 0 {
+	if len(val) == 0 {
 		if opts.IgnoreNotFound {
 			return runtime.SetZeroValue(out)
 		}
 		return storage.NewKeyNotFoundError(key, 0)
 	}
-	kv := getResp.Kvs[0]
 
-	data, _, err := s.transformer.TransformFromStorage(ctx, kv.Value, authenticatedDataString(key))
+	data, _, err := s.transformer.TransformFromStorage(ctx, val, authenticatedDataString(key))
 	if err != nil {
 		return storage.NewInternalError(err.Error())
 	}
 
-	return decode(s.codec, s.versioner, data, out, kv.ModRevision)
+	return decode(s.codec, s.versioner, data, out, modRV)
 }
 
 // Create implements storage.Interface.Create.
 func (s *store) Create(ctx context.Context, key string, obj, out runtime.Object, ttl uint64) error {
 	trace := utiltrace.New("Create etcd3",
-		utiltrace.Field{"key", key},
-		utiltrace.Field{"type", getTypeName(obj)},
+		utiltrace.Field{Key: "key", Value: key},
+		utiltrace.Field{Key: "type", Value: getTypeName(obj)},
 	)
 	defer trace.LogIfLong(500 * time.Millisecond)
 	if version, err := s.versioner.ObjectResourceVersion(obj); err == nil && version != 0 {
@@ -169,12 +171,6 @@ func (s *store) Create(ctx context.Context, key string, obj, out runtime.Object,
 		return err
 	}
 	key = path.Join(s.pathPrefix, key)
-
-	opts, err := s.ttlOpts(ctx, int64(ttl))
-	if err != nil {
-		return err
-	}
-
 	newData, err := s.transformer.TransformToStorage(ctx, data, authenticatedDataString(key))
 	trace.Step("TransformToStorage finished", utiltrace.Field{"err", err})
 	if err != nil {
@@ -182,24 +178,16 @@ func (s *store) Create(ctx context.Context, key string, obj, out runtime.Object,
 	}
 
 	startTime := time.Now()
-	txnResp, err := s.client.KV.Txn(ctx).If(
-		notFound(key),
-	).Then(
-		clientv3.OpPut(key, string(newData), opts...),
-	).Commit()
+	klog.Errorf("KEY : %v\n", key)
+	headerRV, err := s.mvccClient.OptimisticCreate(ctx, key, newData, int64(ttl))
 	metrics.RecordEtcdRequestLatency("create", getTypeName(obj), startTime)
 	trace.Step("Txn call finished", utiltrace.Field{"err", err})
 	if err != nil {
 		return err
 	}
 
-	if !txnResp.Succeeded {
-		return storage.NewKeyExistsError(key, 0)
-	}
-
 	if out != nil {
-		putResp := txnResp.Responses[0].GetResponsePut()
-		err = decode(s.codec, s.versioner, data, out, putResp.Header.Revision)
+		err = decode(s.codec, s.versioner, data, out, headerRV)
 		trace.Step("decode finished", utiltrace.Field{"len", len(data)}, utiltrace.Field{"err", err})
 		return err
 	}
@@ -223,12 +211,17 @@ func (s *store) conditionalDelete(
 	validateDeletion storage.ValidateObjectFunc, cachedExistingObject runtime.Object) error {
 	getCurrentState := func() (*objState, error) {
 		startTime := time.Now()
-		getResp, err := s.client.KV.Get(ctx, key)
+		//getResp, err := s.client.KV.Get(ctx, key)
+		fullKey, val, modRV, _, err := s.mvccClient.Get(ctx, key)
 		metrics.RecordEtcdRequestLatency("get", getTypeName(out), startTime)
 		if err != nil {
 			return nil, err
 		}
-		return s.getState(ctx, getResp, key, v, false)
+		var kv *storage.KV
+		if len(fullKey) != 0 {
+			kv = &storage.KV{Key: fullKey, Value: val, RV: modRV}
+		}
+		return s.getState(ctx, kv, key, v, false)
 	}
 
 	var origState *objState
@@ -299,21 +292,15 @@ func (s *store) conditionalDelete(
 		}
 
 		startTime := time.Now()
-		txnResp, err := s.client.KV.Txn(ctx).If(
-			clientv3.Compare(clientv3.ModRevision(key), "=", origState.rev),
-		).Then(
-			clientv3.OpDelete(key),
-		).Else(
-			clientv3.OpGet(key),
-		).Commit()
+
+		succeeded, kv, err := s.mvccClient.OptimisticDelete(ctx, key, origState.rev)
 		metrics.RecordEtcdRequestLatency("delete", getTypeName(out), startTime)
 		if err != nil {
 			return err
 		}
-		if !txnResp.Succeeded {
-			getResp := (*clientv3.GetResponse)(txnResp.Responses[0].GetResponseRange())
+		if !succeeded {
 			klog.V(4).Infof("deletion of %s failed because of a conflict, going to retry", key)
-			origState, err = s.getState(ctx, getResp, key, v, false)
+			origState, err = s.getState(ctx, kv, key, v, false)
 			if err != nil {
 				return err
 			}
@@ -341,12 +328,16 @@ func (s *store) GuaranteedUpdate(
 
 	getCurrentState := func() (*objState, error) {
 		startTime := time.Now()
-		getResp, err := s.client.KV.Get(ctx, key)
+		fullKey, val, modRV, _, err := s.mvccClient.Get(ctx, key)
 		metrics.RecordEtcdRequestLatency("get", getTypeName(destination), startTime)
 		if err != nil {
 			return nil, err
 		}
-		return s.getState(ctx, getResp, key, v, ignoreNotFound)
+		var kv *storage.KV
+		if len(fullKey) != 0 {
+			kv = &storage.KV{Key: fullKey, Value: val, RV: modRV}
+		}
+		return s.getState(ctx, kv, key, v, ignoreNotFound)
 	}
 
 	var origState *objState
@@ -442,30 +433,18 @@ func (s *store) GuaranteedUpdate(
 			return storage.NewInternalError(err.Error())
 		}
 
-		opts, err := s.ttlOpts(ctx, int64(ttl))
-		if err != nil {
-			return err
-		}
 		trace.Step("Transaction prepared")
-
 		startTime := time.Now()
-		txnResp, err := s.client.KV.Txn(ctx).If(
-			clientv3.Compare(clientv3.ModRevision(key), "=", origState.rev),
-		).Then(
-			clientv3.OpPut(key, string(newData), opts...),
-		).Else(
-			clientv3.OpGet(key),
-		).Commit()
+		kv, succeeded, txnRV, err := s.mvccClient.OptimisticUpdate(ctx, key, newData, int64(ttl), origState.rev)
 		metrics.RecordEtcdRequestLatency("update", getTypeName(destination), startTime)
 		trace.Step("Txn call finished", utiltrace.Field{"err", err})
 		if err != nil {
 			return err
 		}
 		trace.Step("Transaction committed")
-		if !txnResp.Succeeded {
-			getResp := (*clientv3.GetResponse)(txnResp.Responses[0].GetResponseRange())
+		if !succeeded {
 			klog.V(4).Infof("GuaranteedUpdate of %s failed because of a conflict, going to retry", key)
-			origState, err = s.getState(ctx, getResp, key, v, ignoreNotFound)
+			origState, err = s.getState(ctx, kv, key, v, ignoreNotFound)
 			if err != nil {
 				return err
 			}
@@ -473,9 +452,8 @@ func (s *store) GuaranteedUpdate(
 			origStateIsCurrent = true
 			continue
 		}
-		putResp := txnResp.Responses[0].GetResponsePut()
 
-		err = decode(s.codec, s.versioner, data, destination, putResp.Header.Revision)
+		err = decode(s.codec, s.versioner, data, destination, txnRV)
 		trace.Step("decode finished", utiltrace.Field{"len", len(data)}, utiltrace.Field{"err", err})
 		return err
 	}
@@ -509,12 +487,12 @@ func (s *store) Count(key string) (int64, error) {
 	}
 
 	startTime := time.Now()
-	getResp, err := s.client.KV.Get(context.Background(), key, clientv3.WithRange(clientv3.GetPrefixRangeEnd(key)), clientv3.WithCountOnly())
+	count, err := s.mvccClient.Count(context.Background(), key)
 	metrics.RecordEtcdRequestLatency("listWithCount", key, startTime)
 	if err != nil {
 		return 0, err
 	}
-	return getResp.Count, nil
+	return count, nil
 }
 
 // GetList implements storage.Interface.
@@ -642,7 +620,7 @@ func (s *store) GetList(ctx context.Context, key string, opts storage.ListOption
 	// loop until we have filled the requested limit from etcd or there are no more results
 	var lastKey []byte
 	var hasMore bool
-	var getResp *clientv3.GetResponse
+	var count int64
 	var numFetched int
 	var numEvald int
 	// Because these metrics are for understanding the costs of handling LIST requests,
@@ -653,7 +631,9 @@ func (s *store) GetList(ctx context.Context, key string, opts storage.ListOption
 	}()
 	for {
 		startTime := time.Now()
-		getResp, err = s.client.KV.Get(ctx, key, options...)
+		//getResp, err = s.client.KV.Get(ctx, key, options...)
+		kvs, more, c, headerRV, err := s.mvccClient.List(ctx, key, options)
+		count = c
 		if recursive {
 			metrics.RecordEtcdRequestLatency("list", getTypeName(listPtr), startTime)
 		} else {
@@ -662,26 +642,26 @@ func (s *store) GetList(ctx context.Context, key string, opts storage.ListOption
 		if err != nil {
 			return interpretListError(err, len(pred.Continue) > 0, continueKey, keyPrefix)
 		}
-		numFetched += len(getResp.Kvs)
-		if err = s.validateMinimumResourceVersion(resourceVersion, uint64(getResp.Header.Revision)); err != nil {
+		numFetched += len(kvs)
+		if err = s.validateMinimumResourceVersion(resourceVersion, uint64(headerRV)); err != nil {
 			return err
 		}
-		hasMore = getResp.More
+		hasMore = more
 
-		if len(getResp.Kvs) == 0 && getResp.More {
+		if len(kvs) == 0 && hasMore {
 			return fmt.Errorf("no results were found, but etcd indicated there were more values remaining")
 		}
 
 		// avoid small allocations for the result slice, since this can be called in many
 		// different contexts and we don't know how significantly the result will be filtered
 		if pred.Empty() {
-			growSlice(v, len(getResp.Kvs))
+			growSlice(v, len(kvs))
 		} else {
-			growSlice(v, 2048, len(getResp.Kvs))
+			growSlice(v, 2048, len(kvs))
 		}
 
 		// take items from the response until the bucket is full, filtering as we go
-		for i, kv := range getResp.Kvs {
+		for i, kv := range kvs {
 			if paging && int64(v.Len()) >= pred.Limit {
 				hasMore = true
 				break
@@ -693,18 +673,18 @@ func (s *store) GetList(ctx context.Context, key string, opts storage.ListOption
 				return storage.NewInternalErrorf("unable to transform key %q: %v", kv.Key, err)
 			}
 
-			if err := appendListItem(v, data, uint64(kv.ModRevision), pred, s.codec, s.versioner, newItemFunc); err != nil {
+			if err := appendListItem(v, data, uint64(kv.RV), pred, s.codec, s.versioner, newItemFunc); err != nil {
 				return err
 			}
 			numEvald++
 
 			// free kv early. Long lists can take O(seconds) to decode.
-			getResp.Kvs[i] = nil
+			kvs[i] = nil
 		}
 
 		// indicate to the client which resource version was returned
 		if returnedRV == 0 {
-			returnedRV = getResp.Header.Revision
+			returnedRV = headerRV
 		}
 
 		// no more results remain or we didn't request paging
@@ -746,7 +726,7 @@ func (s *store) GetList(ctx context.Context, key string, opts storage.ListOption
 		// Only set remainingItemCount if the predicate is empty.
 		if utilfeature.DefaultFeatureGate.Enabled(features.RemainingItemCount) {
 			if pred.Empty() {
-				c := int64(getResp.Count - pred.Limit)
+				c := int64(count - pred.Limit)
 				remainingItemCount = &c
 			}
 		}
@@ -798,7 +778,7 @@ func (s *store) Watch(ctx context.Context, key string, opts storage.ListOptions)
 	return s.watcher.Watch(ctx, key, int64(rev), opts.Recursive, opts.ProgressNotify, opts.Predicate)
 }
 
-func (s *store) getState(ctx context.Context, getResp *clientv3.GetResponse, key string, v reflect.Value, ignoreNotFound bool) (*objState, error) {
+func (s *store) getState(ctx context.Context, kv *storage.KV, key string, v reflect.Value, ignoreNotFound bool) (*objState, error) {
 	state := &objState{
 		meta: &storage.ResponseMeta{},
 	}
@@ -809,7 +789,7 @@ func (s *store) getState(ctx context.Context, getResp *clientv3.GetResponse, key
 		state.obj = reflect.New(v.Type()).Interface().(runtime.Object)
 	}
 
-	if len(getResp.Kvs) == 0 {
+	if kv == nil {
 		if !ignoreNotFound {
 			return nil, storage.NewKeyNotFoundError(key, 0)
 		}
@@ -817,11 +797,11 @@ func (s *store) getState(ctx context.Context, getResp *clientv3.GetResponse, key
 			return nil, err
 		}
 	} else {
-		data, stale, err := s.transformer.TransformFromStorage(ctx, getResp.Kvs[0].Value, authenticatedDataString(key))
+		data, stale, err := s.transformer.TransformFromStorage(ctx, kv.Value, authenticatedDataString(key))
 		if err != nil {
 			return nil, storage.NewInternalError(err.Error())
 		}
-		state.rev = getResp.Kvs[0].ModRevision
+		state.rev = kv.RV
 		state.meta.ResourceVersion = uint64(state.rev)
 		state.data = data
 		state.stale = stale
