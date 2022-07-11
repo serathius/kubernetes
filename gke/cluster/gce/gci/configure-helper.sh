@@ -2012,6 +2012,27 @@ function start-etcd-servers {
   prepare-etcd-manifest "-events" "4002" "2381" "100m" "etcd-events.manifest"
 }
 
+# Waits until gke-master-healthcheck reports etcd is healthy.
+function wait-till-etcd-ready {
+  # CURL_FLAGS configures 5 retries, so this configures
+  # 10 * (initial try + 5 retries) = 60 connection attemps.
+  local max_attempts=10
+  local attempts=0
+
+  echo "Wait till etcd ready"
+  until curl ${CURL_FLAGS} "http://127.0.0.1:${MASTER_HEALTHCHECK_PORT}?view=etcd"; do
+    echo "Attempt ${attempts}: etcd not healthy, retrying in 2 seconds"
+    ((attempts+=1))
+
+    if (( attempts >= max_attempts )); then
+      echo 'Reached max attempts to query etcd health, proceeding with bootstrap.'
+      return
+    fi
+
+    sleep 2
+  done
+}
+
 # Replaces the variables in the konnectivity-server manifest file with the real values, and then
 # copy the file to the manifest dir
 # $1: value for variable "agent_port"
@@ -3605,6 +3626,9 @@ function main() {
     log-wrap 'ComputeMasterManifestVariables' compute-master-manifest-variables
     if [[ -z "${ETCD_SERVERS:-}" ]]; then
       log-wrap 'StartEtcdServers' start-etcd-servers
+      if [[ "${ENABLE_WAIT_TILL_ETCD_READY:-false}" == "true" ]]; then
+        log-wrap 'WaitTillEtcdReady' wait-till-etcd-ready
+      fi
     fi
     log-wrap 'SourceConfigureKubeApiserver' source ${KUBE_BIN}/configure-kubeapiserver.sh
     log-wrap 'StartKubeApiserver' start-kube-apiserver
