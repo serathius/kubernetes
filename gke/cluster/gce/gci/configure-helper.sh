@@ -224,7 +224,7 @@ function config-ip-firewall {
   if [[ "${CONNTRACK_EXEMPT_HC_MS:-}" == "true" ]];then
     echo "Add rules for exempting kubelet healthcheck and access to metadata server from connection tracking"
     # Traffic coming from metadata server
-    iptables -w -t raw -A PREROUTING -s "${METADATA_SERVER_IP}" -p tcp --sport 80  -j NOTRACK
+    iptables -w -t raw -A PREROUTING -i eth0 -s "${METADATA_SERVER_IP}" -p tcp --sport 80  -j NOTRACK
 
     # Traffic going to metadata server
     iptables -w -A OUTPUT -d "${METADATA_SERVER_IP}" -p tcp --dport 80 -j ACCEPT
@@ -232,13 +232,16 @@ function config-ip-firewall {
 
     # Traffic going to metadata server and forwarded by host (ie. Pod traffic
     # going to metadata server)
-    iptables -w -t raw -A PREROUTING -d "${METADATA_SERVER_IP}" -p tcp --dport 80  -j NOTRACK
+    iptables -w -t raw -A PREROUTING -i eth0 -d "${METADATA_SERVER_IP}" -p tcp --dport 80  -j NOTRACK
 
-    # Traffic coming from localhost:10248 (ie. lo & kubelet healthz)
+    # Traffic between localhost:* <-> localhost:10248 (ie. lo & kubelet healthz).
+    # Note, since sender and receiver are both localhost, the two directions go
+    # through egress and ingress twice. So it needs four exemption rules here.
     iptables -w -t raw -A PREROUTING -s 127.0.0.1 -p tcp --sport 10248 -j NOTRACK
+    iptables -w -t raw -A PREROUTING -s 127.0.0.1 -p tcp --dport 10248 -j NOTRACK
 
-    # Traffic going to localhost:10248 (ie. lo & kubelet healthz)
     iptables -w -t raw -A OUTPUT -d 127.0.0.1 -p tcp --dport 10248 -j NOTRACK
+    iptables -w -t raw -A OUTPUT -d 127.0.0.1 -p tcp --sport 10248 -j NOTRACK
   fi
 }
 
