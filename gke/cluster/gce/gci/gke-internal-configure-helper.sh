@@ -520,6 +520,7 @@ EOF
     local -r gvisor_net_raw="${GVISOR_NET_RAW:-"true"}"
     local -r gvisor_seccomp="${GVISOR_SECCOMP:-"true"}"
     local -r gvisor_lisafs="${GVISOR_LISAFS:-"false"}"
+    local -r gvisor_buffer_pooling="${GVISOR_BUFFER_POOLING:-"false"}"
     mkdir -p "${sandbox_root}"
     cat > "${shim_config_path}" <<EOF
 binary_name = "${CONTAINERD_SANDBOX_RUNTIME_ENGINE:-}"
@@ -529,6 +530,7 @@ root = "${sandbox_root}"
   net-raw = "${gvisor_net_raw}"
   oci-seccomp = "${gvisor_seccomp}"
   lisafs = "${gvisor_lisafs}"
+  buffer-pooling = "${gvisor_buffer_pooling}"
 EOF
     if [[ "${gvisor_platform}" == "xemu" ]]; then
       # COS versions cos-97-16919-29-21 and after contain XEMU in the base
