@@ -3696,8 +3696,6 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   log-init
   log-wrap 'ConfigureHelperMain' main "${@}"
 
-  if [[ "${KUBERNETES_MASTER:-}" == "true" ]]; then
-    # Give kube-bootstrap-logs-forwarder.service some time to write all logs.
-    sleep 3
-  fi
+  # Give kube-bootstrap-logs-forwarder.service some time to write all logs.
+  sleep 3
 fi
