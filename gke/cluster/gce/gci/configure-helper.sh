@@ -3136,8 +3136,17 @@ function install-bfq {
     return
   fi
 
+  local boot_disk_device_name
+  boot_disk_device_name=$(basename "$(rootdev -s -d)")
+
+  local boot_disk_scheduler="/sys/block/${boot_disk_device_name}/queue/scheduler"
+  if [[ ! -e "${boot_disk_scheduler}" ]]; then
+    echo "bfq installation failed, boot disk scheduler file does not exist - ${boot_disk_scheduler}"
+    return
+  fi
+
   modprobe bfq
-  echo 'bfq' > /sys/block/sda/queue/scheduler
+  echo 'bfq' > "${boot_disk_scheduler}"
 
   CGROUP_CONFIG=$(stat -fc %T /sys/fs/cgroup/)
 
