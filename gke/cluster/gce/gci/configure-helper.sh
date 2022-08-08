@@ -224,15 +224,17 @@ function config-ip-firewall {
   if [[ "${CONNTRACK_EXEMPT_HC_MS:-}" == "true" ]];then
     echo "Add rules for exempting kubelet healthcheck and access to metadata server from connection tracking"
     # Traffic coming from metadata server
-    iptables -w -t raw -A PREROUTING -i eth0 -s "${METADATA_SERVER_IP}" -p tcp --sport 80  -j NOTRACK
+    iptables -w -t raw -A PREROUTING -s "${METADATA_SERVER_IP}" -p tcp --sport 80  -j NOTRACK
+
+    if [[ ! "${ENABLE_METADATA_CONCEALMENT:-}" == "true" ]] || [[ "${METADATA_CONCEALMENT_NO_FIREWALL:-}" == "true" ]]; then
+      # Pod traffic going to metdata server (ie. traffic through veth*)
+      # Do not track them if if Workload Identity is disabled.
+      iptables -w -t raw -A PREROUTING -d "${METADATA_SERVER_IP}" -p tcp --dport 80  -j NOTRACK
+    fi
 
     # Traffic going to metadata server
     iptables -w -A OUTPUT -d "${METADATA_SERVER_IP}" -p tcp --dport 80 -j ACCEPT
     iptables -w -t raw -A OUTPUT -d "${METADATA_SERVER_IP}" -p tcp --dport 80 -j NOTRACK
-
-    # Traffic going to metadata server and forwarded by host (ie. Pod traffic
-    # going to metadata server)
-    iptables -w -t raw -A PREROUTING -i eth0 -d "${METADATA_SERVER_IP}" -p tcp --dport 80  -j NOTRACK
 
     # Traffic between localhost:* <-> localhost:10248 (ie. lo & kubelet healthz).
     # Note, since sender and receiver are both localhost, the two directions go
