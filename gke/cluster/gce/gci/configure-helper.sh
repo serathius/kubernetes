@@ -2508,7 +2508,7 @@ function download-component-data {
   cat > $attribute_config <<EOF
 attributes:
 - attributePath: $(get-metadata-value "instance/attributes/google-container-manifest-path")
-  localPath: $(python3 -c "import sys, yaml; print(yaml.load(open(sys.argv[1]))['staticPodPath'])" "${KUBE_HOME}/kubelet-config.yaml")
+  localPath: $(python3 -c "import sys, yaml; print(yaml.safe_load(open(sys.argv[1]))['staticPodPath'])" "${KUBE_HOME}/kubelet-config.yaml")
   processKind: split-pod-list
 - attributePath: $(get-metadata-value "instance/attributes/extra-addons-path")
   localPath: ${KUBE_HOME}/kube-manifests/kubernetes/gci-trusty/gce-extras/extras.json
