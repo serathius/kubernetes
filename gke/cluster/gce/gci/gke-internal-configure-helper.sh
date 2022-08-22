@@ -531,6 +531,7 @@ root = "${sandbox_root}"
   oci-seccomp = "${gvisor_seccomp}"
   lisafs = "${gvisor_lisafs}"
   buffer-pooling = "${gvisor_buffer_pooling}"
+  systemd-cgroup = "${systemdCgroup}"
 EOF
     if [[ "${gvisor_platform}" == "xemu" ]]; then
       # COS versions cos-97-16919-29-21 and after contain XEMU in the base
