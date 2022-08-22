@@ -156,25 +156,29 @@ function download-kubelet-config {
   )
 }
 
-function download-kube-master-certs {
-  # Fetch kube-master-certs from GCE metadata server.
-  (
-    umask 077
-    local -r tmp_kube_master_certs="/tmp/kube-master-certs.yaml"
-    # shellcheck disable=SC2086
-    retry-forever 10 curl ${CURL_FLAGS} \
-      -H "X-Google-Metadata-Request: True" \
-      -o "${tmp_kube_master_certs}" \
-      http://metadata.google.internal/computeMetadata/v1/instance/attributes/kube-master-certs
-    # Convert the yaml format file into a shell-style file.
-    eval "$(python3 -c '''
+# A function to pull kube-master-certs from HMS using hurl
+function download-kube-master-certs-hurl {
+  local -r endpoint=$(get-metadata-value "instance/attributes/gke-api-endpoint")
+  local -r tmp_kube_master_certs_path="/tmp/kube-master-certs.yaml"
+  local -r kube_master_certs_path="${KUBE_HOME}/kube-master-certs"
+  local -r kube_master_certs_hms_path=$(get-metadata-value "instance/attributes/kube-master-certs-path")
+
+  echo "Downloading kube-master-certs via hurl from ${kube_master_certs_hms_path} to ${tmp_kube_master_certs_path}"
+  retry-forever 30 ${KUBE_HOME}/bin/hurl --hms_address $endpoint \
+    --dst "${tmp_kube_master_certs_path}" \
+    "${kube_master_certs_hms_path}"
+
+  # Convert the yaml format file into a shell-style file.
+  eval "$(python3 -c '''
 import pipes,sys,yaml
 items = yaml.load(sys.stdin, Loader=yaml.BaseLoader).items()
 for k, v in items:
     print("readonly {var}={value}".format(var=k, value=pipes.quote(str(v))))
-''' < "${tmp_kube_master_certs}" > "${KUBE_HOME}/kube-master-certs")"
-    rm -f "${tmp_kube_master_certs}"
-  )
+''' < "${tmp_kube_master_certs_path}" > "${kube_master_certs_path}")"
+
+  # Remove the temp certs and strip perms for other users
+  rm -f "${tmp_kube_master_certs_path}"
+  chmod 600 "${kube_master_certs_path}"
 }
 
 function validate-hash {
@@ -1271,7 +1275,7 @@ log-wrap 'ConfigureCgroupMode' configure-cgroup-mode
 log-wrap 'DownloadKubeletConfig' download-kubelet-config "${KUBE_HOME}/kubelet-config.yaml"
 
 if [[ "${KUBERNETES_MASTER:-}" == "true" ]]; then
-  log-wrap 'DownloadKubeMasterCerts' download-kube-master-certs
+  log-wrap 'DownloadKubeMasterCerts' download-kube-master-certs-hurl
 fi
 
 # ensure chosen container runtime is present
