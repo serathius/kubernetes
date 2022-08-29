@@ -622,9 +622,11 @@ function gke-configure-node-problem-detector {
     local node_registration_checker_config=",${KUBE_HOME}/npd-custom-plugins/configs/node-registration-checker-monitor.json"
   fi
 
+  local -r local_ssd_config="${KUBE_HOME}/npd-custom-plugins/configs/local-ssd-monitor.json"
+
   flags="${NPD_TEST_LOG_LEVEL:-"--v=2"} ${NPD_TEST_ARGS:-}"
   flags+=" --logtostderr"
-  flags+=" --config.system-log-monitor=${km_config},${dm_config},${sm_config}${node_registration_checker_config:-}"
+  flags+=" --config.system-log-monitor=${km_config},${dm_config},${sm_config},${local_ssd_config}${node_registration_checker_config:-}"
   flags+=" --config.system-stats-monitor=${system_stats_monitor}"
   flags+=" --config.custom-plugin-monitor=${custom_plugin_monitors}"
   flags+=" --exporter.stackdriver=${sd_exporter_config}"
