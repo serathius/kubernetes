@@ -2064,8 +2064,8 @@ rules:
   verbs: ["create"]
 - apiGroups: ["coordination.k8s.io"]
   resources: ["leases"]
-  resourceNames: ["cloud-provider-extraction-migration-pt1"]
-  verbs: ["get","list","watch","patch","update"]
+  resourceNames: ["cloud-provider-extraction-migration-pt1", "cloud-provider-extraction-migration-pt2"]
+  verbs: ["get", "list", "watch", "patch", "update"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
