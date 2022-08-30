@@ -259,14 +259,19 @@ function create-dirs {
 }
 
 # Gets the total number of $(1) and $(2) type disks specified
-# by the user in ${NODE_LOCAL_SSDS_EXT}
+# by the user in ${NODE_LOCAL_SSDS_EXT} or ${NODE_LOCAL_NVME_SSD_BLOCK_EXT}
 function get-local-disk-num() {
   local interface="${1}"
   local format="${2}"
 
   localdisknum=0
-  if [[ -n "${NODE_LOCAL_SSDS_EXT:-}" ]]; then
-    IFS=";" read -r -a ssdgroups <<< "${NODE_LOCAL_SSDS_EXT:-}"
+  if [[ -n "${NODE_LOCAL_SSDS_EXT:-}" ]] || [[ -n "${NODE_LOCAL_NVME_SSD_BLOCK_EXT:-}" ]]; then
+    if  [[ -n "${NODE_LOCAL_SSDS_EXT:-}" ]]; then
+      IFS=";" read -r -a ssdgroups <<< "${NODE_LOCAL_SSDS_EXT:-}"
+    else
+      IFS=";" read -r -a ssdgroups <<< "${NODE_LOCAL_NVME_SSD_BLOCK_EXT:-}"
+    fi
+
     for ssdgroup in "${ssdgroups[@]}"; do
       IFS="," read -r -a ssdopts <<< "${ssdgroup}"
       local opnum="${ssdopts[0]}"
@@ -284,13 +289,17 @@ function get-local-disk-num() {
 function safe-block-symlink(){
   local device="${1}"
   local symdir="${2}"
+  local withoutuuid="${3}"
 
-  mkdir -p "${symdir}"
+  local sym="${symdir}"
 
-  get-or-generate-uuid "${device}"
-  local myuuid="${retuuid}"
+  if [[ ${withoutuuid} != "true" ]]; then
+    mkdir -p "${symdir}"
+    get-or-generate-uuid "${device}"
+    local myuuid="${retuuid}"
+    sym="${symdir}/local-ssd-${myuuid}"
+  fi
 
-  local sym="${symdir}/local-ssd-${myuuid}"
   # Do not "mkdir -p ${sym}" as that will cause unintended symlink behavior
   ln -s "${device}" "${sym}"
   echo "Created a symlink for SSD $ssd at ${sym}"
@@ -352,6 +361,32 @@ function safe-format-and-mount() {
   chmod a+w "${mountpoint}"
 }
 
+#Formats the given local ssd device ($1) if needed and mounts it at given mount point
+# ($2).
+function safe-format-and-mount-local-ssd() {
+  local device
+  local mountpoint
+  device="$1"
+  mountpoint="$2"
+
+  local fstype=$(udevadm info --query=property --name="${device}" | { grep ID_FS_TYPE || :; } | sed "s/ID_FS_TYPE=//")
+  if [[ "${fstype}" == "LVM2_member" || "${fstype}" == "linux_raid_member" ]]; then
+    echo "${device} contains a ${fstype} file system. Skip formatting and mounting."
+    return
+  fi
+
+  # Format only if the disk is not already formatted.
+  if ! tune2fs -l "${device}" ; then
+    echo "Formatting '${device}'"
+    mkfs.ext4 -F "${device}"
+  fi
+
+  mkdir -p "${mountpoint}"
+  echo "Mounting '${device}' at '${mountpoint}'"
+  mount -o discard,defaults "${device}" "${mountpoint}"
+  chmod a+w "${mountpoint}"
+}
+
 # Gets a devices UUID and bind mounts the device to mount location in
 # /mnt/disks/by-id/
 function unique-uuid-bind-mount(){
@@ -375,7 +410,7 @@ function unique-uuid-bind-mount(){
   fi
 
   # bindpoint should be the full path of the to-be-bound device
-  local bindpoint="${UUID_MNT_PREFIX}-${interface}-fs/local-ssd-${myuuid}"
+  local bindpoint="${LOCAL_SSDS_UUID_MNT_PREFIX}-${interface}-fs/local-ssd-${myuuid}"
 
   safe-bind-mount "${mountpoint}" "${bindpoint}"
 }
@@ -408,38 +443,45 @@ function mount-ext(){
   fi
 
   # TODO: Handle partitioned disks. Right now this code just ignores partitions
+  local mountpoint="/mnt/disks/ssd${devicenum}"
   if [[ "${format}" == "fs" ]]; then
+    local actual_device
+    actual_device=$(readlink -f "${ssd}" | cut -d '/' -f 3)
     if [[ "${interface}" == "scsi" ]]; then
-      local actual_device
-      actual_device=$(readlink -f "${ssd}" | cut -d '/' -f 3)
       # Error checking
       if [[ "${actual_device}" != sd* ]]; then
         echo "'actual_device' is not of the correct format. It must be the kernel name of the device, got ${actual_device} instead" >&2
         exit 1
       fi
-      local mountpoint="/mnt/disks/ssd${devicenum}"
     else
-      # This path is required because the existing Google images do not
-      # expose NVMe devices in /dev/disk/by-id so we are using the /dev/nvme instead
-      local actual_device
-      actual_device=$(echo "${ssd}" | cut -d '/' -f 3)
       # Error checking
       if [[ "${actual_device}" != nvme* ]]; then
         echo "'actual_device' is not of the correct format. It must be the kernel name of the device, got ${actual_device} instead" >&2
         exit 1
       fi
-      local mountpoint="/mnt/disks/ssd-nvme${devicenum}"
+      # --local-ssd-volumes API allows multiple interface and format combinations of local SSDs each node-pool
+      # Including nvme in mountpoint path to avoid conflict with scsi fs local SSDs on the same node
+      if [[ -n "${NODE_LOCAL_SSDS_EXT:-}" ]]; then
+        mountpoint="/mnt/disks/ssd-nvme${devicenum}"
+      fi
     fi
 
-    safe-format-and-mount "${ssd}" "${mountpoint}"
-    # We only do the bindmount if users are using the new local ssd request method
+    safe-format-and-mount-local-ssd "${ssd}" "${mountpoint}"
+    # We only do the bindmount if users are using the new local ssd request methods
     # see https://github.com/kubernetes/kubernetes/pull/53466#discussion_r146431894
-    if [[ -n "${NODE_LOCAL_SSDS_EXT:-}" ]]; then
+    if [[ -n "${NODE_LOCAL_SSDS_EXT:-}" ]] || [[ -n "${NODE_LOCAL_NVME_SSD_BLOCK_EXT:-}" ]]; then
       unique-uuid-bind-mount "${mountpoint}" "${actual_device}"
     fi
   elif [[ "${format}" == "block" ]]; then
-    local symdir="${UUID_BLOCK_PREFIX}-${interface}-block"
-    safe-block-symlink "${ssd}" "${symdir}"
+    # Create unique symlink with interface type, format and uuid to support Local PV
+    local symdir="${LOCAL_SSDS_UUID_BLOCK_PREFIX}-${interface}-block"
+    safe-block-symlink "${ssd}" "${symdir}" "false"
+    # Create generic format symlink to support migration without breaking customer application
+    # when users are using --local-nvme-ssd-block API
+    if [[ -n "${NODE_LOCAL_NVME_SSD_BLOCK_EXT:-}" ]]; then
+      local sym="${LOCAL_SSDS_ID_PATH_PREFIX}-ssd-block${devicenum}"
+      safe-block-symlink "${ssd}" "${sym}" "true"
+    fi
   else
     echo "Disk format must be either fs or block, got ${format}"
   fi
@@ -448,14 +490,17 @@ function mount-ext(){
 # Local ssds, if present, are mounted or symlinked to their appropriate
 # locations
 function ensure-local-ssds() {
-  if [ "${NODE_LOCAL_SSDS_EPHEMERAL:-false}" == "true" ]; then
+  # NODE_LOCAL_SSDS_EPHEMERAL is env variable for --ephemeral-storage API
+  # NODE_EPHEMERAL_STORAGE_LOCAL_SSD is env variable for --ephemeral-storage-local-ssd API
+  # Both APIs now have the same functionality
+  if [ "${NODE_LOCAL_SSDS_EPHEMERAL:-false}" == "true" ] || [ "${NODE_EPHEMERAL_STORAGE_LOCAL_SSD:-false}" == "true" ] ; then
     ensure-local-ssds-ephemeral-storage
     return
   fi
   get-local-disk-num "scsi" "block"
   local scsiblocknum="${localdisknum}"
   local i=0
-  for ssd in /dev/disk/by-id/google-local-ssd-*; do
+  for ssd in "${LOCAL_SSDS_ID_PATH_PREFIX}"-ssd-*; do
     if [ -e "${ssd}" ]; then
       local devicenum
       devicenum=$(echo "${ssd}" | sed -e 's/\/dev\/disk\/by-id\/google-local-ssd-\([0-9]*\)/\1/')
@@ -483,23 +528,18 @@ function ensure-local-ssds() {
     return
   fi
   local i=0
-  for ssd in /dev/nvme*; do
-    if [ -e "${ssd}" ]; then
-      # This workaround to find if the NVMe device is a disk is required because
-      # the existing Google images does not expose NVMe devices in /dev/disk/by-id
-      if [[ $(udevadm info --query=property --name="${ssd}" | grep DEVTYPE | sed "s/DEVTYPE=//") == "disk" ]]; then
-        # shellcheck disable=SC2155
-        local devicenum=$(echo "${ssd}" | sed -e 's/\/dev\/nvme0n\([0-9]*\)/\1/')
+  for ssd in "${LOCAL_SSDS_ID_PATH_PREFIX}"-nvme-ssd-*; do
+      if [ -e "${ssd}" ]; then
+        local devicenum=$(echo "${ssd}" | sed -e 's/\/dev\/disk\/by-id\/google-local-nvme-ssd-\([0-9]*\)/\1/')
         if [[ "${i}" -lt "${nvmeblocknum}" ]]; then
           mount-ext "${ssd}" "${devicenum}" "nvme" "block"
         else
           mount-ext "${ssd}" "${devicenum}" "nvme" "fs"
         fi
         i=$((i+1))
+      else
+        echo "No local NVMe SSD disks found."
       fi
-    else
-      echo "No local NVMe SSD disks found."
-    fi
   done
 }
 
@@ -509,13 +549,9 @@ function ensure-local-ssds() {
 function ensure-local-ssds-ephemeral-storage() {
   local devices=()
   # Get nvme devices
-  for ssd in /dev/nvme*n*; do
+  for ssd in "${LOCAL_SSDS_ID_PATH_PREFIX}"-nvme-ssd-*; do
     if [ -e "${ssd}" ]; then
-      # This workaround to find if the NVMe device is a local SSD is required
-      # because the existing Google images does not them in /dev/disk/by-id
-      if [[ "$(lsblk -o MODEL -dn "${ssd}")" == "nvme_card" ]]; then
-        devices+=("${ssd}")
-      fi
+      devices+=("${ssd}")
     fi
   done
   if [ "${#devices[@]}" -eq 0 ]; then
@@ -535,7 +571,7 @@ function ensure-local-ssds-ephemeral-storage() {
   fi
 
   local ephemeral_mountpoint="/mnt/stateful_partition/kube-ephemeral-ssd"
-  safe-format-and-mount "${device}" "${ephemeral_mountpoint}"
+  safe-format-and-mount-local-ssd "${device}" "${ephemeral_mountpoint}"
 
   # mount container runtime root dir on SSD
   local container_runtime="${CONTAINER_RUNTIME:-docker}"
@@ -3497,8 +3533,9 @@ function main() {
   echo "Start to configure instance for kubernetes"
   log-wrap 'DetectHostInfo' detect_host_info
 
-  readonly UUID_MNT_PREFIX="/mnt/disks/by-uuid/google-local-ssds"
-  readonly UUID_BLOCK_PREFIX="/dev/disk/by-uuid/google-local-ssds"
+  readonly LOCAL_SSDS_ID_PATH_PREFIX="/dev/disk/by-id/google-local"
+  readonly LOCAL_SSDS_UUID_MNT_PREFIX="/mnt/disks/by-uuid/google-local-ssds"
+  readonly LOCAL_SSDS_UUID_BLOCK_PREFIX="/dev/disk/by-uuid/google-local-ssds"
   readonly COREDNS_AUTOSCALER="Deployment/coredns"
 
   # Resource requests of master components.
