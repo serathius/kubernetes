@@ -12,13 +12,13 @@ write_files:
     content: |
       [Unit]
       Description=Forwards Kubernetes bootstrap logs to serial port.
-      Before=kube-master-installation.service
+      Before=kube-node-installation.service
 
       [Service]
       User=kube-bootstrap-logs-forwarder
       Group=systemd-journal
       SupplementaryGroups=serial
-      ExecStart=journalctl --no-tail --no-pager --follow --utc --output short-iso --unit kube-master-installation --unit kube-master-configuration --unit kubelet
+      ExecStart=journalctl --no-tail --no-pager --follow --utc --output short-iso --unit kube-node-installation --unit kube-node-configuration --unit kubelet
       StandardOutput=tty
       TTYPath=/dev/ttyS2
 
@@ -42,7 +42,6 @@ write_files:
       ExecStartPre=/usr/bin/curl --fail --retry 5 --retry-delay 3 --silent --show-error -H "X-Google-Metadata-Request: True" -o /home/kubernetes/bin/configure.sh http://metadata.google.internal/computeMetadata/v1/instance/attributes/configure-sh
       ExecStartPre=/bin/chmod 544 /home/kubernetes/bin/configure.sh
       ExecStart=/home/kubernetes/bin/configure.sh
-      ExecStartPost=systemctl stop kube-bootstrap-logs-forwarder.service
 
       [Install]
       WantedBy=kubernetes.target
@@ -60,6 +59,7 @@ write_files:
       RemainAfterExit=yes
       ExecStartPre=/bin/chmod 544 /home/kubernetes/bin/configure-helper.sh
       ExecStart=/home/kubernetes/bin/configure-helper.sh
+      ExecStartPost=systemctl stop kube-bootstrap-logs-forwarder.service
 
       [Install]
       WantedBy=kubernetes.target
