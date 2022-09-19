@@ -23,6 +23,7 @@ clusters:
   cluster:
     certificate-authority-data: ${CA_CERT}
     server: https://${KUBE_APISERVER_INTERNAL_ADDRESS}:443
+    disable-compression: true
 contexts:
 - context:
     cluster: local
@@ -44,6 +45,7 @@ clusters:
   cluster:
     insecure-skip-tls-verify: true
     server: https://localhost:443
+    disable-compression: true
 contexts:
 - context:
     cluster: local
