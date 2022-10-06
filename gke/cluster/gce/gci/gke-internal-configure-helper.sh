@@ -764,6 +764,8 @@ function gke-create-gpu-config {
     --gpu-sharing-strategy=${gpu_sharing_strategy} \
     --file-path=${gpu_config_file}
 
+  # Setup all GPUs to EXCLUSIVE mode (https://docs.nvidia.com/deploy/mps/index.html#topic_3_3_1_2).
+  # Setup systemd service to start MPS control daemon.
   if [[ "${GPU_SHARING_STRATEGY:-}" == "mps" ]]; then
     cat <<EOF >/etc/systemd/system/nvidia-mps.service
 [Unit]
@@ -774,7 +776,8 @@ Type=simple
 Restart=always
 RestartSec=10
 RemainAfterExit=yes
-ExecStart=/home/kubernetes/bin/nvidia/bin/nvidia-cuda-mps-control -d
+ExecStartPre=/home/kubernetes/bin/nvidia/bin/nvidia-smi -c EXCLUSIVE_PROCESS
+ExecStart=/bin/bash -c 'PATH=$PATH:/home/kubernetes/bin/nvidia/bin exec nvidia-cuda-mps-control -d'
 ExecStop=echo quit | nvidia-cuda-mps-control
 
 [Install]
