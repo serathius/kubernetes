@@ -521,7 +521,6 @@ EOF
     local -r gvisor_platform="${GVISOR_PLATFORM:-"ptrace"}"
     local -r gvisor_net_raw="${GVISOR_NET_RAW:-"true"}"
     local -r gvisor_seccomp="${GVISOR_SECCOMP:-"true"}"
-    local -r gvisor_lisafs="${GVISOR_LISAFS:-"false"}"
     local -r gvisor_buffer_pooling="${GVISOR_BUFFER_POOLING:-"false"}"
     mkdir -p "${sandbox_root}"
     cat > "${shim_config_path}" <<EOF
@@ -531,7 +530,6 @@ root = "${sandbox_root}"
   platform = "${gvisor_platform}"
   net-raw = "${gvisor_net_raw}"
   oci-seccomp = "${gvisor_seccomp}"
-  lisafs = "${gvisor_lisafs}"
   buffer-pooling = "${gvisor_buffer_pooling}"
   systemd-cgroup = "${systemdCgroup}"
 EOF
