@@ -52,6 +52,9 @@ RIPTIDE_SNAPSHOTTER_BIN_AMD64_SHA512='72aef987bac71887670ba816453fb09479dab709b8
 # Standard curl flags.
 CURL_FLAGS='--fail --silent --show-error --retry 5 --retry-delay 3 --connect-timeout 10 --retry-connrefused'
 
+# This version needs to be the same as in gke/cluster/gce/gci/configure-helper.sh
+GKE_CONTAINERD_INFRA_CONTAINER="${CONTAINERD_INFRA_CONTAINER:-gcr.io/gke-release/pause:3.8@sha256:880e63f94b145e46f1b1082bb71b85e21f16b99b180b9996407d61240ceb9830}"
+
 function set-broken-motd {
   cat > /etc/motd <<EOF
 Broken (or in progress) Kubernetes node setup! Check the cluster initialization status
@@ -473,6 +476,13 @@ EOF
   rm -f "${crictl}"
 
   record-preload-info "${crictl}" "${crictl_hash}"
+}
+
+function preload-pause-image {
+  if [[ "$0" != "$BASH_SOURCE" && "${IS_PRELOADER:-"false"}" == "true" ]]; then
+    "${KUBE_BIN}/crictl" pull ${GKE_CONTAINERD_INFRA_CONTAINER}
+    record-preload-info "pause" "${GKE_CONTAINERD_INFRA_CONTAINER}"
+  fi
 }
 
 function install-exec-auth-plugin {
@@ -917,6 +927,9 @@ function install-kube-binary-config {
 
   # Install crictl on each node.
   install-crictl
+
+  # Preload pause image
+  preload-pause-image
 
   # Copy health check binaries to a tmpfs mount to reduce block IO usage.
   setup-shm-healthcheck-binaries
