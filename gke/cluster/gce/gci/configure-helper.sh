@@ -28,7 +28,8 @@ set -o pipefail
 ### Hardcoded constants
 METADATA_SERVER_IP="${METADATA_SERVER_IP:-169.254.169.254}"
 
-DEFAULT_CONTAINERD_INFRA_CONTAINER="registry.k8s.io/pause:3.8"
+# This version needs to be the same as in gke/cluster/gce/gci/configure-helper.sh
+GKE_CONTAINERD_INFRA_CONTAINER="${CONTAINERD_INFRA_CONTAINER:-gcr.io/gke-release/pause:3.8@sha256:880e63f94b145e46f1b1082bb71b85e21f16b99b180b9996407d61240ceb9830}"
 
 # Standard curl flags.
 CURL_FLAGS='--fail --silent --show-error --retry 5 --retry-delay 3 --connect-timeout 10 --retry-connrefused'
@@ -1748,6 +1749,7 @@ function start-kubelet {
 
   # POD_SYSCTLS is set in function configure-node-sysctls.
   local kubelet_opts="${KUBELET_ARGS} ${KUBELET_CONFIG_FILE_ARG:-} --pod-sysctls='${POD_SYSCTLS:-}' ${kubelet_cgroup_driver:-} ${kubelet_image_service_endpoint:-}"
+  kubelet_opts="${kubelet_opts} --pod-infra-container-image=${GKE_CONTAINERD_INFRA_CONTAINER}"
   echo "KUBELET_OPTS=\"${kubelet_opts}\"" > "${kubelet_env_file}"
   echo "KUBE_COVERAGE_FILE=\"/var/log/kubelet.cov\"" >> "${kubelet_env_file}"
 
@@ -3259,7 +3261,7 @@ oom_score = -999
 [plugins."io.containerd.grpc.v1.cri"]
   stream_server_address = "127.0.0.1"
   max_container_log_line_size = ${CONTAINERD_MAX_CONTAINER_LOG_LINE:-262144}
-  sandbox_image = ${CONTAINERD_INFRA_CONTAINER:-$DEFAULT_CONTAINERD_INFRA_CONTAINER}
+  sandbox_image = "${GKE_CONTAINERD_INFRA_CONTAINER}"
 [plugins."io.containerd.grpc.v1.cri".cni]
   bin_dir = "${KUBE_HOME}/bin"
   conf_dir = "/etc/cni/net.d"

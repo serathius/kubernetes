@@ -37,6 +37,9 @@ DEFAULT_MOUNTER_ROOTFS_TAR_AMD64_SHA512='631330b7fa911d67e400b1d014df65a7763667d
 DEFAULT_MOUNTER_ROOTFS_TAR_ARM64_SHA512='83cf9ab7961627359654131abd2d4c4b72875d395c50cda9e417149b2eb53b784dfe5c2f744ddbccfe516e36dd64c716d69d161d8bc8b4f42a9207fe676d0bc1'
 ###
 
+# This version needs to be the same as in gke/cluster/gce/gci/configure-helper.sh
+GKE_CONTAINERD_INFRA_CONTAINER="${CONTAINERD_INFRA_CONTAINER:-gcr.io/gke-release/pause:3.8@sha256:880e63f94b145e46f1b1082bb71b85e21f16b99b180b9996407d61240ceb9830}"
+
 RIPTIDE_FUSE_BUCKET="${RIPTIDE_FUSE_BUCKET:-gke-release}"
 RIPTIDE_SNAPSHOTTER_BUCKET="${RIPTIDE_SNAPSHOTTER_BUCKET:-gke-release}"
 RIPTIDE_FUSE_VERSION="${RIPTIDE_FUSE_VERSION:-v0.162.0}"
@@ -472,6 +475,13 @@ EOF
   rm -f "${crictl}"
 
   record-preload-info "${crictl}" "${crictl_hash}"
+}
+
+function preload-pause-image {
+  if [[ "$0" != "$BASH_SOURCE" && "${IS_PRELOADER:-"false"}" == "true" ]]; then
+    "${KUBE_BIN}/crictl" pull ${GKE_CONTAINERD_INFRA_CONTAINER}
+    record-preload-info "pause" "${GKE_CONTAINERD_INFRA_CONTAINER}"
+  fi
 }
 
 function install-exec-auth-plugin {
@@ -992,6 +1002,9 @@ function install-kube-binary-config {
 
   # Install crictl on each node.
   install-crictl
+
+  # Preload pause image
+  preload-pause-image
 
   # Copy health check binaries to a tmpfs mount to reduce block IO usage.
   setup-shm-healthcheck-binaries
