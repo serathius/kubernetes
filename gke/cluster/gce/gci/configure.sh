@@ -478,10 +478,18 @@ EOF
 }
 
 function preload-pause-image {
-  if [[ "$0" != "$BASH_SOURCE" && "${IS_PRELOADER:-"false"}" == "true" ]]; then
+  # preloading pause image. It will be used in preloader and will be
+  # useful for staging builds where access_token is needed to pull the image
+  local access_token="";
+
+  if access_token=$(get-credentials); then
+    "${KUBE_BIN}/crictl" pull --creds "oauth2accesstoken:${access_token}" ${GKE_CONTAINERD_INFRA_CONTAINER}
+  else
+    echo "No access token. Pulling without it."
     "${KUBE_BIN}/crictl" pull ${GKE_CONTAINERD_INFRA_CONTAINER}
-    record-preload-info "pause" "${GKE_CONTAINERD_INFRA_CONTAINER}"
   fi
+
+  record-preload-info "pause" "${GKE_CONTAINERD_INFRA_CONTAINER}"
 }
 
 function install-exec-auth-plugin {
