@@ -53,7 +53,7 @@ RIPTIDE_SNAPSHOTTER_BIN_AMD64_SHA512='72aef987bac71887670ba816453fb09479dab709b8
 CURL_FLAGS='--fail --silent --show-error --retry 5 --retry-delay 3 --connect-timeout 10 --retry-connrefused'
 
 # This version needs to be the same as in gke/cluster/gce/gci/configure-helper.sh
-GKE_CONTAINERD_INFRA_CONTAINER="${CONTAINERD_INFRA_CONTAINER:-gcr.io/gke-release/pause:3.8@sha256:880e63f94b145e46f1b1082bb71b85e21f16b99b180b9996407d61240ceb9830}"
+GKE_CONTAINERD_INFRA_CONTAINER="${CONTAINERD_INFRA_CONTAINER:-gke.gcr.io/pause:3.8@sha256:880e63f94b145e46f1b1082bb71b85e21f16b99b180b9996407d61240ceb9830}"
 
 function set-broken-motd {
   cat > /etc/motd <<EOF
