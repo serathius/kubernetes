@@ -162,7 +162,9 @@ try {
   Start-CSIProxy
   Create-NodePki
   Create-KubeletKubeconfig
-  Create-KubeproxyKubeconfig
+  if (!(Is-Antrea-Enabled $kube_env)) {
+    Create-KubeproxyKubeconfig
+  }
   Create-NodeProblemDetectorKubeConfig
   Set-PodCidr
 
@@ -182,7 +184,10 @@ try {
   # Flush cache to disk before starting kubelet & kube-proxy services
   # to make metadata server route and stackdriver service more persistent.
   Write-Volumecache C -PassThru
-  Start-WorkerServices
+  Start-Kubelet
+  if (!(Is-Antrea-Enabled $kube_env)) {
+    Start-Kubeproxy
+  }
   Log-Output 'Waiting 15 seconds for node to join cluster.'
   Start-Sleep 15
   Verify-WorkerServices
@@ -213,7 +218,11 @@ catch {
   Write-Host $_.InvocationInfo.PositionMessage
   Write-Host "Kubernetes Windows node setup failed: $($_.Exception.Message)"
   # Make sure kubelet won't remain running in case any failure happened during the startup.
-  Write-Host "Cleaning up, Unregistering WorkerServices..."
-  Unregister-WorkerServices
+  if (!(Is-Antrea-Enabled $kube_env)) {
+    Write-Host "Cleaning up, Unregistering Kube-proxy..."
+    Unregister-Kubeproxy
+  }
+  Write-Host "Cleaning up, Unregistering Kubelet..."
+  Unregister-Kubelet
   exit 1
 }
