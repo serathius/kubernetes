@@ -478,6 +478,11 @@ EOF
 }
 
 function preload-pause-image {
+  if is-preloaded "pause" "${GKE_CONTAINERD_INFRA_CONTAINER}"; then
+    echo "pause image is preloaded"
+    return
+  fi
+
   # preloading pause image. It will be used in preloader and will be
   # useful for staging builds where access_token is needed to pull the image
   local access_token="";
