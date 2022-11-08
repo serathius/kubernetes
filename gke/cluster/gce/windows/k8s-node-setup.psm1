@@ -1152,7 +1152,12 @@ function Prepare-CniNetworking {
   Install_Cni_Binaries
   if (Is-Antrea-Enabled $kube_env) {
     # Use the original ethernet name to configure hostdns.conf
-    Configure-HostDnsConf -AdapterName Ethernet
+    $na = Get-NetAdapter | ? Name -Like "Ethernet*" | ? Status -EQ Up
+    if ($na.ifAlias) {
+      Configure-HostDnsConf -AdapterName $na.ifAlias
+    } else {
+      Log-Output -Fatal "No interface that starts with Ethernet. Don't know what to do"
+    }
     DownloadAndInstall-AntreaBinaries
     Cleanup-StaleAntreaNetwork
   } else {
