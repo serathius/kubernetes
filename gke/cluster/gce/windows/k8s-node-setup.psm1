@@ -1145,9 +1145,7 @@ function Configure-GcePdTools {
   Import-Module -Name $modulePath'.replace('K8S_DIR', ${env:K8S_DIR})
 }
 
-# Prepare cni network. It prepares the interface, set hostdns.conf and
-# download antrea binaries. It handles both antrea and winbridge as cni
-# provider.
+# Setup cni network for containerd.
 function Prepare-CniNetworking {
   Install_Cni_Binaries
   if (Is-Antrea-Enabled $kube_env) {
@@ -1162,17 +1160,8 @@ function Prepare-CniNetworking {
     Cleanup-StaleAntreaNetwork
   } else {
     Configure-HostNetworkingService
-    Prepare-CniBridgeNetworking
-    Configure-HostDnsConf
-  }
-}
-
-# Setup cni bridge. This function supports both Docker and containerd.
-function Prepare-CniBridgeNetworking {
-  if (${env:CONTAINER_RUNTIME} -eq "containerd") {
     Configure_Containerd_CniNetworking
-  } else {
-    Configure_Dockerd_CniNetworking
+    Configure-HostDnsConf
   }
 }
 
@@ -1182,7 +1171,7 @@ function Install_Cni_Binaries {
   # For containerd the CNI binaries have already been installed along with
   # the runtime. For antrea, host-local.exe is needed regardless containerd
   # is enabled or not.
-  if ((${env:CONTAINER_RUNTIME} -eq "containerd") -and -not (Is-Antrea-Enabled $kube_env)) {
+  if (-not (Is-Antrea-Enabled $kube_env)) {
     return
   }
   if (-not (ShouldWrite-File ${env:CNI_DIR}\win-bridge.exe) -and
@@ -1215,138 +1204,6 @@ function Install_Cni_Binaries {
         "win-bridge.exe and host-local.exe not found in ${env:CNI_DIR}" `
         -Fatal
   }
-}
-
-# Writes a CNI config file under $env:CNI_CONFIG_DIR.
-#
-# Prerequisites:
-#   $env:POD_CIDR is set (by Set-PodCidr).
-#   The "management" interface exists (Configure-HostNetworkingService).
-#   The HNS network for pod networking has been configured
-#     (Configure-HostNetworkingService).
-#
-# Required ${kube_env} keys:
-#   DNS_SERVER_IP
-#   DNS_DOMAIN
-#   SERVICE_CLUSTER_IP_RANGE
-function Configure_Dockerd_CniNetworking {
-  $l2bridge_conf = "${env:CNI_CONFIG_DIR}\l2bridge.conf"
-  if (-not (ShouldWrite-File ${l2bridge_conf})) {
-    return
-  }
-
-  $mgmt_ip = (Get_MgmtNetAdapter |
-              Get-NetIPAddress -AddressFamily IPv4).IPAddress
-
-  $cidr_range_start = Get_PodIP_Range_Start(${env:POD_CIDR})
-
-  $proxy_policy_for_workload_identity = Get_ProxyPolicyForWorkloadIdentity
-
-  # Explanation of the CNI config values:
-  #   POD_CIDR: the pod CIDR assigned to this node.
-  #   CIDR_RANGE_START: start of the pod CIDR range.
-  #   MGMT_IP: the IP address assigned to the node's primary network interface
-  #     (i.e. the internal IP of the GCE VM).
-  #   SERVICE_CIDR: the CIDR used for kubernetes services.
-  #   DNS_SERVER_IP: the cluster's DNS server IP address.
-  #   DNS_DOMAIN: the cluster's DNS domain, e.g. "cluster.local".
-  #
-  # OutBoundNAT ExceptionList: No SNAT for CIDRs in the list, the same as default GKE non-masquerade destination ranges listed at https://cloud.google.com/kubernetes-engine/docs/how-to/ip-masquerade-agent#default-non-masq-dests
-
-  New-Item -Force -ItemType file ${l2bridge_conf} | Out-Null
-  Set-Content ${l2bridge_conf} `
-'{
-  "cniVersion":  "0.2.0",
-  "name":  "l2bridge",
-  "type":  "win-bridge",
-  "capabilities":  {
-    "portMappings":  true,
-    "dns": true
-  },
-  "ipam":  {
-    "type": "host-local",
-    "subnet": "POD_CIDR",
-    "rangeStart": "CIDR_RANGE_START"
-  },
-  "dns":  {
-    "Nameservers":  [
-      "DNS_SERVER_IP"
-    ],
-    "Search": [
-      "DNS_DOMAIN"
-    ]
-  },
-  "Policies":  [
-    PROXY_POLICY_FOR_WORKLOAD_IDENTITY
-    {
-      "Name":  "EndpointPolicy",
-      "Value":  {
-        "Type":  "OutBoundNAT",
-        "ExceptionList":  [
-          "169.254.0.0/16",
-          "10.0.0.0/8",
-          "172.16.0.0/12",
-          "192.168.0.0/16",
-          "100.64.0.0/10",
-          "192.0.0.0/24",
-          "192.0.2.0/24",
-          "192.88.99.0/24",
-          "198.18.0.0/15",
-          "198.51.100.0/24",
-          "203.0.113.0/24",
-          "240.0.0.0/4"
-        ]
-      }
-    },
-    {
-      "Name":  "EndpointPolicy",
-      "Value":  {
-        "Type":  "ROUTE",
-        "DestinationPrefix":  "SERVICE_CIDR",
-        "NeedEncap":  true
-      }
-    },
-    {
-      "Name":  "EndpointPolicy",
-      "Value":  {
-        "Type":  "ROUTE",
-        "DestinationPrefix":  "MGMT_IP/32",
-        "NeedEncap":  true
-      }
-    }
-  ]
-}'.replace('POD_CIDR', ${env:POD_CIDR}).`
-  replace('CIDR_RANGE_START', ${cidr_range_start}).`
-  replace('DNS_SERVER_IP', ${kube_env}['DNS_SERVER_IP']).`
-  replace('DNS_DOMAIN', ${kube_env}['DNS_DOMAIN']).`
-  replace('MGMT_IP', ${mgmt_ip}).`
-  replace('SERVICE_CIDR', ${kube_env}['SERVICE_CLUSTER_IP_RANGE']).`
-  replace('PROXY_POLICY_FOR_WORKLOAD_IDENTITY', ${proxy_policy_for_workload_identity})
-
-  Log-Output "CNI config:`n$(Get-Content -Raw ${l2bridge_conf})"
-}
-
-# When workload identity is enabled, gke-metadata-server will listen on POD_GATEWAY:988
-# This proxy policy will be in the CNI config, which will be applied to every pod on this node.
-# The request to 169.254.169.254:80 (GCE Metadata) will be redirected to gke-metadata-server.
-function Get_ProxyPolicyForWorkloadIdentity {
-  if (-not (Test-EnableWorkloadIdentity ${kube_env})) {
-    Log-Output "Workload identity is not enabled. No proxy policy is needed"
-    return ""
-  }
-
-  $pod_gateway = Get_Endpoint_Gateway_From_CIDR ${env:POD_CIDR}
-
-  return '{
-      "Name":  "EndpointPolicy",
-      "Value":  {
-         "Type": "PROXY",
-         "IP": "GCE_METADATA_SERVER",
-         "Port": "80",
-         "Destination": "POD_GATEWAY:988"
-      }
-    },'.replace('POD_GATEWAY', ${pod_gateway}).`
-       replace('GCE_METADATA_SERVER', $GCE_METADATA_SERVER)
 }
 
 # When workload identity is enabled, gke-metadata-server will listen on POD_GATEWAY:988
@@ -1633,18 +1490,12 @@ function Pull-InfraContainer {
   Log-Output "Infra/pause container:`n$inspect"
 }
 
-# Setup the container runtime on the node. It supports both
-# Docker and containerd.
+# Setup the containerd on the node.
 function Setup-ContainerRuntime {
   Install-Pigz
-  if (${env:CONTAINER_RUNTIME} -eq "containerd") {
-    Install_Containerd
-    Configure_Containerd
-    Start_Containerd
-  } else {
-    Create_DockerRegistryKey
-    Configure_Dockerd
-  }
+  Install_Containerd
+  Configure_Containerd
+  Start_Containerd
 }
 
 function Test-ContainersFeatureInstalled {
@@ -1664,71 +1515,6 @@ function Test-ContainersFeatureInstalled {
 function Install-ContainersFeature {
   Log-Output "Installing Windows 'Containers' feature"
   Install-WindowsFeature Containers
-}
-
-function Test-DockerIsInstalled {
-  return ((Get-Package `
-               -ProviderName DockerMsftProvider `
-               -ErrorAction SilentlyContinue |
-           Where-Object Name -eq 'docker') -ne $null)
-}
-
-function Test-DockerIsRunning {
-  return ((Get-Service docker).Status -eq 'Running')
-}
-
-# Installs Docker EE via the DockerMsftProvider. Ensure that the Windows
-# Containers feature is installed before calling this function; otherwise,
-# a restart may be needed after this function returns.
-function Install-Docker {
-  Log-Output 'Installing NuGet module'
-  Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force
-
-  Log-Output 'Installing DockerMsftProvider module'
-  Install-Module -Name DockerMsftProvider -Repository PSGallery -Force
-
-  Log-Output "Installing latest Docker EE version"
-  Install-Package `
-      -Name docker `
-      -ProviderName DockerMsftProvider `
-      -Force `
-      -Verbose
-}
-
-# Add a registry key for docker in EventLog so that log messages are mapped
-# correctly. This is a workaround since the key is missing in the base image.
-# https://github.com/MicrosoftDocs/Virtualization-Documentation/pull/503
-# TODO: Fix this in the base image.
-# TODO(random-liu): Figure out whether we need this for containerd.
-function Create_DockerRegistryKey {
-  $tmp_dir = 'C:\tmp_docker_reg'
-  New-Item -Force -ItemType 'directory' ${tmp_dir} | Out-Null
-  $reg_file = 'docker.reg'
-  Set-Content ${tmp_dir}\${reg_file} `
-'Windows Registry Editor Version 5.00
- [HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\EventLog\Application\docker]
-"CustomSource"=dword:00000001
-"EventMessageFile"="C:\\Program Files\\docker\\dockerd.exe"
-"TypesSupported"=dword:00000007'
-
-  Log-Output "Importing registry key for Docker"
-  reg import ${tmp_dir}\${reg_file}
-  Remove-Item -Force -Recurse ${tmp_dir}
-}
-
-# Configure Docker daemon and restart the service.
-function Configure_Dockerd {
-  Set-Content "C:\ProgramData\docker\config\daemon.json" @'
-{
-  "log-driver": "json-file",
-  "log-opts": {
-    "max-size": "1m",
-    "max-file": "5"
-  }
-}
-'@
-
- Restart-Service Docker
 }
 
 # Configures the TCP/IP parameters to be in sync with the GCP recommendation.
@@ -1971,7 +1757,7 @@ function Install-Pigz {
       Expand-Archive -Path "$PIGZ_ROOT\pigz-$PIGZ_VERSION.zip" `
         -DestinationPath $PIGZ_ROOT
       Remove-Item -Path "$PIGZ_ROOT\pigz-$PIGZ_VERSION.zip"
-      # Docker and Containerd search for unpigz.exe on the first container image
+      # Containerd search for unpigz.exe on the first container image
       # pull request after the service is started. If unpigz.exe is in the
       # Windows path it'll use it instead of the default unzipper.
       # See: https://github.com/containerd/containerd/issues/1896
@@ -2076,12 +1862,8 @@ function Configure-NodeProblemDetector {
         $system_stats_monitors += @("${npd_dir}\config\windows-system-stats-monitor.json")
 
         # NPD Configuration for CRI monitor
-        if (${env:CONTAINER_RUNTIME} -eq "containerd") {
-          $system_log_monitors += @("${npd_dir}\config\windows-containerd-monitor-filelog.json")
-          $custom_plugin_monitors += @("${npd_dir}\config\windows-health-checker-containerd.json")
-        } else {
-          $custom_plugin_monitors += @("${npd_dir}\config\windows-health-checker-docker.json")
-        }
+        $system_log_monitors += @("${npd_dir}\config\windows-containerd-monitor-filelog.json")
+        $custom_plugin_monitors += @("${npd_dir}\config\windows-health-checker-containerd.json")
 
         $flags="--v=2 --port=20256 --log_dir=${npd_logs_dir}"
         if ($system_log_monitors.count -gt 0) {
