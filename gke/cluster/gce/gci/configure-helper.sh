@@ -1784,8 +1784,6 @@ function start-node-problem-detector {
   local flags="${NODE_PROBLEM_DETECTOR_CUSTOM_FLAGS:-}"
   if [[ -z "${flags}" ]]; then
     local -r km_config="${KUBE_HOME}/node-problem-detector/config/kernel-monitor.json"
-    # TODO(random-liu): Handle this for alternative container runtime.
-    local -r dm_config="${KUBE_HOME}/node-problem-detector/config/docker-monitor.json"
     local -r sm_config="${KUBE_HOME}/node-problem-detector/config/systemd-monitor.json"
     local -r ssm_config="${KUBE_HOME}/node-problem-detector/config/system-stats-monitor.json"
 
@@ -1794,7 +1792,7 @@ function start-node-problem-detector {
 
     flags="${NPD_TEST_LOG_LEVEL:-"--v=2"} ${NPD_TEST_ARGS:-}"
     flags+=" --logtostderr"
-    flags+=" --config.system-log-monitor=${km_config},${dm_config},${sm_config}"
+    flags+=" --config.system-log-monitor=${km_config},${sm_config}"
     flags+=" --config.system-stats-monitor=${ssm_config}"
     flags+=" --config.custom-plugin-monitor=${custom_km_config},${custom_sm_config}"
     local -r npd_port=${NODE_PROBLEM_DETECTOR_PORT:-20256}
