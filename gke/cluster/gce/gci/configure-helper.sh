@@ -577,17 +577,17 @@ function ensure-local-ssds-ephemeral-storage() {
   safe-format-and-mount-local-ssd "${device}" "${ephemeral_mountpoint}"
 
   # mount container runtime root dir on SSD
-  local container_runtime="${CONTAINER_RUNTIME:-docker}"
-  systemctl stop "$container_runtime"
+  local container_runtime_name="${CONTAINER_RUNTIME_NAME:-containerd}"
+  systemctl stop "$container_runtime_name"
   # Some images remount the container runtime root dir.
-  umount "/var/lib/${container_runtime}" || true
+  umount "/var/lib/${container_runtime_name}" || true
   # Move the container runtime's directory to the new location to preserve
   # preloaded images.
-  if [ ! -d "${ephemeral_mountpoint}/${container_runtime}" ]; then
-    mv "/var/lib/${container_runtime}" "${ephemeral_mountpoint}/${container_runtime}"
+  if [ ! -d "${ephemeral_mountpoint}/${container_runtime_name}" ]; then
+    mv "/var/lib/${container_runtime_name}" "${ephemeral_mountpoint}/${container_runtime_name}"
   fi
-  safe-bind-mount "${ephemeral_mountpoint}/${container_runtime}" "/var/lib/${container_runtime}"
-  systemctl start "$container_runtime"
+  safe-bind-mount "${ephemeral_mountpoint}/${container_runtime_name}" "/var/lib/${container_runtime_name}"
+  systemctl start "$container_runtime_name"
 
   # mount kubelet root dir on SSD
   mkdir -p "${ephemeral_mountpoint}/kubelet"
@@ -2712,9 +2712,9 @@ function start-volumesnapshot-crd-and-controller {
 # endpoint.
 function update-container-runtime {
   local -r file="$1"
-  local -r container_runtime_endpoint="${CONTAINER_RUNTIME_ENDPOINT:-unix:///var/run/dockershim.sock}"
+  local -r container_runtime_endpoint="${CONTAINER_RUNTIME_ENDPOINT:-unix:///run/containerd/containerd.sock}"
   sed -i \
-    -e "s@{{ *fluentd_container_runtime_service *}}@${FLUENTD_CONTAINER_RUNTIME_SERVICE:-${CONTAINER_RUNTIME_NAME:-docker}}@g" \
+    -e "s@{{ *fluentd_container_runtime_service *}}@${FLUENTD_CONTAINER_RUNTIME_SERVICE:-${CONTAINER_RUNTIME_NAME:-containerd}}@g" \
     -e "s@{{ *container_runtime_endpoint *}}@${container_runtime_endpoint#unix://}@g" \
     "${file}"
 }
@@ -3643,25 +3643,19 @@ function main() {
 
   log-wrap 'DetectCgroupConfig' detect-cgroup-config
   log-wrap 'OverrideKubectl' override-kubectl
-  container_runtime="${CONTAINER_RUNTIME:-docker}"
-  # Run the containerized mounter once to pre-cache the container image.
-  if [[ "${container_runtime}" == "docker" ]]; then
+  if docker-installed; then
+    # We still need to configure docker so it wouldn't reserver the 172.17.0/16 subnet
+    # And if somebody will start docker to build or pull something, logging will also be set up
     log-wrap 'AssembleDockerFlags' assemble-docker-flags
-  elif [[ "${container_runtime}" == "containerd" ]]; then
-    if docker-installed; then
-      # We still need to configure docker so it wouldn't reserver the 172.17.0/16 subnet
-      # And if somebody will start docker to build or pull something, logging will also be set up
-      log-wrap 'AssembleDockerFlags' assemble-docker-flags
-      # stop docker if it is present as we want to use just containerd
-      # (b/174523058) stopping docker breaks COS toolbox and some other scripts
-      # log-wrap 'StopDocker' systemctl stop docker || echo "unable to stop docker"
-    fi
-    if [[ -e "${KUBE_HOME}/bin/gke-internal-configure-helper.sh" ]]; then
-      log-wrap 'ConfigureSMT' configure-smt
-      log-wrap 'GKESetupContainerd' gke-setup-containerd
-    else
-      log-wrap 'SetupContainerd' setup-containerd
-    fi
+    # stop docker if it is present as we want to use just containerd
+    # (b/174523058) stopping docker breaks COS toolbox and some other scripts
+    # log-wrap 'StopDocker' systemctl stop docker || echo "unable to stop docker"
+  fi
+  if [[ -e "${KUBE_HOME}/bin/gke-internal-configure-helper.sh" ]]; then
+    log-wrap 'ConfigureSMT' configure-smt
+    log-wrap 'GKESetupContainerd' gke-setup-containerd
+  else
+    log-wrap 'SetupContainerd' setup-containerd
   fi
 
   log-start 'SetupKubePodLogReadersGroupDir'

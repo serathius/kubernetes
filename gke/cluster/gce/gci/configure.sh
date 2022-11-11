@@ -459,7 +459,7 @@ function install-crictl {
 
   # Create crictl config file.
   cat > /etc/crictl.yaml <<EOF
-runtime-endpoint: ${CONTAINER_RUNTIME_ENDPOINT:-unix:///var/run/dockershim.sock}
+runtime-endpoint: ${CONTAINER_RUNTIME_ENDPOINT:-unix:///run/containerd/containerd.sock}
 EOF
 
   if is-preloaded "${crictl}" "${crictl_hash}"; then
@@ -764,9 +764,7 @@ function try-load-docker-image {
   local -r max_attempts=5
   local -i attempt_num=1
 
-  if [[ "${CONTAINER_RUNTIME_NAME:-}" == "docker" ]]; then
-    load_image_command=${LOAD_IMAGE_COMMAND:-docker load -i}
-  elif [[ "${CONTAINER_RUNTIME_NAME:-}" == "containerd" || "${CONTAINERD_TEST:-}"  == "containerd" ]]; then
+  if [[ "${CONTAINER_RUNTIME_NAME:-}" == "containerd" || "${CONTAINERD_TEST:-}"  == "containerd" ]]; then
     load_image_command=${LOAD_IMAGE_COMMAND:-ctr -n=k8s.io images import}
   else
     load_image_command="${LOAD_IMAGE_COMMAND:-}"
@@ -799,44 +797,6 @@ function load-docker-images {
   else
     try-load-docker-image "${img_dir}/kube-proxy.tar"
   fi
-}
-
-# If we are on ubuntu we can try to install docker
-function install-docker {
-  # bailout if we are not on ubuntu
-  if ! command -v apt-get >/dev/null 2>&1; then
-    echo "Unable to automatically install docker. Bailing out..."
-    return
-  fi
-  # Install Docker deps, some of these are already installed in the image but
-  # that's fine since they won't re-install and we can reuse the code below
-  # for another image someday.
-  apt-get update
-  apt-get install -y --no-install-recommends \
-    apt-transport-https \
-    ca-certificates \
-    socat \
-    curl \
-    gnupg2 \
-    software-properties-common \
-    lsb-release
-
-  release=$(lsb_release -cs)
-
-  # Add the Docker apt-repository
-  # shellcheck disable=SC2086
-  curl ${CURL_FLAGS} \
-    --location \
-    "https://download.docker.com/${HOST_PLATFORM}/$(. /etc/os-release; echo "$ID")/gpg" \
-  | apt-key add -
-  add-apt-repository \
-    "deb [arch=${HOST_ARCH}] https://download.docker.com/${HOST_PLATFORM}/$(. /etc/os-release; echo "$ID") \
-    $release stable"
-
-  # Install Docker
-  apt-get update && \
-    apt-get install -y --no-install-recommends "${GCI_DOCKER_VERSION:-"docker-ce=5:19.03.*"}"
-  rm -rf /var/lib/apt/lists/*
 }
 
 # If we are on ubuntu we can try to install containerd
@@ -911,40 +871,33 @@ function install-containerd-ubuntu {
 }
 
 function ensure-container-runtime {
-  container_runtime="${CONTAINER_RUNTIME:-docker}"
-  if [[ "${container_runtime}" == "docker" ]]; then
-    if ! command -v docker >/dev/null 2>&1; then
-      install-docker
-      if ! command -v docker >/dev/null 2>&1; then
-        echo "ERROR docker not found. Aborting."
-        exit 2
-      fi
-    fi
-    docker version
-  elif [[ "${container_runtime}" == "containerd" ]]; then
-    # Install containerd/runc if requested
-    if [[ -n "${UBUNTU_INSTALL_CONTAINERD_VERSION:-}" || -n "${UBUNTU_INSTALL_RUNC_VERSION:-}" ]]; then
-      install-containerd-ubuntu
-    fi
-    # Verify presence and print versions of ctr, containerd, runc
-    if ! command -v ctr >/dev/null 2>&1; then
-      echo "ERROR ctr not found. Aborting."
-      exit 2
-    fi
-    ctr --version
-
-    if ! command -v containerd >/dev/null 2>&1; then
-      echo "ERROR containerd not found. Aborting."
-      exit 2
-    fi
-    containerd --version
-
-    if ! command -v runc >/dev/null 2>&1; then
-      echo "ERROR runc not found. Aborting."
-      exit 2
-    fi
-    runc --version
+  if [[ "${CONTAINER_RUNTIME}" == "docker" ]]; then
+    echo "Dockershim is not supported. Container runtime must be set to containerd"
+    exit 2
   fi
+
+  # Install containerd/runc if requested
+  if [[ -n "${UBUNTU_INSTALL_CONTAINERD_VERSION:-}" || -n "${UBUNTU_INSTALL_RUNC_VERSION:-}" ]]; then
+    install-containerd-ubuntu
+  fi
+  # Verify presence and print versions of ctr, containerd, runc
+  if ! command -v ctr >/dev/null 2>&1; then
+    echo "ERROR ctr not found. Aborting."
+    exit 2
+  fi
+  ctr --version
+
+  if ! command -v containerd >/dev/null 2>&1; then
+    echo "ERROR containerd not found. Aborting."
+    exit 2
+  fi
+  containerd --version
+
+  if ! command -v runc >/dev/null 2>&1; then
+    echo "ERROR runc not found. Aborting."
+    exit 2
+  fi
+  runc --version
 }
 
 # Downloads kubernetes binaries and kube-system manifest tarball, unpacks them,
