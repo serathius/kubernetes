@@ -792,7 +792,7 @@ EOF
 Description=NVIDIA MPS path
 
 [Path]
-PathModified=/home/kubernetes/bin/nvidia/bin/nvidia-cuda-mps-control
+PathExists=/home/kubernetes/bin/nvidia/bin/nvidia-cuda-mps-control
 Unit=nvidia-mps.service
 
 [Install]
