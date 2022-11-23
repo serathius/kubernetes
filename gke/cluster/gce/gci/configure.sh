@@ -49,6 +49,10 @@ RIPTIDE_SNAPSHOTTER_SHA512='febd83738553f4da2d54f411e88dabc95c25f76478bd71618890
 RIPTIDE_SNAPSHOTTER_BIN_ARM64_SHA512='5346486aa951cfb1373d0289cc7c94ded16296149af7492770d462773956907495c8512ef0e4fac53db0b432f3f149762abb854e7ce897cbf6353317b7d239b5'
 RIPTIDE_SNAPSHOTTER_BIN_AMD64_SHA512='72aef987bac71887670ba816453fb09479dab709b81f7e6d223e131d198e0de52241368f26d89de0ef3979746f0e1dd29552dd32d32cd2e03b8d7b0e7340518c'
 
+AUTH_PROVIDER_GCP_VERSION="v0.0.2-gke.4"
+AUTH_PROVIDER_GCP_HASH_LINUX_AMD64="156058e5b3994cba91c23831774033e0d505d6d8b80f43541ef6af91b320fd9dfaabe42ec8a8887b51d87104c2b57e1eb895649d681575ffc80dd9aee8e563db"
+AUTH_PROVIDER_GCP_HASH_LINUX_ARM64="1aa3b0bea10a9755231989ffc150cbfa770f1d96932db7535473f7bfeb1108bafdae80202ae738d59495982512e716ff7366d5f414d0e76dd50519f98611f9ab"
+
 # Standard curl flags.
 CURL_FLAGS='--fail --silent --show-error --retry 5 --retry-delay 3 --connect-timeout 10 --retry-connrefused'
 
@@ -757,6 +761,35 @@ function install-riptide {
   install-riptide-snapshotter
 }
 
+function install-auth-provider-gcp {
+  case "${HOST_ARCH}" in
+    amd64)
+      local -r auth_provider_gcp_hash="${AUTH_PROVIDER_GCP_HASH_LINUX_AMD64}"
+      ;;
+    arm64)
+      local -r auth_provider_gcp_hash="${AUTH_PROVIDER_GCP_HASH_LINUX_ARM64}"
+      ;;
+    *)
+      echo "Unrecognized version and platform/arch combination: ${HOST_PLATFORM}/${HOST_ARCH}"
+      exit 1
+  esac
+
+  if is-preloaded "auth-provider-gcp" "${auth_provider_gcp_hash}"; then
+    echo "auth-provider-gcp is preloaded."
+    return
+  fi
+
+  local -r auth_provider_storage_url="${STORAGE_ENDPOINT}/gke-release/auth-provider-gcp/${AUTH_PROVIDER_GCP_VERSION}/${HOST_PLATFORM}_${HOST_ARCH}/auth-provider-gcp"
+  echo "Downloading auth-provider-gcp ${auth_provider_storage_url}" .
+  download-or-bust "${auth_provider_gcp_hash}" "${auth_provider_storage_url}"
+
+  # Keep in sync with --image-credential-provider-bin-dir in cloud/kubernetes/distro/legacy/kube_env.go
+  mv "${KUBE_HOME}/auth-provider-gcp" "${KUBE_BIN}"
+  chmod a+x "${KUBE_BIN}/auth-provider-gcp"
+
+  record-preload-info "auth-provider-gcp" "${auth_provider_gcp_hash}"
+}
+
 function configure-cgroup-mode {
   if which cgroup_helper > /dev/null 2>&1; then
     if [[ "${CGROUP_MODE:-}" == "v1" ]] && cgroup_helper show | grep -q 'unified'; then
@@ -1256,6 +1289,9 @@ function log-proto {
 # Variables needed for this function to work will be set by the preloader
 function preload {
   cd "${KUBE_HOME}"
+  if [[ "${ENABLE_AUTH_PROVIDER_GCP:-""}" == "true" ]]; then
+    log-wrap 'InstallExternalCredentialProvider' install-auth-provider-gcp
+  fi
 }
 
 ######### Main Function ##########
