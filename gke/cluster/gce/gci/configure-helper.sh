@@ -3690,6 +3690,9 @@ function main() {
     if [[ -n "${GKE_AUTOPILOT_SSHD_CONFIG:-}" ]]; then
       log-wrap 'GKEConfigureAutopilotSSHD' gke-configure-autopilot-sshd
     fi
+    if [[ "${ENABLE_AUTH_PROVIDER_GCP:-""}" == "true" ]]; then
+      log-wrap 'ConfigureAuthProviderGcp' configure-auth-provider-gcp
+    fi
   fi
   log-wrap 'InstallNodeRegistrationChecker' install-node-registration-checker
 

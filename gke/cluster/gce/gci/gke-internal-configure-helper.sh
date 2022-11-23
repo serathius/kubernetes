@@ -916,3 +916,23 @@ EOF
   systemctl daemon-reload
   systemctl start gke-node-reg-checker.service
 }
+
+function configure-auth-provider-gcp {
+  # Keep in sync with --image-credential-provider-config in cloud/kubernetes/distro/legacy/kube_env.go
+  cat > "/etc/srv/kubernetes/cri_auth_config.yaml" << EOF
+kind: CredentialProviderConfig
+apiVersion: kubelet.config.k8s.io/v1
+providers:
+  - name: auth-provider-gcp
+    apiVersion: credentialprovider.kubelet.k8s.io/v1
+    matchImages:
+    - "container.cloud.google.com"
+    - "gcr.io"
+    - "*.gcr.io"
+    - "*.pkg.dev"
+    args:
+    - get-credentials
+    - --v=3
+    defaultCacheDuration: 1m
+EOF
+}
