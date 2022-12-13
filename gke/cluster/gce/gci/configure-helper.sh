@@ -224,6 +224,13 @@ function config-ip-firewall {
       ;;
   esac
 
+  # Add ip6tables rule to expose port 9445 so that The GKFE Directpath Agent can listen on this port.
+  # Note that traffic is restricted to directpath prod IPs.
+  if [[ "${ENABLE_DIRECTHPATH_V2_PORT:-}" == "true" ]]; then
+    echo "Add rule to accept directpath v2 traffic"
+    ip6tables -A INPUT -p tcp -m tcp --source 2001:4860:8040::/42 --dport 9445 -j ACCEPT
+  fi
+
   if [[ "${CONNTRACK_EXEMPT_HC_MS:-}" == "true" ]];then
     echo "Add rules for exempting kubelet healthcheck and access to metadata server from connection tracking"
     # Traffic coming from metadata server
