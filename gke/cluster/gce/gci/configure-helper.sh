@@ -3533,6 +3533,25 @@ function log-proto {
   "${LOG_CLUSTER_ID}" "${LOG_INSTANCE_NAME}" "${LOG_BOOT_ID}" "${timestamp}" "${bootstep}" "${status}" "${status_reason}" "${latency}"
 }
 
+function config-ip-envoy {
+  if [[ "${PREPARE_ENVOY_INGRESS_IPTABLES:-false}" != "true" ]]; then
+    return
+  fi
+
+  echo "Prepare envoy ingress iptables in configure helper"
+
+  packet_mark=123
+  iptables -t mangle -I PREROUTING -m mark     --mark $packet_mark -j CONNMARK --save-mark
+  iptables -t mangle -I OUTPUT     -m connmark --mark $packet_mark -j CONNMARK --restore-mark
+  echo -e '100\tenvoy.tproxy' >> /etc/iproute2/rt_tables
+  ip rule add fwmark $packet_mark lookup envoy.tproxy
+  ip route add local 0.0.0.0/0 dev lo table envoy.tproxy
+  iptables -t nat -A PREROUTING -p tcp --dport 443  -s 192.168.0.0/20  -j REDIRECT --to-port 7443
+  iptables -t nat -A PREROUTING -p tcp --dport 8132 -s 192.168.0.0/20  -j REDIRECT --to-port 7444
+  iptables -t nat -A PREROUTING -p tcp --dport 443  -s 192.168.16.0/20 -j REDIRECT --to-port 7443
+  iptables -t nat -A PREROUTING -p tcp --dport 8132 -s 192.168.16.0/20 -j REDIRECT --to-port 7444
+}
+
 ########### Main Function ###########
 function main() {
   echo "Start to configure instance for kubernetes"
@@ -3602,6 +3621,7 @@ function main() {
   fi
   log-wrap 'SetupOSParams' setup-os-params
   log-wrap 'ConfigIPFirewall' config-ip-firewall
+  log-wrap 'ConfigIPEnvoy' config-ip-envoy
   log-wrap 'CreateDirs' create-dirs
   log-wrap 'EnsureLocalSSDs' ensure-local-ssds
   log-wrap 'SetupKubeletDir' setup-kubelet-dir
