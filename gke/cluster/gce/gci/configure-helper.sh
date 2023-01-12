@@ -238,7 +238,7 @@ function config-ip-firewall {
 
     if [[ ! "${ENABLE_METADATA_CONCEALMENT:-}" == "true" ]] || [[ "${METADATA_CONCEALMENT_NO_FIREWALL:-}" == "true" ]]; then
       # Pod traffic going to metdata server (ie. traffic through veth*)
-      # Do not track them if if Workload Identity is disabled.
+      # Do not track them if Workload Identity is disabled.
       iptables -w -t raw -A PREROUTING -d "${METADATA_SERVER_IP}" -p tcp --dport 80  -j NOTRACK
     fi
 
@@ -247,13 +247,8 @@ function config-ip-firewall {
     iptables -w -t raw -A OUTPUT -d "${METADATA_SERVER_IP}" -p tcp --dport 80 -j NOTRACK
 
     # Traffic between localhost:* <-> localhost:10248 (ie. lo & kubelet healthz).
-    # Note, since sender and receiver are both localhost, the two directions go
-    # through egress and ingress twice. So it needs four exemption rules here.
-    iptables -w -t raw -A PREROUTING -s 127.0.0.1 -p tcp --sport 10248 -j NOTRACK
-    iptables -w -t raw -A PREROUTING -s 127.0.0.1 -p tcp --dport 10248 -j NOTRACK
-
-    iptables -w -t raw -A OUTPUT -d 127.0.0.1 -p tcp --dport 10248 -j NOTRACK
-    iptables -w -t raw -A OUTPUT -d 127.0.0.1 -p tcp --sport 10248 -j NOTRACK
+    iptables -w -t raw -A OUTPUT -s 127.0.0.1 -d 127.0.0.1 -p tcp --dport 10248 -j NOTRACK
+    iptables -w -t raw -A OUTPUT -s 127.0.0.1 -d 127.0.0.1 -p tcp --sport 10248 -j NOTRACK
   fi
 }
 
