@@ -1065,6 +1065,23 @@ function setup-shm-healthcheck-binaries() {
   cp -f "$(which curl)" "${shm_bin_dir}/curl"
 }
 
+function configure-pga-if-needed() {
+  echo "Detecting connectivity to storage.googleapis.com..."
+  local status=0
+  curl --ipv4 -L --connect-timeout 10 --retry 3  --retry-connrefused https://storage.googleapis.com || status="$?"
+  # connection is refused(7) or timeout(28).
+  if [[ "${status}" == "7" || "${status}" == "28" ]]; then
+    status=0
+    local pga_ip
+    pga_ip=`curl private.googleapis.com -w '%{remote_ip}' --connect-timeout 10 -s -o /dev/null` || status="$?"
+    if [[ "${status}" == "0" ]]; then
+      echo "Configure /etc/hosts to use private google access"
+      echo "$pga_ip storage.googleapis.com" >> /etc/hosts
+      echo "$pga_ip gke.gcr.io" >> /etc/hosts
+    fi
+  fi
+}
+
 # This function detects the platform/arch of the machine where the script runs,
 # and sets the HOST_PLATFORM and HOST_ARCH environment variables accordingly.
 # Callers can specify HOST_PLATFORM_OVERRIDE and HOST_ARCH_OVERRIDE to skip the detection.
@@ -1289,6 +1306,8 @@ if [[ "$(is-master)" == "true" ]]; then
   log-wrap 'InstallHurl' install-hurl
   log-wrap 'InstallInplace' install-inplace
 fi
+
+configure-pga-if-needed
 
 # download and source kube-env
 log-wrap 'DownloadKubeEnv' download-kube-env
