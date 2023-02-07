@@ -46,12 +46,12 @@ func mountPropagationModePtr(p core.MountPropagationMode) *core.MountPropagation
 	return &p
 }
 
-func makePodCreateAttrs(pod *core.Pod) admission.Attributes {
-	return admission.NewAttributesRecord(pod, nil, core.Kind("Pod").WithVersion("version"), pod.Namespace, pod.Name, core.Resource("pods").WithVersion("version"), "", admission.Create, &metav1.CreateOptions{}, false, &user.DefaultInfo{})
+func makePodCreateAttrs(pod *core.Pod, subres string) admission.Attributes {
+	return admission.NewAttributesRecord(pod, nil, core.Kind("Pod").WithVersion("version"), pod.Namespace, pod.Name, core.Resource("pods").WithVersion("version"), subres, admission.Create, &metav1.CreateOptions{}, false, &user.DefaultInfo{})
 }
 
-func makePodUpdateAttrs(pod, oldPod *core.Pod) admission.Attributes {
-	return admission.NewAttributesRecord(pod, oldPod, core.Kind("Pod").WithVersion("version"), pod.Namespace, pod.Name, core.Resource("pods").WithVersion("version"), "", admission.Update, &metav1.UpdateOptions{}, false, &user.DefaultInfo{})
+func makePodUpdateAttrs(pod, oldPod *core.Pod, subres string) admission.Attributes {
+	return admission.NewAttributesRecord(pod, oldPod, core.Kind("Pod").WithVersion("version"), pod.Namespace, pod.Name, core.Resource("pods").WithVersion("version"), subres, admission.Update, &metav1.UpdateOptions{}, false, &user.DefaultInfo{})
 }
 
 func makeRuntimeClassCreateAttrs(rc *node.RuntimeClass) admission.Attributes {
@@ -313,6 +313,11 @@ func TestValidateGVisorPod(t *testing.T) {
 		},
 		"pod with container with RuntimeDefault seccomp profile": {
 			pod: core.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						"dev.gvisor.internal.seccomp.container": string(core.SeccompProfileTypeRuntimeDefault),
+					},
+				},
 				Spec: core.PodSpec{
 					Containers: []core.Container{
 						{
@@ -597,7 +602,7 @@ func TestValidateGVisorPod(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			err := validateGVisorPod(&test.pod)
+			err := validateGVisorPod(&test.pod, true)
 			if test.expectErr {
 				assert.Error(t, err)
 			} else {
@@ -693,7 +698,7 @@ func TestGvisor_Admit(t *testing.T) {
 
 	for name, test := range createPodTests {
 		t.Run(name, func(t *testing.T) {
-			attrs := makePodCreateAttrs(&test.pod)
+			attrs := makePodCreateAttrs(&test.pod, "")
 			err := gvisor.Admit(context.TODO(), attrs, nil)
 			if test.expectErr {
 				assert.Error(t, err)
@@ -761,7 +766,7 @@ func TestGvisor_Admit(t *testing.T) {
 	}
 	for name, test := range updatePodTests {
 		t.Run(name, func(t *testing.T) {
-			attrs := makePodUpdateAttrs(test.newPod, test.oldPod)
+			attrs := makePodUpdateAttrs(test.newPod, test.oldPod, "")
 			err := gvisor.Admit(context.TODO(), attrs, nil)
 			if test.expectErr {
 				assert.Error(t, err)
@@ -1163,11 +1168,89 @@ func TestAdmitPodCreate(t *testing.T) {
 				},
 			},
 		},
+		"internal annotation": {
+			pod: core.Pod{
+				Spec: core.PodSpec{
+					RuntimeClassName: stringPtr(gvisorRuntimeClass),
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						"dev.gvisor.internal.foo": "bar",
+					},
+				},
+			},
+			expectErr: true,
+		},
+		"seccomp RuntimeDefault": {
+			pod: core.Pod{
+				Spec: core.PodSpec{
+					RuntimeClassName: stringPtr(gvisorRuntimeClass),
+					SecurityContext: &core.PodSecurityContext{
+						SeccompProfile: &core.SeccompProfile{
+							Type: core.SeccompProfileTypeRuntimeDefault,
+						},
+					},
+					Containers: []core.Container{
+						{Name: "cont1"},
+						{Name: "cont2"},
+					},
+					InitContainers: []core.Container{
+						{Name: "init"},
+					},
+				},
+			},
+			expectErr: false,
+			expected: core.Pod{
+				Spec: core.PodSpec{
+					RuntimeClassName: stringPtr(gvisorRuntimeClass),
+					SecurityContext: &core.PodSecurityContext{
+						SeccompProfile: &core.SeccompProfile{
+							Type: core.SeccompProfileTypeRuntimeDefault,
+						},
+					},
+					Containers: []core.Container{
+						{
+							Name: "cont1",
+							SecurityContext: &core.SecurityContext{
+								Capabilities: &core.Capabilities{
+									Drop: []core.Capability{"NET_RAW"},
+								},
+							},
+						},
+						{
+							Name: "cont2",
+							SecurityContext: &core.SecurityContext{
+								Capabilities: &core.Capabilities{
+									Drop: []core.Capability{"NET_RAW"},
+								},
+							},
+						},
+					},
+					InitContainers: []core.Container{
+						{
+							Name: "init",
+							SecurityContext: &core.SecurityContext{
+								Capabilities: &core.Capabilities{
+									Drop: []core.Capability{"NET_RAW"},
+								},
+							},
+						},
+					},
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						"dev.gvisor.internal.seccomp.cont1": string(core.SeccompProfileTypeRuntimeDefault),
+						"dev.gvisor.internal.seccomp.cont2": string(core.SeccompProfileTypeRuntimeDefault),
+						"dev.gvisor.internal.seccomp.init":  string(core.SeccompProfileTypeRuntimeDefault),
+					},
+				},
+			},
+		},
 	}
 
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
-			attrs := makePodCreateAttrs(&test.pod)
+			attrs := makePodCreateAttrs(&test.pod, "")
 			err := admitPodCreate(attrs)
 			if test.expectErr {
 				assert.Error(t, err)
@@ -1438,7 +1521,7 @@ func TestNodeSelectorConflict(t *testing.T) {
 			NodeSelector:     map[string]string{gvisorNodeKey: "other"},
 		},
 	}
-	err := validateGVisorPod(&pod)
+	err := validateGVisorPod(&pod, true)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "conflict:")
 }
@@ -1845,12 +1928,18 @@ func TestGvisor_Validate(t *testing.T) {
 
 	for name, test := range createPodTests {
 		t.Run(name, func(t *testing.T) {
-			attrs := makePodCreateAttrs(&test.pod)
-			err := gvisor.Validate(context.TODO(), attrs, nil)
-			if test.expectErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
+			for name, attrs := range map[string]admission.Attributes{
+				"empty":  makePodCreateAttrs(&test.pod, ""),
+				"status": makePodCreateAttrs(&test.pod, "status"),
+			} {
+				t.Run(name, func(t *testing.T) {
+					err := gvisor.Validate(context.TODO(), attrs, nil)
+					if test.expectErr {
+						assert.Error(t, err)
+					} else {
+						assert.NoError(t, err)
+					}
+				})
 			}
 		})
 	}
@@ -1887,6 +1976,26 @@ func TestGvisor_Validate(t *testing.T) {
 	gvisorPodNewImage := gvisorPod.DeepCopy()
 	gvisorPodNewImage.Spec.Containers[0].Image = "my-image:v2"
 
+	gvisorPodSeccomp := &core.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "gvisor-pod",
+			Annotations: map[string]string{
+				"dev.gvisor.internal.seccomp.cont": string(core.SeccompProfileTypeRuntimeDefault),
+			},
+		},
+		Spec: core.PodSpec{
+			Containers:       []core.Container{{Name: "cont"}},
+			RuntimeClassName: stringPtr("gvisor"),
+			SecurityContext: &core.PodSecurityContext{
+				SeccompProfile: &core.SeccompProfile{
+					Type: core.SeccompProfileTypeRuntimeDefault,
+				},
+			},
+		},
+	}
+	gvisorPodSeccompInvalidAnnotation := gvisorPodSeccomp.DeepCopy()
+	gvisorPodSeccompInvalidAnnotation.Annotations["dev.gvisor.internal.seccomp.cont"] = "another-value"
+
 	updatePodTests := map[string]struct {
 		oldPod, newPod *core.Pod
 		expectErr      bool
@@ -1906,15 +2015,31 @@ func TestGvisor_Validate(t *testing.T) {
 			newPod:    gvisorPodNewImage.DeepCopy(),
 			expectErr: false,
 		},
+		"gvisor->seccomp": {
+			oldPod:    gvisorPodSeccomp.DeepCopy(),
+			newPod:    gvisorPodSeccomp.DeepCopy(),
+			expectErr: false,
+		},
+		"gvisor->annotation-changed": {
+			oldPod:    gvisorPodSeccomp.DeepCopy(),
+			newPod:    gvisorPodSeccompInvalidAnnotation.DeepCopy(),
+			expectErr: true,
+		},
 	}
 	for name, test := range updatePodTests {
 		t.Run(name, func(t *testing.T) {
-			attrs := makePodUpdateAttrs(test.newPod, test.oldPod)
-			err := gvisor.Validate(context.TODO(), attrs, nil)
-			if test.expectErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
+			for name, attrs := range map[string]admission.Attributes{
+				"empty":  makePodUpdateAttrs(test.newPod, test.oldPod, ""),
+				"status": makePodUpdateAttrs(test.newPod, test.oldPod, "status"),
+			} {
+				t.Run(name, func(t *testing.T) {
+					err := gvisor.Validate(context.TODO(), attrs, nil)
+					if test.expectErr {
+						assert.Error(t, err)
+					} else {
+						assert.NoError(t, err)
+					}
+				})
 			}
 		})
 	}
@@ -2283,7 +2408,7 @@ func TestValidatePodCreate(t *testing.T) {
 
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
-			err := validatePodCreate(makePodCreateAttrs(&test.pod))
+			err := validatePodCreate(makePodCreateAttrs(&test.pod, ""))
 			if test.expectErr {
 				assert.Error(t, err)
 			} else {
@@ -2348,8 +2473,7 @@ func TestValidatePodUpdate(t *testing.T) {
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
-			attrs := makePodUpdateAttrs(test.newPod, test.oldPod)
-
+			attrs := makePodUpdateAttrs(test.newPod, test.oldPod, "")
 			err := validatePodUpdate(attrs)
 			if test.expectErr {
 				assert.Error(t, err)
@@ -2387,6 +2511,575 @@ func TestValidateRuntimeClass(t *testing.T) {
 			} else {
 				assert.NoError(t, err)
 			}
+		})
+	}
+}
+
+func TestSeccomp(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		pod  core.Pod
+		want core.Pod
+	}{
+		{
+			name: "no seccomp",
+			pod: core.Pod{
+				Spec: core.PodSpec{
+					Containers: []core.Container{
+						{Name: "cont1"},
+					},
+				},
+			},
+			want: core.Pod{
+				Spec: core.PodSpec{
+					Containers: []core.Container{
+						{Name: "cont1"},
+					},
+				},
+			},
+		},
+		{
+			name: "container seccomp",
+			pod: core.Pod{
+				Spec: core.PodSpec{
+					Containers: []core.Container{
+						{
+							Name: "cont1",
+							SecurityContext: &core.SecurityContext{
+								SeccompProfile: &core.SeccompProfile{
+									Type: core.SeccompProfileTypeRuntimeDefault,
+								},
+							},
+						},
+					},
+				},
+			},
+			want: core.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						"dev.gvisor.internal.seccomp.cont1": "RuntimeDefault",
+					},
+				},
+				Spec: core.PodSpec{
+					Containers: []core.Container{
+						{
+							Name: "cont1",
+							SecurityContext: &core.SecurityContext{
+								SeccompProfile: &core.SeccompProfile{
+									Type: core.SeccompProfileTypeRuntimeDefault,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "simple pod",
+			pod: core.Pod{
+				Spec: core.PodSpec{
+					SecurityContext: &core.PodSecurityContext{
+						SeccompProfile: &core.SeccompProfile{
+							Type: core.SeccompProfileTypeRuntimeDefault,
+						},
+					},
+					Containers: []core.Container{
+						{Name: "cont"},
+					},
+				},
+			},
+			want: core.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						"dev.gvisor.internal.seccomp.cont": "RuntimeDefault",
+					},
+				},
+				Spec: core.PodSpec{
+					SecurityContext: &core.PodSecurityContext{
+						SeccompProfile: &core.SeccompProfile{
+							Type: core.SeccompProfileTypeRuntimeDefault,
+						},
+					},
+					Containers: []core.Container{
+						{Name: "cont"},
+					},
+				},
+			},
+		},
+		{
+			name: "pod seccomp",
+			pod: core.Pod{
+				Spec: core.PodSpec{
+					SecurityContext: &core.PodSecurityContext{
+						SeccompProfile: &core.SeccompProfile{
+							Type: core.SeccompProfileTypeRuntimeDefault,
+						},
+					},
+					Containers: []core.Container{
+						{Name: "cont1"},
+						{Name: "cont2"},
+					},
+					InitContainers: []core.Container{
+						{Name: "init"},
+					},
+				},
+			},
+			want: core.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						"dev.gvisor.internal.seccomp.cont1": "RuntimeDefault",
+						"dev.gvisor.internal.seccomp.cont2": "RuntimeDefault",
+						"dev.gvisor.internal.seccomp.init":  "RuntimeDefault",
+					},
+				},
+				Spec: core.PodSpec{
+					SecurityContext: &core.PodSecurityContext{
+						SeccompProfile: &core.SeccompProfile{
+							Type: core.SeccompProfileTypeRuntimeDefault,
+						},
+					},
+					Containers: []core.Container{
+						{Name: "cont1"},
+						{Name: "cont2"},
+					},
+					InitContainers: []core.Container{
+						{Name: "init"},
+					},
+				},
+			},
+		},
+		{
+			name: "pod not default",
+			pod: core.Pod{
+				Spec: core.PodSpec{
+					SecurityContext: &core.PodSecurityContext{
+						SeccompProfile: &core.SeccompProfile{
+							Type: core.SeccompProfileTypeLocalhost,
+						},
+					},
+					Containers: []core.Container{
+						{Name: "cont1"},
+					},
+					InitContainers: []core.Container{
+						{Name: "init"},
+					},
+				},
+			},
+			want: core.Pod{
+				Spec: core.PodSpec{
+					SecurityContext: &core.PodSecurityContext{
+						SeccompProfile: &core.SeccompProfile{
+							Type: core.SeccompProfileTypeLocalhost,
+						},
+					},
+					Containers: []core.Container{
+						{Name: "cont1"},
+					},
+					InitContainers: []core.Container{
+						{Name: "init"},
+					},
+				},
+			},
+		},
+		{
+			name: "container override seccomp",
+			pod: core.Pod{
+				Spec: core.PodSpec{
+					SecurityContext: &core.PodSecurityContext{
+						SeccompProfile: &core.SeccompProfile{
+							Type: core.SeccompProfileTypeRuntimeDefault,
+						},
+					},
+					Containers: []core.Container{
+						{
+							Name: "cont-localhost",
+							SecurityContext: &core.SecurityContext{
+								SeccompProfile: &core.SeccompProfile{
+									Type: core.SeccompProfileTypeLocalhost,
+								},
+							},
+						},
+						{Name: "cont-default"},
+					},
+					InitContainers: []core.Container{
+						{Name: "init-default"},
+						{
+							Name: "init-localhost",
+							SecurityContext: &core.SecurityContext{
+								SeccompProfile: &core.SeccompProfile{
+									Type: core.SeccompProfileTypeLocalhost,
+								},
+							},
+						},
+					},
+				},
+			},
+			want: core.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						"dev.gvisor.internal.seccomp.cont-default": "RuntimeDefault",
+						"dev.gvisor.internal.seccomp.init-default": "RuntimeDefault",
+					},
+				},
+				Spec: core.PodSpec{
+					SecurityContext: &core.PodSecurityContext{
+						SeccompProfile: &core.SeccompProfile{
+							Type: core.SeccompProfileTypeRuntimeDefault,
+						},
+					},
+					Containers: []core.Container{
+						{
+							Name: "cont-localhost",
+							SecurityContext: &core.SecurityContext{
+								SeccompProfile: &core.SeccompProfile{
+									Type: core.SeccompProfileTypeLocalhost,
+								},
+							},
+						},
+						{Name: "cont-default"},
+					},
+					InitContainers: []core.Container{
+						{Name: "init-default"},
+						{
+							Name: "init-localhost",
+							SecurityContext: &core.SecurityContext{
+								SeccompProfile: &core.SeccompProfile{
+									Type: core.SeccompProfileTypeLocalhost,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "container override seccomp reverse",
+			pod: core.Pod{
+				Spec: core.PodSpec{
+					SecurityContext: &core.PodSecurityContext{
+						SeccompProfile: &core.SeccompProfile{
+							Type: core.SeccompProfileTypeLocalhost,
+						},
+					},
+					Containers: []core.Container{
+						{
+							Name: "cont-default",
+							SecurityContext: &core.SecurityContext{
+								SeccompProfile: &core.SeccompProfile{
+									Type: core.SeccompProfileTypeRuntimeDefault,
+								},
+							},
+						},
+						{Name: "cont-locahost"},
+					},
+					InitContainers: []core.Container{
+						{Name: "init-localhost"},
+						{
+							Name: "init-default",
+							SecurityContext: &core.SecurityContext{
+								SeccompProfile: &core.SeccompProfile{
+									Type: core.SeccompProfileTypeRuntimeDefault,
+								},
+							},
+						},
+					},
+				},
+			},
+			want: core.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						"dev.gvisor.internal.seccomp.cont-default": "RuntimeDefault",
+						"dev.gvisor.internal.seccomp.init-default": "RuntimeDefault",
+					},
+				},
+				Spec: core.PodSpec{
+					SecurityContext: &core.PodSecurityContext{
+						SeccompProfile: &core.SeccompProfile{
+							Type: core.SeccompProfileTypeLocalhost,
+						},
+					},
+					Containers: []core.Container{
+						{
+							Name: "cont-default",
+							SecurityContext: &core.SecurityContext{
+								SeccompProfile: &core.SeccompProfile{
+									Type: core.SeccompProfileTypeRuntimeDefault,
+								},
+							},
+						},
+						{Name: "cont-locahost"},
+					},
+					InitContainers: []core.Container{
+						{Name: "init-localhost"},
+						{
+							Name: "init-default",
+							SecurityContext: &core.SecurityContext{
+								SeccompProfile: &core.SeccompProfile{
+									Type: core.SeccompProfileTypeRuntimeDefault,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			updateSeccompAnnotations(&tc.pod)
+			assert.Equal(t, tc.want, tc.pod)
+		})
+	}
+}
+
+func TestCheckInternalAnnotations(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		pod  core.Pod
+		add  map[string]string
+		del  map[string]string
+		all  []bool
+		err  string
+	}{
+		{
+			name: "empty",
+		},
+		{
+			name: "other annotation",
+			add: map[string]string{
+				"dev.gvisor.other": "foo",
+			},
+			del: map[string]string{
+				"dev.gvisor.another": "bar",
+			},
+		},
+		{
+			name: "seccomp",
+			pod: core.Pod{
+				Spec: core.PodSpec{
+					SecurityContext: &core.PodSecurityContext{
+						SeccompProfile: &core.SeccompProfile{
+							Type: core.SeccompProfileTypeRuntimeDefault,
+						},
+					},
+					Containers: []core.Container{
+						{Name: "cont"},
+					},
+				},
+			},
+			add: map[string]string{
+				"dev.gvisor.internal.seccomp.cont": "RuntimeDefault",
+			},
+		},
+		{
+			name: "wrong value",
+			pod: core.Pod{
+				Spec: core.PodSpec{
+					SecurityContext: &core.PodSecurityContext{
+						SeccompProfile: &core.SeccompProfile{
+							Type: core.SeccompProfileTypeRuntimeDefault,
+						},
+					},
+					Containers: []core.Container{
+						{Name: "cont"},
+					},
+				},
+			},
+			add: map[string]string{
+				"dev.gvisor.internal.seccomp.cont": "Unconfined",
+			},
+			err: `expected value: "RuntimeDefault"`,
+		},
+		{
+			name: "invalid name",
+			pod:  core.Pod{},
+			add: map[string]string{
+				"dev.gvisor.internal.foo": "bar",
+			},
+			err: `annotations starting with "dev.gvisor.internal." are not allowed`,
+		},
+		{
+			name: "wrong value",
+			pod: core.Pod{
+				Spec: core.PodSpec{
+					SecurityContext: &core.PodSecurityContext{
+						SeccompProfile: &core.SeccompProfile{
+							Type: core.SeccompProfileTypeRuntimeDefault,
+						},
+					},
+					Containers: []core.Container{
+						{Name: "cont"},
+					},
+				},
+			},
+			add: map[string]string{
+				"dev.gvisor.internal.seccomp.cont": "Unconfined",
+			},
+			err: `expected value: "RuntimeDefault"`,
+		},
+		{
+			name: "missing",
+			pod: core.Pod{
+				Spec: core.PodSpec{
+					SecurityContext: &core.PodSecurityContext{
+						SeccompProfile: &core.SeccompProfile{
+							Type: core.SeccompProfileTypeRuntimeDefault,
+						},
+					},
+					Containers: []core.Container{
+						{Name: "cont"},
+					},
+				},
+			},
+			add: map[string]string{
+				"other.annotations": "true",
+			},
+			all: []bool{true},
+			err: "annotation was removed from pod",
+		},
+		{
+			name: "removal",
+			pod: core.Pod{
+				Spec: core.PodSpec{
+					SecurityContext: &core.PodSecurityContext{
+						SeccompProfile: &core.SeccompProfile{
+							Type: core.SeccompProfileTypeRuntimeDefault,
+						},
+					},
+					Containers: []core.Container{
+						{Name: "cont"},
+					},
+				},
+			},
+			del: map[string]string{
+				"dev.gvisor.internal.seccomp.cont": "Unconfined",
+			},
+			err: "annotation was removed from pod",
+		},
+		{
+			name: "removal other",
+			del: map[string]string{
+				"dev.gvisor.other": "foo",
+			},
+		},
+		{
+			// Check that only what has been removed is validated. The missing seccomp
+			// annotation is ignored on update.
+			name: "removal other update",
+			pod: core.Pod{
+				Spec: core.PodSpec{
+					SecurityContext: &core.PodSecurityContext{
+						SeccompProfile: &core.SeccompProfile{
+							Type: core.SeccompProfileTypeRuntimeDefault,
+						},
+					},
+					Containers: []core.Container{
+						{Name: "cont"},
+					},
+				},
+			},
+			del: map[string]string{
+				"dev.gvisor.other": "foo",
+			},
+			all: []bool{false},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.all == nil {
+				tc.all = []bool{true, false}
+			}
+			for _, all := range tc.all {
+				t.Run(fmt.Sprintf("%t", all), func(t *testing.T) {
+					err := checkInternalAnnotations(&tc.pod, tc.add, tc.del, all)
+					if len(tc.err) == 0 {
+						assert.NoError(t, err)
+					} else if assert.Error(t, err) {
+						assert.Contains(t, err.Error(), tc.err)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestAnnotationDiff(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		old  map[string]string
+		new  map[string]string
+		add  map[string]string
+		del  map[string]string
+	}{
+		{
+			name: "empty",
+			add:  map[string]string{},
+			del:  map[string]string{},
+		},
+		{
+			name: "add",
+			new:  map[string]string{"foo": "val"},
+			add:  map[string]string{"foo": "val"},
+			del:  map[string]string{},
+		},
+		{
+			name: "del",
+			old:  map[string]string{"foo": "val"},
+			add:  map[string]string{},
+			del:  map[string]string{"foo": "val"},
+		},
+		{
+			name: "same",
+			old:  map[string]string{"foo": "val"},
+			new:  map[string]string{"foo": "val"},
+			add:  map[string]string{},
+			del:  map[string]string{},
+		},
+		{
+			name: "change",
+			old:  map[string]string{"foo": "valOld"},
+			new:  map[string]string{"foo": "valNew"},
+			add:  map[string]string{"foo": "valNew"},
+			del:  map[string]string{},
+		},
+		{
+			name: "multiple",
+			old: map[string]string{
+				"same":    "val",
+				"change1": "old1",
+				"change2": "old2",
+				"del1":    "val",
+				"del2":    "val",
+			},
+			new: map[string]string{
+				"same":    "val",
+				"change1": "new1",
+				"change2": "new2",
+				"add1":    "val",
+				"add2":    "val",
+				"add3":    "val",
+			},
+			add: map[string]string{
+				"change1": "new1",
+				"change2": "new2",
+				"add1":    "val",
+				"add2":    "val",
+				"add3":    "val",
+			},
+			del: map[string]string{
+				"del1": "val",
+				"del2": "val",
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			old := core.Pod{
+				ObjectMeta: metav1.ObjectMeta{Annotations: tc.old},
+			}
+			new := core.Pod{
+				ObjectMeta: metav1.ObjectMeta{Annotations: tc.new},
+			}
+			gotAdd, gotDel := annotationDiff(&old, &new)
+			assert.Equal(t, tc.add, gotAdd)
+			assert.Equal(t, tc.del, gotDel)
 		})
 	}
 }
