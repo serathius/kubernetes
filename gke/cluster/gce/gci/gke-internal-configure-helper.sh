@@ -536,6 +536,9 @@ root = "${sandbox_root}"
   enable-core-tags = "${gvisor_core_tags}"
   overlay2 = "${gvisor_overlay2}"
 EOF
+    if [[ -n "${GVISOR_METRIC_SERVER:-}" ]]; then
+      echo "  metric-server = \"${GVISOR_METRIC_SERVER}\"" >> "${shim_config_path}"
+    fi
     if [[ "${gvisor_platform}" == "xemu" ]]; then
       # COS versions cos-97-16919-29-21 and after contain XEMU in the base
       # image.
