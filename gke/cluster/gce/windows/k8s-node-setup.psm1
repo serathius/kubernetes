@@ -2949,6 +2949,7 @@ clientConnection:
   kubeconfig: KUBELET_KUBECONFIG
 antreaClientConnection:
   kubeconfig: KUBELET_KUBECONFIG
+noSNATCIDRs: [35.191.0.0/16, 130.211.0.0/22, 209.85.152.0/22, 209.85.204.0/22]
 #serviceCIDR:  SERVICE_CIDR
 '.replace('KUBELET_KUBECONFIG', ${env:KUBECONFIG})
 
