@@ -523,6 +523,7 @@ EOF
     local -r gvisor_net_raw="${GVISOR_NET_RAW:-"true"}"
     local -r gvisor_seccomp="${GVISOR_SECCOMP:-"true"}"
     local -r gvisor_core_tags="${GVISOR_CORE_TAGS:-"false"}"
+    local -r gvisor_overlay2="${GVISOR_OVERLAY2:-"none"}"
     mkdir -p "${sandbox_root}"
     cat > "${shim_config_path}" <<EOF
 binary_name = "${CONTAINERD_SANDBOX_RUNTIME_ENGINE:-}"
@@ -533,6 +534,7 @@ root = "${sandbox_root}"
   oci-seccomp = "${gvisor_seccomp}"
   systemd-cgroup = "${systemdCgroup}"
   enable-core-tags = "${gvisor_core_tags}"
+  overlay2 = "${gvisor_overlay2}"
 EOF
     if [[ "${gvisor_platform}" == "xemu" ]]; then
       # COS versions cos-97-16919-29-21 and after contain XEMU in the base
