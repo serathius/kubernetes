@@ -473,6 +473,7 @@ EOF
   default_runtime_name = "runc"
   snapshotter = "gcfs"
   disable_snapshot_annotations = false
+  discard_unpacked_layers = true
 [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
   runtime_type = "io.containerd.runc.v2"
 [proxy_plugins]
@@ -484,6 +485,7 @@ EOF
   cat >> "${config_path}" <<EOF
 [plugins."io.containerd.grpc.v1.cri".containerd]
   default_runtime_name = "runc"
+  discard_unpacked_layers = true
 [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
   runtime_type = "io.containerd.runc.v2"
 EOF
