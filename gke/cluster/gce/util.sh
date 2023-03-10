@@ -800,7 +800,6 @@ function construct-linux-kubelet-flags {
   if [[ -n "${NODE_TAINTS:-}" ]]; then
     flags+=" --register-with-taints=${NODE_TAINTS}"
   fi
-  flags+=" --container-runtime=remote"
   CONTAINER_RUNTIME_ENDPOINT=${KUBE_CONTAINER_RUNTIME_ENDPOINT:-unix:///run/containerd/containerd.sock}
   flags+=" --container-runtime-endpoint=${CONTAINER_RUNTIME_ENDPOINT}"
   flags+=" --runtime-cgroups=/system.slice/containerd.service"
@@ -879,7 +878,6 @@ function construct-windows-kubelet-flags {
   # Force disable KubeletPodResources feature on Windows until #78628 is fixed.
   flags+=" --feature-gates=KubeletPodResources=false"
 
-  flags+=" --container-runtime=remote"
   WINDOWS_CONTAINER_RUNTIME_ENDPOINT=${KUBE_WINDOWS_CONTAINER_RUNTIME_ENDPOINT:-npipe:////./pipe/containerd-containerd}
   flags+=" --container-runtime-endpoint=${WINDOWS_CONTAINER_RUNTIME_ENDPOINT}"
 
