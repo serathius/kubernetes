@@ -143,16 +143,10 @@ export NODE_IP_RANGE
 # in order to initialize properly.
 NODE_SCOPES="${NODE_SCOPES:-monitoring,logging-write,storage-ro}"
 
-# Extra docker options for nodes.
-EXTRA_DOCKER_OPTS="${EXTRA_DOCKER_OPTS:-}"
-
 VOLUME_PLUGIN_DIR="${VOLUME_PLUGIN_DIR:-/home/kubernetes/flexvolume}"
 
 SERVICE_CLUSTER_IP_RANGE="${SERVICE_CLUSTER_IP_RANGE:-10.0.0.0/16}"  # formerly PORTAL_NET
 export ALLOCATE_NODE_CIDRS=true
-
-# When set to true, Docker Cache is enabled by default as part of the cluster bring up.
-export ENABLE_DOCKER_REGISTRY_CACHE=true
 
 # Optional: Deploy a L7 loadbalancer controller to fulfill Ingress requests:
 #   glbc           - CE L7 Load Balancer Controller
@@ -234,11 +228,6 @@ fi
 # Optional: Enable node logging.
 export ENABLE_NODE_LOGGING="${KUBE_ENABLE_NODE_LOGGING:-true}"
 export LOGGING_DESTINATION="${KUBE_LOGGING_DESTINATION:-gcp}" # options: gcp
-
-# Optional: Don't require https for registries in our local RFC1918 network
-if [[ ${KUBE_ENABLE_INSECURE_REGISTRY:-false} == "true" ]]; then
-  EXTRA_DOCKER_OPTS="${EXTRA_DOCKER_OPTS} --insecure-registry 10.0.0.0/8"
-fi
 
 # Optional: customize runtime config
 RUNTIME_CONFIG="${KUBE_RUNTIME_CONFIG:-}"
@@ -348,11 +337,6 @@ fi
 # Enable GCE Alpha features.
 if [[ -n "${GCE_ALPHA_FEATURES:-}" ]]; then
   PROVIDER_VARS="${PROVIDER_VARS:-} GCE_ALPHA_FEATURES"
-fi
-
-# Disable Docker live-restore.
-if [[ -n "${DISABLE_DOCKER_LIVE_RESTORE:-}" ]]; then
-  PROVIDER_VARS="${PROVIDER_VARS:-} DISABLE_DOCKER_LIVE_RESTORE"
 fi
 
 # Override default GLBC image

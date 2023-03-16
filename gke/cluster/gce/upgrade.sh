@@ -202,7 +202,6 @@ function get-node-os() {
 #   KUBE_PROXY_TOKEN
 #   NODE_PROBLEM_DETECTOR_TOKEN
 #   CA_CERT_BASE64
-#   EXTRA_DOCKER_OPTS
 #   KUBELET_CERT_BASE64
 #   KUBELET_KEY_BASE64
 function upgrade-nodes() {
@@ -241,7 +240,6 @@ function setup-base-image() {
 #   KUBE_PROXY_TOKEN
 #   NODE_PROBLEM_DETECTOR_TOKEN
 #   CA_CERT_BASE64
-#   EXTRA_DOCKER_OPTS
 #   KUBELET_CERT_BASE64
 #   KUBELET_KEY_BASE64
 function prepare-node-upgrade() {
@@ -267,8 +265,6 @@ function prepare-node-upgrade() {
   NODE_PROBLEM_DETECTOR_TOKEN=$(get-env-val "${node_env}" "NODE_PROBLEM_DETECTOR_TOKEN")
   CA_CERT_BASE64=$(get-env-val "${node_env}" "CA_CERT")
   export CA_CERT_BASE64
-  EXTRA_DOCKER_OPTS=$(get-env-val "${node_env}" "EXTRA_DOCKER_OPTS")
-  export EXTRA_DOCKER_OPTS
   KUBELET_CERT_BASE64=$(get-env-val "${node_env}" "KUBELET_CERT")
   export KUBELET_CERT_BASE64
   KUBELET_KEY_BASE64=$(get-env-val "${node_env}" "KUBELET_KEY")

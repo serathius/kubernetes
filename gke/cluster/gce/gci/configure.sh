@@ -361,6 +361,104 @@ function install-gci-mounter-tools {
   record-preload-info "mounter" "${mounter_rootfs_tar_sha}"
 }
 
+function docker-installed {
+    if systemctl cat docker.service &> /dev/null ; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+function disable_aufs() {
+  # disable aufs module if aufs is loaded
+  if lsmod | grep "aufs" &> /dev/null ; then
+    sudo modprobe -r aufs
+  fi
+}
+
+function detect_mtu {
+  local MTU=1460
+  if [[ "${DETECT_MTU:-}" == "true" ]];then
+    local default_nic=$(ip route get 8.8.8.8 | sed -nr "s/.*dev ([^\ ]+).*/\1/p")
+    if [ -f "/sys/class/net/$default_nic/mtu" ]; then
+      MTU=$(cat /sys/class/net/$default_nic/mtu)
+    fi
+  fi
+  echo $MTU
+}
+
+# This function cofigures docker. It has no conditional logic.
+# It will restart docker service so new settings will be picked up.
+function assemble-docker-flags {
+  if is-preloaded "docker" "default-config-v1"; then
+    echo "docker is preloaded."
+    return
+  fi
+
+  # log the contents of the /etc/docker/daemon.json if already exists
+  if [ -f /etc/docker/daemon.json ]; then
+    echo "Contents of the old docker config"
+    cat /etc/docker/daemon.json
+  fi
+
+  disable_aufs
+
+  # COS and Ubuntu have different docker options configured as command line arguments.
+  # Use systemctl show docker to see the full list of options.
+  # When configuring Docker options you can use daemon.json or command line arguments
+  # The same option cannot be configured by both, even if it is a list option and can be repeated in the command line multiple times.
+  # This is why we are not simply configuring everything in daemon.json.
+
+  local MTU="$(detect_mtu)"
+
+  # options to be set on COS, registry-mirror is pre-configured on COS
+  local os_specific_options="\"live-restore\": true,\
+   \"storage-driver\": \"overlay2\",\
+   \"mtu\": ${MTU},"
+
+  if [[ -n "$(command -v lsb_release)" && $(lsb_release -si) == "Ubuntu" ]]; then
+    # Ubuntu already have everthing set
+    os_specific_options=""
+  fi
+
+  # Important setting: set docker0 cidr to private ip address range to avoid conflict with cbr0 cidr range ("bip": "169.254.123.1/24")
+  cat > /etc/docker/daemon.json <<EOF
+{
+  "pidfile": "/var/run/docker.pid",
+  "iptables": false,
+  "ip-masq": false,
+  "log-level": "warn",
+  "bip": "169.254.123.1/24",
+  "log-driver": "json-file",
+  ${os_specific_options}
+  "log-opts": {
+      "max-size": "10m",
+      "max-file": "5"
+  }
+}
+EOF
+
+  # Ensure TasksMax is sufficient for docker.
+  # (https://github.com/kubernetes/kubernetes/issues/51977)
+  echo "Extend the docker.service configuration to set a higher pids limit"
+  mkdir -p /etc/systemd/system/docker.service.d
+  cat <<EOF >/etc/systemd/system/docker.service.d/01tasksmax.conf
+[Service]
+TasksMax=infinity
+EOF
+
+  # Do not move to the daemon.json file for backward compatibility.
+  # Command line and config file options cannot be both defined and custoemr customization may break.
+  # insecure-registry setting was inherited from the past, see b/203231428. Keeping for backward compatibility.
+  echo "DOCKER_OPTS=\"--registry-mirror=https://mirror.gcr.io --insecure-registry 10.0.0.0/8\"" > /etc/default/docker
+
+  systemctl daemon-reload
+  echo "Docker command line and configuration are updated. Restart docker to pick it up"
+  systemctl restart docker
+
+  record-preload-info "docker" "default-config-v1"
+}
+
 # Install node problem detector binary.
 function install-node-problem-detector {
   if [[ -n "${NODE_PROBLEM_DETECTOR_VERSION:-}" ]]; then
@@ -1319,6 +1417,12 @@ log-wrap 'DownloadKubeletConfig' download-kubelet-config "${KUBE_HOME}/kubelet-c
 
 if [[ "${KUBERNETES_MASTER:-}" == "true" ]]; then
   log-wrap 'DownloadKubeMasterCerts' download-kube-master-certs-hurl
+fi
+
+if docker-installed; then
+  # We still need to configure docker so it wouldn't reserver the 172.17.0/16 subnet
+  # And if somebody will start docker to build or pull something, logging will also be set up
+  log-wrap 'AssembleDockerFlags' assemble-docker-flags
 fi
 
 # ensure chosen container runtime is present

@@ -1572,41 +1572,6 @@ function create-master-etcd-apiserver-auth {
    fi
 }
 
-
-function docker-installed {
-    if systemctl cat docker.service &> /dev/null ; then
-        return 0
-    else
-        return 1
-    fi
-}
-
-# util function to add a docker option to daemon.json file only if the daemon.json file is present.
-# accepts only one argument (docker options)
-function addockeropt {
-	DOCKER_OPTS_FILE=/etc/docker/daemon.json
-	if [ "$#" -lt 1 ]; then
-	echo "No arguments are passed while adding docker options. Expect one argument"
-	exit 1
-	elif [ "$#" -gt 1 ]; then
-	echo "Only one argument is accepted"
-	exit 1
-	fi
-	# appends the given input to the docker opts file i.e. /etc/docker/daemon.json file
-	if [ -f "$DOCKER_OPTS_FILE" ]; then
-	cat >> "${DOCKER_OPTS_FILE}" <<EOF
-  $1
-EOF
-	fi
-}
-
-function disable_aufs() {
-  # disable aufs module if aufs is loaded
-  if lsmod | grep "aufs" &> /dev/null ; then
-    sudo modprobe -r aufs
-  fi
-}
-
 function detect_mtu {
   local MTU=1460
   if [[ "${DETECT_MTU:-}" == "true" ]];then
@@ -1617,97 +1582,6 @@ function detect_mtu {
   fi
   echo $MTU
 
-}
-
-function set_docker_options_non_ubuntu() {
-  # set docker options mtu and storage driver for non-ubuntu
-  # as it is default for ubuntu
-   if [[ -n "$(command -v lsb_release)" && $(lsb_release -si) == "Ubuntu" ]]; then
-      echo "Not adding docker options on ubuntu, as these are default on ubuntu. Bailing out..."
-      return
-   fi
-
-   local MTU="$(detect_mtu)"
-   addockeropt "\"mtu\": ${MTU},"
-   addockeropt "\"storage-driver\": \"overlay2\","
-
-   echo "setting live restore"
-   # Disable live-restore if the environment variable is set.
-   if [[ "${DISABLE_DOCKER_LIVE_RESTORE:-false}" == "true" ]]; then
-      addockeropt "\"live-restore\": false,"
-   else
-      addockeropt "\"live-restore\": true,"
-   fi
-}
-
-function assemble-docker-flags {
-  echo "Assemble docker options"
-
-    # log the contents of the /etc/docker/daemon.json if already exists
-  if [ -f /etc/docker/daemon.json ]; then
-    echo "Contents of the old docker config"
-    cat /etc/docker/daemon.json
-  fi
-
-  cat <<EOF >/etc/docker/daemon.json
-{
-EOF
-
-addockeropt "\"pidfile\": \"/var/run/docker.pid\",
-  \"iptables\": false,
-  \"ip-masq\": false,"
-
-  echo "setting log-level"
-  if [[ "${TEST_CLUSTER:-}" == "true" ]]; then
-    addockeropt "\"log-level\": \"debug\","
-  else
-    addockeropt "\"log-level\": \"warn\","
-  fi
-
-  echo "setting network bridge"
-  if [[ "${NETWORK_PROVIDER:-}" == "kubenet" || "${NETWORK_PROVIDER:-}" == "cni" ]]; then
-    # set docker0 cidr to private ip address range to avoid conflict with cbr0 cidr range
-    addockeropt "\"bip\": \"169.254.123.1/24\","
-  else
-    addockeropt "\"bridge\": \"cbr0\","
-  fi
-
-  echo "setting registry mirror"
-  # TODO (vteratipally)  move the registry-mirror completely to /etc/docker/daemon.json
-  local docker_opts=""
-  # Decide whether to enable a docker registry mirror. This is taken from
-  # the "kube-env" metadata value.
-  if [[ -n "${DOCKER_REGISTRY_MIRROR_URL:-}" ]]; then
-      docker_opts+="--registry-mirror=${DOCKER_REGISTRY_MIRROR_URL} "
-  fi
-
-  disable_aufs
-  set_docker_options_non_ubuntu
-
-  echo "setting docker logging options"
-  # Configure docker logging
-  addockeropt "\"log-driver\": \"${DOCKER_LOG_DRIVER:-json-file}\","
-  addockeropt "\"log-opts\": {
-      \"max-size\": \"${DOCKER_LOG_MAX_SIZE:-10m}\",
-      \"max-file\": \"${DOCKER_LOG_MAX_FILE:-5}\"
-    }"
-  cat <<EOF >>/etc/docker/daemon.json
-}
-EOF
-  echo "DOCKER_OPTS=\"${docker_opts}${EXTRA_DOCKER_OPTS:-}\"" > /etc/default/docker
-
-  # Ensure TasksMax is sufficient for docker.
-  # (https://github.com/kubernetes/kubernetes/issues/51977)
-  echo "Extend the docker.service configuration to set a higher pids limit"
-  mkdir -p /etc/systemd/system/docker.service.d
-  cat <<EOF >/etc/systemd/system/docker.service.d/01tasksmax.conf
-[Service]
-TasksMax=infinity
-EOF
-
-    systemctl daemon-reload
-    echo "Docker command line is updated. Restart docker to pick it up"
-    systemctl restart docker
 }
 
 # This function assembles the kubelet systemd service file and starts it
@@ -3663,14 +3537,6 @@ function main() {
 
   log-wrap 'DetectCgroupConfig' detect-cgroup-config
   log-wrap 'OverrideKubectl' override-kubectl
-  if docker-installed; then
-    # We still need to configure docker so it wouldn't reserver the 172.17.0/16 subnet
-    # And if somebody will start docker to build or pull something, logging will also be set up
-    log-wrap 'AssembleDockerFlags' assemble-docker-flags
-    # stop docker if it is present as we want to use just containerd
-    # (b/174523058) stopping docker breaks COS toolbox and some other scripts
-    # log-wrap 'StopDocker' systemctl stop docker || echo "unable to stop docker"
-  fi
   if [[ -e "${KUBE_HOME}/bin/gke-internal-configure-helper.sh" ]]; then
     log-wrap 'ConfigureSMT' configure-smt
     log-wrap 'GKESetupContainerd' gke-setup-containerd

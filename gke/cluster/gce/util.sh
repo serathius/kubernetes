@@ -314,10 +314,6 @@ function upload-tars() {
 
   set-preferred-region
 
-  if [[ "${ENABLE_DOCKER_REGISTRY_CACHE:-}" == "true" ]]; then
-    DOCKER_REGISTRY_MIRROR_URL="https://mirror.gcr.io"
-  fi
-
   SERVER_BINARY_TAR_HASH=$(sha512sum-file "${SERVER_BINARY_TAR}")
 
   if [[ -n "${NODE_BINARY_TAR:-}" ]]; then
@@ -1116,7 +1112,6 @@ METADATA_AGENT_CPU_REQUEST: $(yaml-quote "${METADATA_AGENT_CPU_REQUEST:-}")
 METADATA_AGENT_MEMORY_REQUEST: $(yaml-quote "${METADATA_AGENT_MEMORY_REQUEST:-}")
 METADATA_AGENT_CLUSTER_LEVEL_CPU_REQUEST: $(yaml-quote "${METADATA_AGENT_CLUSTER_LEVEL_CPU_REQUEST:-}")
 METADATA_AGENT_CLUSTER_LEVEL_MEMORY_REQUEST: $(yaml-quote "${METADATA_AGENT_CLUSTER_LEVEL_MEMORY_REQUEST:-}")
-DOCKER_REGISTRY_MIRROR_URL: $(yaml-quote "${DOCKER_REGISTRY_MIRROR_URL:-}")
 ENABLE_L7_LOADBALANCING: $(yaml-quote "${ENABLE_L7_LOADBALANCING:-none}")
 ENABLE_CLUSTER_UI: $(yaml-quote "${ENABLE_CLUSTER_UI:-false}")
 ENABLE_NODE_PROBLEM_DETECTOR: $(yaml-quote "${ENABLE_NODE_PROBLEM_DETECTOR:-none}")
@@ -1247,25 +1242,6 @@ EOF
 TEST_CLUSTER: $(yaml-quote "${TEST_CLUSTER}")
 EOF
   fi
-  if [ -n "${DOCKER_TEST_LOG_LEVEL:-}" ]; then
-      cat >>"$file" <<EOF
-DOCKER_TEST_LOG_LEVEL: $(yaml-quote "${DOCKER_TEST_LOG_LEVEL}")
-EOF
-  fi
-  if [ -n "${DOCKER_LOG_DRIVER:-}" ]; then
-      cat >>"$file" <<EOF
-DOCKER_LOG_DRIVER: $(yaml-quote "${DOCKER_LOG_DRIVER}")
-EOF
-  fi
-  if [ -n "${DOCKER_LOG_MAX_SIZE:-}" ]; then
-      cat >>"$file" <<EOF
-DOCKER_LOG_MAX_SIZE: $(yaml-quote "${DOCKER_LOG_MAX_SIZE}")
-EOF
-  fi
-  if [ -n "${DOCKER_LOG_MAX_FILE:-}" ]; then
-      cat >>"$file" <<EOF
-DOCKER_LOG_MAX_FILE: $(yaml-quote "${DOCKER_LOG_MAX_FILE}")
-EOF
   fi
   if [ -n "${FEATURE_GATES:-}" ]; then
     cat >>"$file" <<EOF
@@ -1471,7 +1447,6 @@ EOF
     # Node-only env vars.
     cat >>"$file" <<EOF
 KUBERNETES_MASTER: $(yaml-quote "false")
-EXTRA_DOCKER_OPTS: $(yaml-quote "${EXTRA_DOCKER_OPTS:-}")
 EOF
     if [ -n "${KUBEPROXY_TEST_ARGS:-}" ]; then
       cat >>"$file" <<EOF
@@ -1847,7 +1822,6 @@ function parse-master-env() {
   CA_KEY_BASE64=$(get-env-val "${master_env}" "CA_KEY")
   KUBEAPISERVER_CERT_BASE64=$(get-env-val "${master_env}" "KUBEAPISERVER_CERT")
   KUBEAPISERVER_KEY_BASE64=$(get-env-val "${master_env}" "KUBEAPISERVER_KEY")
-  EXTRA_DOCKER_OPTS=$(get-env-val "${master_env}" "EXTRA_DOCKER_OPTS")
   KUBELET_CERT_BASE64=$(get-env-val "${master_env}" "KUBELET_CERT")
   KUBELET_KEY_BASE64=$(get-env-val "${master_env}" "KUBELET_KEY")
   MASTER_CERT_BASE64=$(get-env-val "${master_env}" "MASTER_CERT")

@@ -114,8 +114,6 @@ export LOAD_IMAGE_COMMAND=${KUBE_LOAD_IMAGE_COMMAND:-ctr -n=k8s.io images import
 export LOG_DUMP_SYSTEMD_SERVICES=${LOG_DUMP_SYSTEMD_SERVICES:-containerd}
 export CONTAINER_RUNTIME_TEST_HANDLER="true"
 
-export GCI_DOCKER_VERSION=${KUBE_GCI_DOCKER_VERSION:-}
-
 # Ability to inject custom versions (Ubuntu OS images ONLY)
 # if KUBE_UBUNTU_INSTALL_CONTAINERD_VERSION or KUBE_UBUNTU_INSTALL_RUNC_VERSION
 # is set to empty then we do not override the version(s) and just
@@ -163,16 +161,7 @@ FEATURE_GATES=${KUBE_FEATURE_GATES:-}
 
 TERMINATED_POD_GC_THRESHOLD=${TERMINATED_POD_GC_THRESHOLD:-100}
 
-# Extra docker options for nodes.
-EXTRA_DOCKER_OPTS=${EXTRA_DOCKER_OPTS:-}
-
-# Enable the docker debug mode.
-EXTRA_DOCKER_OPTS="${EXTRA_DOCKER_OPTS} --debug"
-
 export SERVICE_CLUSTER_IP_RANGE='10.0.0.0/16'  # formerly PORTAL_NET
-
-# When set to true, Docker Cache is enabled by default as part of the cluster bring up.
-export ENABLE_DOCKER_REGISTRY_CACHE=true
 
 # Optional: Deploy a L7 loadbalancer controller to fulfill Ingress requests:
 #   glbc           - CE L7 Load Balancer Controller
@@ -211,7 +200,6 @@ export ETCD_VERSION=${TEST_ETCD_VERSION:-}
 # Default Log level for all components in test clusters and variables to override it in specific components.
 TEST_CLUSTER_LOG_LEVEL=${TEST_CLUSTER_LOG_LEVEL:---v=4}
 KUBELET_TEST_LOG_LEVEL=${KUBELET_TEST_LOG_LEVEL:-$TEST_CLUSTER_LOG_LEVEL}
-DOCKER_TEST_LOG_LEVEL=${DOCKER_TEST_LOG_LEVEL:---log-level=info}
 API_SERVER_TEST_LOG_LEVEL=${API_SERVER_TEST_LOG_LEVEL:-$TEST_CLUSTER_LOG_LEVEL}
 CONTROLLER_MANAGER_TEST_LOG_LEVEL=${CONTROLLER_MANAGER_TEST_LOG_LEVEL:-$TEST_CLUSTER_LOG_LEVEL}
 SCHEDULER_TEST_LOG_LEVEL=${SCHEDULER_TEST_LOG_LEVEL:-$TEST_CLUSTER_LOG_LEVEL}
@@ -291,11 +279,6 @@ fi
 # Optional: Enable node logging.
 export ENABLE_NODE_LOGGING=${KUBE_ENABLE_NODE_LOGGING:-true}
 export LOGGING_DESTINATION=${KUBE_LOGGING_DESTINATION:-gcp} # options: gcp
-
-# Optional: Don't require https for registries in our local RFC1918 network
-if [[ ${KUBE_ENABLE_INSECURE_REGISTRY:-false} = 'true' ]]; then
-  EXTRA_DOCKER_OPTS="${EXTRA_DOCKER_OPTS} --insecure-registry 10.0.0.0/8"
-fi
 
 if [[ -n "${NODE_ACCELERATORS}" ]]; then
     if [[ -z "${FEATURE_GATES:-}" ]]; then
@@ -395,11 +378,6 @@ fi
 # Enable GCE Alpha features.
 if [[ -n "${GCE_ALPHA_FEATURES:-}" ]]; then
   PROVIDER_VARS="${PROVIDER_VARS:-} GCE_ALPHA_FEATURES"
-fi
-
-# Disable Docker live-restore.
-if [[ -n "${DISABLE_DOCKER_LIVE_RESTORE:-}" ]]; then
-  PROVIDER_VARS="${PROVIDER_VARS:-} DISABLE_DOCKER_LIVE_RESTORE"
 fi
 
 # Override default GLBC image
