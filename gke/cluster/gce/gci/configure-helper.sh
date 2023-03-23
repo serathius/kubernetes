@@ -214,6 +214,8 @@ function config-ip-firewall {
     iptables -w -t nat -I PREROUTING -p tcp ! -i eth0 -d "${METADATA_SERVER_IP}" --dport 8080 -m comment --comment "metadata-concealment: bridge traffic to metadata server goes to metadata proxy" -j DNAT --to-destination 169.254.169.252:987
   fi
   iptables -w -t mangle -I OUTPUT -s 169.254.169.254 -j DROP
+  iptables -w -t mangle -I OUTPUT -s 169.254.169.254 -p udp --sport 53 -j ACCEPT
+  iptables -w -t mangle -I OUTPUT -s 169.254.169.254 -p tcp --sport 53 -j ACCEPT
 
   # Log all metadata access not from approved processes.
   case "${METADATA_SERVER_FIREWALL_MODE:-off}" in
