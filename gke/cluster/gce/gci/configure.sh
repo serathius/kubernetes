@@ -1251,6 +1251,12 @@ function log-proto {
   "${LOG_CLUSTER_ID}" "${LOG_INSTANCE_NAME}" "${LOG_BOOT_ID}" "${timestamp}" "${bootstep}" "${status}" "${status_reason}" "${latency}"
 }
 
+# Prelaod components for both - preloader and runtime
+# Variables needed for this function to work will be set by the preloader
+function preload {
+  cd "${KUBE_HOME}"
+}
+
 ######### Main Function ##########
 log-init
 detect_host_info
@@ -1261,7 +1267,9 @@ detect_host_info
 # different. $BASH_SOURCE still contains the path of configure.sh, while $0 is
 # the path of the preload script.
 if [[ "$0" != "$BASH_SOURCE" && "${IS_PRELOADER:-"false"}" == "true" ]]; then
-  echo "Running in preloader instead of VM bootsrapping. Skipping installation steps as preloader script will source configure.sh and call corresponding functions."
+  # preload common components
+  preload
+  echo "Running in preloader instead of VM bootsrapping. Skipping installation steps as preloader script will source configure.sh and call all non-common functions."
   return
 fi
 
@@ -1297,6 +1305,9 @@ if docker-installed; then
   # And if somebody will start docker to build or pull something, logging will also be set up
   log-wrap 'AssembleDockerFlags' assemble-docker-flags
 fi
+
+# preload common components
+preload
 
 # ensure chosen container runtime is present
 log-wrap 'EnsureContainerRuntime' ensure-container-runtime
