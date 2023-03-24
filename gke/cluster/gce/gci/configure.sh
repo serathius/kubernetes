@@ -389,12 +389,8 @@ function detect_mtu {
 
 # This function cofigures docker. It has no conditional logic.
 # It will restart docker service so new settings will be picked up.
+# This method cannot be preloaded as the boot disk changes will not be persistet thru the reboots.
 function assemble-docker-flags {
-  if is-preloaded "docker" "default-config-v1"; then
-    echo "docker is preloaded."
-    return
-  fi
-
   # log the contents of the /etc/docker/daemon.json if already exists
   if [ -f /etc/docker/daemon.json ]; then
     echo "Contents of the old docker config"
@@ -455,8 +451,6 @@ EOF
   systemctl daemon-reload
   echo "Docker command line and configuration are updated. Restart docker to pick it up"
   systemctl restart docker
-
-  record-preload-info "docker" "default-config-v1"
 }
 
 # Install node problem detector binary.
