@@ -3325,6 +3325,30 @@ function config-ip-envoy {
   fi
 }
 
+# Setup hugepage using on the node and check if the setup successuful
+function setup-hugepages {
+  local origin
+  local actual
+  if [[ -n "${HUGEPAGE_1G:-}" ]]; then
+    echo "Setup '${HUGEPAGE_1G}' 1G hugepages"
+    origin="$(cat /sys/kernel/mm/hugepages/hugepages-1048576kB/nr_hugepages)"
+    echo "${HUGEPAGE_1G}" > /sys/kernel/mm/hugepages/hugepages-1048576kB/nr_hugepages
+    actual="$(cat /sys/kernel/mm/hugepages/hugepages-1048576kB/nr_hugepages)"
+    if [[ "${actual}" != "${HUGEPAGE_1G}" ]]; then
+        echo "Attempted to change 1G hugepages amount from '${origin}' to '${HUGEPAGE_1G}', but got '${actual}'"
+    fi
+  fi
+  if [[ -n "${HUGEPAGE_2M:-}" ]]; then
+    echo "Setup '${HUGEPAGE_2M}' 2M hugepages"
+    origin="$(cat /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages)"
+    echo "${HUGEPAGE_2M}" > /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages
+    actual="$(cat /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages)"
+    if [[ "${actual}" != "${HUGEPAGE_2M}" ]]; then
+        echo "Attempted to change 2M hugepages amount from '${origin}' to '${HUGEPAGE_2M}', but got '${actual}'"
+    fi
+  fi
+}
+
 ########### Main Function ###########
 function main() {
   echo "Start to configure instance for kubernetes"
@@ -3417,6 +3441,8 @@ function main() {
     log-wrap 'OverridePVRecycler' override-pv-recycler
     log-wrap 'GKEMasterStart' gke-master-start
   else
+    # Need to be done before the kubelet starts
+    log-wrap 'SetupHugepages' setup-hugepages
     log-wrap 'CreateNodePKI' create-node-pki
     log-wrap 'CreateKubeletKubeconfig' create-kubelet-kubeconfig "${KUBERNETES_MASTER_NAME}"
     if [[ "${KUBE_PROXY_DAEMONSET:-}" != "true" ]] && [[ "${KUBE_PROXY_DISABLE:-}" != "true" ]]; then
