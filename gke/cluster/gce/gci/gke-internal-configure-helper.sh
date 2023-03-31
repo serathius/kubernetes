@@ -1,5 +1,22 @@
 #!/bin/bash
 
+# Functions and vars copied from configure.sh
+# --- BEGIN ---
+CURL_FLAGS='--fail --silent --show-error --retry 5 --retry-delay 3 --connect-timeout 10 --retry-connrefused'
+GCE_METADATA_INTERNAL="http://metadata.google.internal/computeMetadata/v1/instance"
+function get-credentials {
+  # shellcheck disable=SC2086
+  curl ${CURL_FLAGS} \
+    -H "Metadata-Flavor: Google" \
+    "${GCE_METADATA_INTERNAL}/service-accounts/default/token" \
+  | python3 -c 'import sys; import json; print(json.loads(sys.stdin.read())["access_token"])'
+}
+
+function is-ubuntu {
+  [[ -f "/etc/os-release" && $(grep ^NAME= /etc/os-release) == 'NAME="Ubuntu"' ]]
+}
+# --- END ---
+
 # Create TLS enabled or disabled kubeconfig files for component static pods.
 function gke-internal-create-kubeconfig {
   local component=$1
@@ -416,13 +433,197 @@ function _gke_cni_template {
 EOF
 }
 
+# Default containerd config TOML file
+CONTAINERD_CONFIG_FILE="/etc/containerd/config.toml"
+# Directory containing $CONTAINERD_CONFIG_FILE
+CONTAINERD_CONFIG_ROOT=$(dirname "${CONTAINERD_CONFIG_FILE}")
+# Directory containing domain-specific config for containerd CRI
+# registry hostpath
+CONTAINERD_CRI_REGISTRY_HOSTPATH_CONFIG_ROOT="${CONTAINERD_CONFIG_ROOT}/hosts.d"
+# Directory containing certificates for containerd CRI registry hostpath
+CONTAINERD_CRI_REGISTRY_HOSTPATH_CERTS_ROOT="${CONTAINERD_CONFIG_ROOT}/certs.d"
+# GSM API URL
+# TODO(b/283980355): define an override mechanism for TPC
+GSM_ENDPOINT="https://secretmanager.googleapis.com"
+# Default file names for private CA certificate
+PRIVATE_CA_CRT_NAME="ca.crt"
+# Default file names for private CA certificate metadata
+PRIVATE_CA_CRT_METADATA_NAME="metadata.json"
+
+# Downloads and installs a CA certificate from Google Secret Manager (GSM).
+# On successful download, it will install the certificate under
+# containerd_certs_dir/cert_url/ca.crt, as well as the secret metadata under
+# containerd_certs_dir/cert_url/metadata.json.
+# This function extract HTTP error codes to distinguish between user errors
+# (e.g. typos, access config errors) and system errors (e.g. GSM outage).
+function install-gsm-certificate() {
+  local -r cert_url="${1:-}"
+  if [[ -z "${cert_url}" ]]; then
+    echo "Certificate URL must be specified"
+    return 1
+  fi
+  local -r cert_dir="${2:-}"
+  if [[ -z "${cert_dir}" ]]; then
+    echo "Certificate directory must be specified"
+    return 1
+  fi
+  local -r token="$(get-credentials)"
+  if [[ -z "${token}" ]]; then
+    echo "Failed to get credentials from metadata server"
+    return 1
+  fi
+  local -r curl_headers="Authorization: Bearer ${token}"
+  local -r api_url="${GSM_ENDPOINT}/v1/${cert_url}"
+  local -r payload_file="/tmp/gsm-payload.json"
+  # shellcheck disable=SC2206
+  local -r gsm_curl_flags=($CURL_FLAGS -H "${curl_headers}" -Lo "${payload_file}")
+  local curl_error http_code
+
+  # shellcheck disable=SC2086
+  if ! curl_error=$(curl "${gsm_curl_flags[@]}" "${api_url}" 2>&1); then
+    http_code=$(echo "${curl_error}" | sed -nE 's/^.*([0-9]{3})$/\1/p')
+    if (( http_code >= 400 && http_code <= 499 )); then
+      echo "User error pulling certificate metadata \"${cert_url}\" from GSM, code: ${http_code}."
+    elif (( http_code >= 500 )); then
+      echo "Internal error pulling certificate metadata \"${cert_url}\" from GSM, code: ${http_code}."
+    else
+      echo "Internal error pulling certificate metadata \"${cert_url}\" from GSM: ${curl_error}"
+    fi
+    return 1
+  fi
+  local -r metadata_file="${cert_dir}/${PRIVATE_CA_CRT_METADATA_NAME}"
+  mv "${payload_file}" "${metadata_file}"
+  chmod 444 "${metadata_file}"
+
+   # shellcheck disable=SC2086
+  if ! curl_error=$(curl "${gsm_curl_flags[@]}" "$api_url:access" 2>&1); then
+    http_code=$(echo "$curl_error" | sed -nE 's/^.*([0-9]{3})$/\1/p')
+    if (( http_code >= 400 && http_code <= 499 )); then
+      echo "User error pulling certificate \"${cert_url}\" from GSM, code: ${http_code}."
+    elif (( http_code >= 500 )); then
+      echo "Internal error pulling certificate \"${cert_url}\" from GSM, code: ${http_code}."
+    else
+      echo "Internal error pulling certificate \"${cert_url}\" from GSM: ${curl_error}"
+    fi
+    return 1
+  fi
+  local -r cert_file="${cert_dir}/${PRIVATE_CA_CRT_NAME}"
+  jq -r '.payload.data' "${payload_file}" | base64 -d > "${cert_file}"
+  chmod 444 "${cert_file}"
+  rm "${payload_file}"
+}
+
+# Create a containerd host config file (using containerd hostpath configuration)
+# under ${CONTAINERD_CRI_REGISTRY_HOSTPATH_CONFIG_ROOT}/${domain}
+# It expects two arguments:
+# - domain
+# - CA certificate path
+function add-containerd-cri-hostpath-registry-private-ca() {
+  local -r domain="${1:-}"
+  if [[ -z "${domain}" ]]; then
+    echo "Domain must be specified"
+    return 1
+  fi
+  local -r ca_cert_path="${2:-}"
+  if [[ -z "${ca_cert_path}" ]]; then
+    echo "CA certificate path must be specified"
+    return 1
+  fi
+
+  local -r host_config_dir="${CONTAINERD_CRI_REGISTRY_HOSTPATH_CONFIG_ROOT}/${domain}"
+  mkdir -p "${host_config_dir}"
+  local -r host_config_path="${host_config_dir}/hosts.toml"
+  cat > "${host_config_path}" <<EOF
+server = "https://${domain}"
+
+[host."https://${domain}"]
+  ca = "${ca_cert_path}"
+EOF
+  chmod 644 "${host_config_path}"
+}
+
+function configure-containerd-customization {
+  echo "Configuring private CA for container registries using GSM"
+  if is-ubuntu; then
+    echo "containerd customization is only supported on COS, skipping"
+    return
+  fi
+  if [[ -n "${CONTAINERD_PRIVATE_CA_GSM_CERT:-}" ]]; then
+    mkdir -p "${CONTAINERD_CRI_REGISTRY_HOSTPATH_CERTS_ROOT}"
+
+    # Config must be in a predefined JSON format.
+    # See go/gke-private-ca-kubenv-source.
+    local cert_url cert_dir
+    echo "${CONTAINERD_PRIVATE_CA_GSM_CERT}" | jq -c '.secret_configs[]' | while read -r config; do
+      cert_url="$(echo "${config}" | jq -r '.secret_url')"
+      cert_dir="${CONTAINERD_CRI_REGISTRY_HOSTPATH_CERTS_ROOT}/${cert_url}"
+      mkdir -p "${cert_dir}"
+      if ! install-gsm-certificate "${cert_url}" "${cert_dir}"; then
+        # Certificate installation failed, no need to write containerd config.
+        echo "Failed to install certificate \"${cert_url}\""
+        continue
+      fi
+      echo "Installed certificate \"${cert_url}\""
+      echo "${config}" | jq -r '.fqdns[]' | while read -r domain; do
+        add-containerd-cri-hostpath-registry-private-ca "${domain}" "${cert_dir}/${PRIVATE_CA_CRT_NAME}"
+      done
+    done
+  fi
+}
+
+# If your new containerd feature uses CRI registry hostpath config model,
+# update this function to include it.
+function use-containerd-cri-registry-hostpath {
+  if is-ubuntu; then
+    echo "false"
+    return
+  fi
+  if [[ -n "${CONTAINERD_PRIVATE_CA_GSM_CERT:-}" ]]; then
+    echo "true"
+    return
+  fi
+  echo "false"
+}
+
+# add-containerd-cri-hostpath-registry-mirrors receives a domain and a variable
+# number of mirrors as args. If the hosts.toml file already exists
+# for given domain, it just appends to it.
+function add-containerd-cri-hostpath-registry-mirrors {
+  local -r domain="${1:-}"
+  if [[ -z "${domain}" ]]; then
+    echo "Mirror must be passed"
+    return 1
+  fi
+  shift
+
+  local -r host_config_dir="${CONTAINERD_CRI_REGISTRY_HOSTPATH_CONFIG_ROOT}/${domain}"
+  mkdir -p "${host_config_dir}"
+  local -r host_config_path="${host_config_dir}/hosts.toml"
+  if [[ ! -e "${host_config_path}" ]]; then
+    cat > "${host_config_path}" <<EOF
+server = "https://${domain}"
+
+EOF
+    chmod 644 "${host_config_path}"
+  fi
+  local mirror
+  while (( "$#" )); do
+    mirror="${1}"
+    cat >> "${host_config_path}" <<EOF
+[host."https://${mirror}"]
+  capabilities = ["pull", "resolve"]
+EOF
+    shift
+  done
+}
+
 function gke-setup-containerd {
   local -r CONTAINERD_HOME="/home/containerd"
   mkdir -p "${CONTAINERD_HOME}"
 
   echo "Generating containerd config"
-  local -r config_path="${CONTAINERD_CONFIG_PATH:-"/etc/containerd/config.toml"}"
-  mkdir -p "$(dirname "${config_path}")"
+  local -r config_path="${CONTAINERD_CONFIG_FILE:-"/etc/containerd/config.toml"}"
+  mkdir -p "${CONTAINERD_CONFIG_ROOT}"
   local cni_template_path="${CONTAINERD_HOME}/cni.template"
   _gke_cni_template > "${cni_template_path}"
   if [[ "${KUBERNETES_MASTER:-}" != "true" ]]; then
@@ -460,11 +661,28 @@ oom_score = -999
   bin_dir = "${KUBE_HOME}/bin"
   conf_dir = "/etc/cni/net.d"
   conf_template = "${cni_template_path}"
-[plugins."io.containerd.grpc.v1.cri".registry.mirrors."docker.io"]
-  endpoint = ["https://mirror.gcr.io","https://registry-1.docker.io"]
 [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
   SystemdCgroup = ${systemdCgroup}
 EOF
+
+  # Setup mirrors based on the CRI registry config model
+  if [[ "$(use-containerd-cri-registry-hostpath)" == "true" ]]; then
+    cat >> "${config_path}" <<EOF
+# IMPORTANT: CRI REGISTRY CONFIGURATION WAS SWITCHED TO THE HOSTPATH CONFIG MODEL.
+# IF YOU'RE CUSTOMIZING CONTAINERD CONFIG PLEASE ENSURE YOU USE THE NEW MODEL.
+[plugins."io.containerd.grpc.v1.cri".registry]
+  config_path = "${CONTAINERD_CRI_REGISTRY_HOSTPATH_CONFIG_ROOT}"
+EOF
+    add-containerd-cri-hostpath-registry-mirrors "docker.io" \
+      "mirror.gcr.io" "registry-1.docker.io"
+  else
+    cat >> "${config_path}" <<EOF
+[plugins."io.containerd.grpc.v1.cri".registry.mirrors."docker.io"]
+  endpoint = ["https://mirror.gcr.io","https://registry-1.docker.io"]
+EOF
+  fi
+
+  configure-containerd-customization
 
   if [[ "${ENABLE_CONTAINERD_METRICS:-}" == "true" ]]; then
     cat >> "${config_path}" <<EOF
