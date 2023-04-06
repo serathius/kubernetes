@@ -466,6 +466,13 @@ oom_score = -999
   SystemdCgroup = ${systemdCgroup}
 EOF
 
+  if [[ "${ENABLE_CONTAINERD_METRICS:-}" == "true" ]]; then
+    cat >> "${config_path}" <<EOF
+[metrics]
+ address = "127.0.0.1:1338"
+EOF
+  fi
+
   if [[ "${ENABLE_GCFS:-}" == "true" ]]; then
     gke-setup-gcfs
     cat >> "${config_path}" <<EOF
