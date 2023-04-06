@@ -18,13 +18,17 @@ package gvisor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/apiserver/pkg/admission"
 	"k8s.io/kubernetes/pkg/apis/core"
+	"k8s.io/kubernetes/pkg/apis/core/pods"
 	"k8s.io/kubernetes/pkg/apis/node"
 )
 
@@ -40,15 +44,19 @@ const (
 	// gvisorRuntimeClass is the name of the gvisor runtime class.
 	gvisorRuntimeClass = "gvisor"
 
-	annotationPrefix         = "dev.gvisor."
-	internalAnnotationPrefix = annotationPrefix + "internal."
+	subresEphemeralContainers = "ephemeralcontainers"
+
+	annotationPrefix = "dev.gvisor."
 
 	// Annotation keys for gvisor mount.
-	gvisorMountShareKey   = annotationPrefix + "spec.mount.%s.share"
-	gvisorMountTypeKey    = annotationPrefix + "spec.mount.%s.type"
-	gvisorMountOptionsKey = annotationPrefix + "spec.mount.%s.options"
+	mountAnnotationPrefix = annotationPrefix + "spec.mount."
+	mountShareKey         = mountAnnotationPrefix + "%s.share"
+	mountTypeKey          = mountAnnotationPrefix + "%s.type"
+	mountOptionsKey       = mountAnnotationPrefix + "%s.options"
 
-	seccompKey = internalAnnotationPrefix + "seccomp."
+	// Internal annotations.
+	internalAnnotationPrefix = annotationPrefix + "internal."
+	seccompKey               = internalAnnotationPrefix + "seccomp."
 )
 
 var (
@@ -58,19 +66,19 @@ var (
 		"io.kubernetes.cri.untrusted-workload": "true",   // Used during Dogfood.
 	}
 
-	// capBlackList contains capabilities to be dropped if not explicitly added by users.
-	capBlackList = []core.Capability{"NET_RAW"}
+	// disallowedCapabilities contains capabilities to be dropped if not
+	// explicitly added by users.
+	disallowedCapabilities = []core.Capability{"NET_RAW"}
 )
 
 // Register registers a plugin
 func Register(plugins *admission.Plugins) {
 	plugins.Register(PluginName, func(config io.Reader) (admission.Interface, error) {
-		return NewGvisor(), nil
+		return new(), nil
 	})
 }
 
-// NewGvisor creates a new Gvisor admission control handler
-func NewGvisor() *Gvisor {
+func new() *Gvisor {
 	return &Gvisor{
 		Handler: admission.NewHandler(admission.Create, admission.Update),
 	}
@@ -81,8 +89,8 @@ type Gvisor struct {
 	*admission.Handler
 }
 
-var _ admission.MutationInterface = &Gvisor{}
-var _ admission.ValidationInterface = &Gvisor{}
+var _ admission.MutationInterface = (*Gvisor)(nil)
+var _ admission.ValidationInterface = (*Gvisor)(nil)
 
 // checkDeprecatedAnnotation determines whether a pod contains any of the set of
 // deprecated, disallowed annotations
@@ -99,9 +107,17 @@ func checkDeprecatedAnnotation(pod *core.Pod) error {
 // in the request as needed
 func (r *Gvisor) Admit(_ context.Context, attributes admission.Attributes, _ admission.ObjectInterfaces) error {
 	res := attributes.GetResource()
-	op := attributes.GetOperation()
-	if res.Group == "" && res.Resource == "pods" && op == admission.Create && len(attributes.GetSubresource()) == 0 {
-		return admitPodCreate(attributes)
+	if res.Group == "" && res.Resource == "pods" {
+		switch attributes.GetOperation() {
+		case admission.Create:
+			if len(attributes.GetSubresource()) == 0 {
+				return admitPodCreate(attributes)
+			}
+		case admission.Update:
+			if attributes.GetSubresource() == subresEphemeralContainers {
+				return admitEphemeralContainer(attributes)
+			}
+		}
 	}
 	return nil
 }
@@ -112,7 +128,7 @@ func (r *Gvisor) Validate(_ context.Context, attributes admission.Attributes, _ 
 	switch {
 	case res.Group == "" && res.Resource == "pods":
 		switch attributes.GetSubresource() {
-		case "", "status":
+		case "", "status", subresEphemeralContainers:
 			return validatePod(attributes)
 		}
 	case res.Group == "node.k8s.io" && res.Resource == "runtimeclasses" && len(attributes.GetSubresource()) == 0:
@@ -122,11 +138,24 @@ func (r *Gvisor) Validate(_ context.Context, attributes admission.Attributes, _ 
 }
 
 func validatePod(attributes admission.Attributes) error {
+	pod, err := getPod(attributes.GetObject())
+	if err != nil {
+		return admission.NewForbidden(attributes, err)
+	}
+	if err := checkDeprecatedAnnotation(pod); err != nil {
+		return admission.NewForbidden(attributes, err)
+	}
+
 	switch attributes.GetOperation() {
 	case admission.Create:
-		return validatePodCreate(attributes)
+		return validatePodCreate(attributes, pod)
+
 	case admission.Update:
-		return validatePodUpdate(attributes)
+		oldPod, err := getPod(attributes.GetOldObject())
+		if err != nil {
+			return admission.NewForbidden(attributes, err)
+		}
+		return validatePodUpdate(attributes, oldPod, pod)
 	}
 	return nil
 }
@@ -134,54 +163,101 @@ func validatePod(attributes admission.Attributes) error {
 // admitPodCreate performs some validation on the incoming object, and if
 // it is a gvisor pod creation request, mutates the pod as necessary.
 func admitPodCreate(attributes admission.Attributes) error {
-	pod, err := getGvisorPod(attributes)
+	pod, err := getPod(attributes.GetObject())
 	if err != nil {
-		return err
+		return admission.NewForbidden(attributes, err)
 	}
-	if pod == nil { // Pod is not a gvisor pod
+	if err := checkDeprecatedAnnotation(pod); err != nil {
+		return admission.NewForbidden(attributes, err)
+	}
+	if !isGvisorPod(pod) {
+		// Pod is not a gVisor pod, there is nothing else to do.
 		return nil
 	}
-	// Annotations were not added to the pod yet, so skip checks. They are done
-	// after the pod is mutated.
-	if err := validateGVisorPod(pod, false); err != nil {
+
+	if err := validateGVisorPod(pod); err != nil {
 		return admission.NewForbidden(attributes, err)
 	}
 	mutateGVisorPod(pod)
-	// Ensure that pod didn't have other annotations that aren't allowed.
-	if err := checkInternalAnnotations(pod, pod.Annotations, nil, true); err != nil {
+	// Check that pod didn't have other annotations that aren't allowed.
+	if err := checkAnnotations(pod, pod.Annotations, nil, true); err != nil {
 		return admission.NewForbidden(attributes, err)
 	}
 	return nil
 }
 
+// admitEphemeralContainer handles the dynamic addition of ephemeral containers
+// mutating them to apply the same rules as init and regular containers.
+func admitEphemeralContainer(attributes admission.Attributes) error {
+	oldPod, err := getPod(attributes.GetOldObject())
+	if err != nil {
+		return admission.NewForbidden(attributes, err)
+	}
+	pod, err := getPod(attributes.GetObject())
+	if err != nil {
+		return admission.NewForbidden(attributes, err)
+	}
+	if !isGvisorPod(oldPod) && !isGvisorPod(pod) {
+		// Neither pod is a gVisor pod, there is nothing else to do.
+		return nil
+	}
+	if !isGvisorPod(oldPod) || !isGvisorPod(pod) {
+		return admission.NewForbidden(attributes, errors.New("runtimeClassName cannot be changed"))
+	}
+
+	for _, added := range findNewContainers(oldPod.Spec.EphemeralContainers, pod.Spec.EphemeralContainers) {
+		c := (*core.Container)(&pod.Spec.EphemeralContainers[added].EphemeralContainerCommon)
+		updateCapabilities(c)
+	}
+	return nil
+}
+
+// findNewContainers returns the indexes of all containers that have been added
+// between old and new.
+func findNewContainers(old, new []core.EphemeralContainer) []int {
+	names := make(map[string]struct{})
+	for _, cont := range old {
+		names[cont.Name] = struct{}{}
+	}
+	var idxs []int
+	for i, cont := range new {
+		if _, ok := names[cont.Name]; !ok {
+			idxs = append(idxs, i)
+		}
+	}
+	return idxs
+}
+
 // mutateGVisorPod is a helper function that modifies a pod object to meet
 // gVisor specifications.
 func mutateGVisorPod(pod *core.Pod) {
-	updateCapabilities(pod.Spec.InitContainers)
-	updateCapabilities(pod.Spec.Containers)
+	updatePodCapabilities(pod)
 	updateVolumePodAnnotations(pod)
 	updateSeccompAnnotations(pod)
 }
 
-// updateCapabilities updates capabilities for given containers
-func updateCapabilities(containers []core.Container) {
-	for i := range containers {
-		c := &containers[i]
-		if c.SecurityContext == nil {
-			c.SecurityContext = &core.SecurityContext{}
-		}
-		if c.SecurityContext.Capabilities == nil {
-			c.SecurityContext.Capabilities = &core.Capabilities{}
-		}
-		if hasCapability("ALL", c.SecurityContext.Capabilities.Add) ||
-			hasCapability("ALL", c.SecurityContext.Capabilities.Drop) {
-			continue
-		}
-		for _, capToDrop := range capBlackList {
-			if hasCapability(capToDrop, c.SecurityContext.Capabilities.Add) ||
-				hasCapability(capToDrop, c.SecurityContext.Capabilities.Drop) {
-				continue
-			}
+// updatePodCapabilities updates capabilities for given containers
+func updatePodCapabilities(pod *core.Pod) {
+	pods.VisitContainersWithPath(&pod.Spec, field.NewPath("spec"), func(c *core.Container, _ *field.Path) bool {
+		updateCapabilities(c)
+		return true
+	})
+}
+
+func updateCapabilities(c *core.Container) {
+	if c.SecurityContext == nil {
+		c.SecurityContext = &core.SecurityContext{}
+	}
+	if c.SecurityContext.Capabilities == nil {
+		c.SecurityContext.Capabilities = &core.Capabilities{}
+	}
+	if hasCapability("ALL", c.SecurityContext.Capabilities.Add) ||
+		hasCapability("ALL", c.SecurityContext.Capabilities.Drop) {
+		return
+	}
+	for _, capToDrop := range disallowedCapabilities {
+		if !hasCapability(capToDrop, c.SecurityContext.Capabilities.Add) &&
+			!hasCapability(capToDrop, c.SecurityContext.Capabilities.Drop) {
 			c.SecurityContext.Capabilities.Drop = append(c.SecurityContext.Capabilities.Drop, capToDrop)
 		}
 	}
@@ -198,22 +274,27 @@ func hasCapability(cap core.Capability, caps []core.Capability) bool {
 }
 
 // updateVolumePodAnnotations puts volume information into gvisor specific pod
-// annotations. This is mainly for optimizing volume performance. Currently only
-// tmpfs based emptydir is handled.
+// annotations. This is mainly for optimizing volume performance.
 func updateVolumePodAnnotations(pod *core.Pod) {
-	containers := getContainers(pod)
+	addAnnotations(pod, getVolumeAnnotations(pod))
+}
+
+func getVolumeAnnotations(pod *core.Pod) map[string]string {
+	rv := make(map[string]string)
 	for _, v := range pod.Spec.Volumes {
-		info, ok := checkVolume(v, containers)
+		info, ok := checkVolume(v, pod)
 		if !ok {
 			continue
 		}
-		if pod.Annotations == nil {
-			pod.Annotations = make(map[string]string)
+		rv[fmt.Sprintf(mountShareKey, v.Name)] = info.share
+		rv[fmt.Sprintf(mountTypeKey, v.Name)] = info.mountType
+		mode := "rw"
+		if info.readOnly {
+			mode = "ro"
 		}
-		pod.Annotations[fmt.Sprintf(gvisorMountShareKey, v.Name)] = info.share
-		pod.Annotations[fmt.Sprintf(gvisorMountTypeKey, v.Name)] = info.mountType
-		pod.Annotations[fmt.Sprintf(gvisorMountOptionsKey, v.Name)] = strings.Join([]string{info.rwmode, info.propagation}, ",")
+		rv[fmt.Sprintf(mountOptionsKey, v.Name)] = strings.Join([]string{mode, info.propagation}, ",")
 	}
+	return rv
 }
 
 // mountInfo holds mount info for gVisor specific mount.
@@ -221,59 +302,66 @@ type mountInfo struct {
 	share       string
 	mountType   string
 	propagation string
-	rwmode      string
+	readOnly    bool
 }
 
 // checkVolume checks whether a volume requires gVisor specific mount.
 // For this optimization, gVisor currently only supports a
 // single volume mounted into different containers with exactly
 // the same mount option.
-func checkVolume(v core.Volume, containers []core.Container) (mountInfo, bool) {
+func checkVolume(v core.Volume, pod *core.Pod) (mountInfo, bool) {
+	// Currently only emptydir can be optimized.
 	if v.EmptyDir == nil {
 		return mountInfo{}, false
 	}
-
 	mountType, err := getMountType(v.EmptyDir.Medium)
 	if err != nil {
 		return mountInfo{}, false
 	}
-	var (
-		info     = mountInfo{mountType: mountType}
-		mountNum int
-	)
-	for _, c := range containers {
+
+	info := mountInfo{
+		mountType: mountType,
+		readOnly:  true,
+	}
+	mountNum := 0
+	ok := pods.VisitContainersWithPath(&pod.Spec, field.NewPath("spec"), func(c *core.Container, _ *field.Path) bool {
 		m := findVolumeMount(c, v.Name)
 		if m == nil {
-			continue
+			// Volume is not used by this container, skip to the next...
+			return true
 		}
 		if m.SubPath != "" || m.SubPathExpr != "" {
-			return mountInfo{}, false
+			// TODO(b/142076984): gVisor currently doesn't handle subpath mounts.
+			return false
 		}
 
-		crwmode := "rw"
-		if m.ReadOnly {
-			crwmode = "ro"
-		}
 		cpropagation := "rprivate"
 		if m.MountPropagation != nil &&
 			*m.MountPropagation == core.MountPropagationHostToContainer {
 			cpropagation = "rslave"
 		}
-		mountNum++
-
-		if (info.rwmode != "" && info.rwmode != crwmode) ||
-			(info.propagation != "" && info.propagation != cpropagation) {
-			return mountInfo{}, false
+		if info.propagation != "" && info.propagation != cpropagation {
+			return false
 		}
-		info.rwmode = crwmode
 		info.propagation = cpropagation
+
+		if !m.ReadOnly {
+			// If any of the containers can write to the emptydir, the master mount
+			// must be read-write.
+			info.readOnly = false
+		}
+		mountNum++
+		return true
+	})
+	if !ok {
+		return mountInfo{}, false
 	}
 
 	switch {
-	case mountNum > 1:
-		info.share = "pod"
 	case mountNum == 1:
 		info.share = "container"
+	case mountNum > 1:
+		info.share = "pod"
 	default:
 		// Skip this because no container mounts this volume.
 		return mountInfo{}, false
@@ -281,7 +369,7 @@ func checkVolume(v core.Volume, containers []core.Container) (mountInfo, bool) {
 	return info, true
 }
 
-func findVolumeMount(c core.Container, name string) *core.VolumeMount {
+func findVolumeMount(c *core.Container, name string) *core.VolumeMount {
 	for _, m := range c.VolumeMounts {
 		if m.Name == name {
 			return &m
@@ -303,8 +391,11 @@ func getMountType(medium core.StorageMedium) (string, error) {
 }
 
 func updateSeccompAnnotations(pod *core.Pod) {
-	annotations := getSeccompAnnotations(pod)
-	for key, val := range annotations {
+	addAnnotations(pod, getSeccompAnnotations(pod))
+}
+
+func addAnnotations(pod *core.Pod, add map[string]string) {
+	for key, val := range add {
 		if pod.Annotations == nil {
 			pod.Annotations = make(map[string]string)
 		}
@@ -322,12 +413,13 @@ func getSeccompAnnotations(pod *core.Pod) map[string]string {
 		}
 	}
 
-	for _, cont := range getContainers(pod) {
-		seccomp := seccompForContainer(&cont, podSeccomp)
+	pods.VisitContainersWithPath(&pod.Spec, field.NewPath("spec"), func(c *core.Container, _ *field.Path) bool {
+		seccomp := seccompForContainer(c, podSeccomp)
 		if seccomp == core.SeccompProfileTypeRuntimeDefault {
-			rv[seccompKey+cont.Name] = string(seccomp)
+			rv[seccompKey+c.Name] = string(seccomp)
 		}
-	}
+		return true
+	})
 	return rv
 }
 
@@ -343,69 +435,68 @@ func seccompForContainer(cont *core.Container, podSeccomp core.SeccompProfileTyp
 	return podSeccomp
 }
 
-func getContainers(pod *core.Pod) []core.Container {
-	rv := make([]core.Container, 0, len(pod.Spec.Containers)+len(pod.Spec.InitContainers))
-	rv = append(rv, pod.Spec.InitContainers...)
-	rv = append(rv, pod.Spec.Containers...)
-	return rv
-}
-
-// getGvisorPod validates that an incoming request does indeed contain a gvisor
-// pod. If both a nil pod and error are returned, then the pod was not a gvisor
-// pod.
-func getGvisorPod(attributes admission.Attributes) (*core.Pod, error) {
+// getPod is an utility function that casts the object to core.Pod and returns
+// an API error if it fails.
+func getPod(obj runtime.Object) (*core.Pod, error) {
 	// Verify that the object is indeed a Pod.
-	pod, ok := attributes.GetObject().(*core.Pod)
+	pod, ok := obj.(*core.Pod)
 	if !ok {
 		return nil, apierrors.NewBadRequest("Resource was marked with kind Pod but was unable to be converted")
-	}
-	if err := checkDeprecatedAnnotation(pod); err != nil {
-		return nil, admission.NewForbidden(attributes, fmt.Errorf("failed to validate pod object %s/%s: %v", pod.Namespace, pod.Name, err))
-	}
-	// Ignore if runtimeClassName is not present or selects a non-gvisor runtime.
-	if rc := pod.Spec.RuntimeClassName; rc == nil || *rc != gvisorRuntimeClass {
-		return nil, nil
 	}
 	return pod, nil
 }
 
+// isGvisorPod returns true if this pod has been annotated with the gVisor
+// runtime class name.
+func isGvisorPod(pod *core.Pod) bool {
+	rc := pod.Spec.RuntimeClassName
+	return rc != nil && *rc == gvisorRuntimeClass
+}
+
 // validatePodCreate determines whether a pod create request is valid
-func validatePodCreate(attributes admission.Attributes) error {
-	pod, err := getGvisorPod(attributes)
-	if err != nil {
-		return err
-	}
-	if pod == nil { // Pod is not a gvisor pod
+func validatePodCreate(attributes admission.Attributes, pod *core.Pod) error {
+	if !isGvisorPod(pod) {
+		// Pod is not a gVisor pod, there is nothing else to do.
 		return nil
 	}
-	if err := validateGVisorPod(pod, true); err != nil {
+	if err := validateGVisorPod(pod); err != nil {
+		return admission.NewForbidden(attributes, err)
+	}
+	if err := checkAnnotations(pod, pod.Annotations, nil, true); err != nil {
 		return admission.NewForbidden(attributes, err)
 	}
 	return nil
 }
 
 // validatePodUpdate determines whether a pod update request is valid
-func validatePodUpdate(attributes admission.Attributes) error {
-	// Verify that the old object is indeed a Pod.
-	oldPod, ok := attributes.GetOldObject().(*core.Pod)
-	if !ok {
-		return apierrors.NewBadRequest("Resource was marked with kind Pod but was unable to be converted")
-	}
-	pod, err := getGvisorPod(attributes)
-	if err != nil {
-		return err
-	}
-	if pod == nil {
-		// Nothing to validate if it's not a gVisor pod.
+func validatePodUpdate(attributes admission.Attributes, oldPod, pod *core.Pod) error {
+	if !isGvisorPod(oldPod) && !isGvisorPod(pod) {
+		// Neither pod is a gVisor pod, there is nothing else to do.
 		return nil
 	}
-	add, del := annotationDiff(oldPod, pod)
-	if len(add) > 0 || len(del) > 0 {
-		if err := checkInternalAnnotations(pod, add, del, false); err != nil {
-			return admission.NewForbidden(attributes, err)
+
+	switch attributes.GetSubresource() {
+	case "", "status":
+		if !isGvisorPod(oldPod) || !isGvisorPod(pod) {
+			return admission.NewForbidden(attributes, errors.New("runtimeClassName cannot be changed"))
+		}
+		add, del := annotationDiff(oldPod, pod)
+		if len(add) > 0 || len(del) > 0 {
+			if err := checkAnnotations(pod, add, del, false); err != nil {
+				return admission.NewForbidden(attributes, err)
+			}
+		}
+
+	case subresEphemeralContainers:
+		for _, added := range findNewContainers(oldPod.Spec.EphemeralContainers, pod.Spec.EphemeralContainers) {
+			c := (*core.Container)(&pod.Spec.EphemeralContainers[added].EphemeralContainerCommon)
+			if err := validateContainer(c); err != nil {
+				return admission.NewForbidden(attributes, err)
+			}
 		}
 	}
-	// RuntimeClassName is immutable, so no need to perform additional validation
+
+	// RuntimeClassName is immutable, so no need to perform additional validation.
 	return nil
 }
 
@@ -430,7 +521,7 @@ func annotationDiff(old *core.Pod, new *core.Pod) (map[string]string, map[string
 // validateGVisorPod validates whether the pod is eligible to run in gVisor.
 // 1) Pods with host path are not allowed.
 // 2) Pods with host namespace are not allowed.
-func validateGVisorPod(pod *core.Pod, checkInternalAnnotation bool) error {
+func validateGVisorPod(pod *core.Pod) error {
 	if pod.Spec.NodeSelector != nil {
 		if v, ok := pod.Spec.NodeSelector[gvisorNodeKey]; ok && v != gvisorNodeValue {
 			return fmt.Errorf("conflict: pod.spec.nodeSelector[%q] = %q; it must be removed or set to %q", gvisorNodeKey, v, gvisorNodeValue)
@@ -474,55 +565,61 @@ func validateGVisorPod(pod *core.Pod, checkInternalAnnotation bool) error {
 			return fmt.Errorf("Seccomp via annotations is not supported; use pod SecurityContext")
 		}
 	}
-	if checkInternalAnnotation {
-		if err := checkInternalAnnotations(pod, pod.Annotations, nil, true); err != nil {
-			return err
+
+	var containerErr error
+	pods.VisitContainersWithPath(&pod.Spec, field.NewPath("spec"), func(c *core.Container, _ *field.Path) bool {
+		containerErr = validateContainer(c)
+		// Visit containers until an error is found.
+		return containerErr == nil
+	})
+	return containerErr
+}
+
+func validateContainer(c *core.Container) error {
+	if c.SecurityContext != nil {
+		if c.SecurityContext.Privileged != nil && *c.SecurityContext.Privileged {
+			return fmt.Errorf("Privileged=true is not supported")
+		}
+		if c.SecurityContext.SELinuxOptions != nil {
+			return fmt.Errorf("SELinuxOptions is not supported")
+		}
+		if c.SecurityContext.AllowPrivilegeEscalation != nil && *c.SecurityContext.AllowPrivilegeEscalation {
+			return fmt.Errorf("AllowPrivilegeEscalation=true is not supported")
+		}
+		if c.SecurityContext.ProcMount != nil && *c.SecurityContext.ProcMount != core.DefaultProcMount {
+			return fmt.Errorf("ProcMount=%s is not supported", *c.SecurityContext.ProcMount)
+		}
+		if profile := c.SecurityContext.SeccompProfile; profile != nil {
+			if profile.Type != core.SeccompProfileTypeUnconfined && profile.Type != core.SeccompProfileTypeRuntimeDefault {
+				return fmt.Errorf("only Unconfined and RuntimeDefault seccomp profiles are supported")
+			}
 		}
 	}
-	var containers []core.Container
-	containers = append(containers, pod.Spec.InitContainers...)
-	containers = append(containers, pod.Spec.Containers...)
-	for _, c := range containers {
-		if c.SecurityContext != nil {
-			if c.SecurityContext.Privileged != nil && *c.SecurityContext.Privileged {
-				return fmt.Errorf("Privileged=true is not supported")
-			}
-			if c.SecurityContext.SELinuxOptions != nil {
-				return fmt.Errorf("SELinuxOptions is not supported")
-			}
-			if c.SecurityContext.AllowPrivilegeEscalation != nil && *c.SecurityContext.AllowPrivilegeEscalation {
-				return fmt.Errorf("AllowPrivilegeEscalation=true is not supported")
-			}
-			if c.SecurityContext.ProcMount != nil && *c.SecurityContext.ProcMount != core.DefaultProcMount {
-				return fmt.Errorf("ProcMount=%s is not supported", *c.SecurityContext.ProcMount)
-			}
-			if profile := c.SecurityContext.SeccompProfile; profile != nil {
-				if profile.Type != core.SeccompProfileTypeUnconfined && profile.Type != core.SeccompProfileTypeRuntimeDefault {
-					return fmt.Errorf("only Unconfined and RuntimeDefault seccomp profiles are supported")
-				}
-			}
-		}
-		if len(c.VolumeDevices) != 0 {
-			return fmt.Errorf("VolumeDevices is not supported")
-		}
-		for _, m := range c.VolumeMounts {
-			if m.MountPropagation != nil &&
-				*m.MountPropagation != core.MountPropagationNone &&
-				*m.MountPropagation != core.MountPropagationHostToContainer {
-				return fmt.Errorf("MountPropagation=%s is not supported", *m.MountPropagation)
-			}
+	if len(c.VolumeDevices) != 0 {
+		return fmt.Errorf("VolumeDevices is not supported")
+	}
+	for _, m := range c.VolumeMounts {
+		if m.MountPropagation != nil &&
+			*m.MountPropagation != core.MountPropagationNone &&
+			*m.MountPropagation != core.MountPropagationHostToContainer {
+			return fmt.Errorf("MountPropagation=%s is not supported", *m.MountPropagation)
 		}
 	}
 	return nil
 }
 
-func checkInternalAnnotations(pod *core.Pod, add, del map[string]string, all bool) error {
-	allowed := getSeccompAnnotations(pod)
+func checkAnnotations(pod *core.Pod, add, del map[string]string, all bool) error {
+	if err := checkAnnotationsHelper(getVolumeAnnotations(pod), mountAnnotationPrefix, add, del, all); err != nil {
+		return err
+	}
+	return checkAnnotationsHelper(getSeccompAnnotations(pod), internalAnnotationPrefix, add, del, all)
+}
 
+func checkAnnotationsHelper(allowed map[string]string, prefix string, add, del map[string]string, all bool) error {
 	for key, val := range add {
-		if strings.HasPrefix(key, internalAnnotationPrefix) {
+		if strings.HasPrefix(key, prefix) {
 			if wantVal, ok := allowed[key]; !ok {
-				return fmt.Errorf("user annotations starting with %q are not allowed", internalAnnotationPrefix)
+				return fmt.Errorf("user annotations starting with %q are not allowed", prefix)
 			} else if wantVal != val {
 				return fmt.Errorf(`invalid annotation '%s: %q', expected value: %q`, key, val, wantVal)
 			}
@@ -537,8 +634,9 @@ func checkInternalAnnotations(pod *core.Pod, add, del map[string]string, all boo
 		}
 	}
 
+	// Check that none of the annotations that should be present has been removed.
 	for key, val := range del {
-		if strings.HasPrefix(key, internalAnnotationPrefix) {
+		if _, ok := allowed[key]; ok {
 			return fmt.Errorf(`annotation was removed from pod '%s: %q'`, key, val)
 		}
 	}
@@ -563,8 +661,4 @@ func validateRuntimeClass(attributes admission.Attributes) error {
 		return admission.NewForbidden(attributes, admission.NewForbidden(attributes, fmt.Errorf("gvisor RuntimeClass cannot have a non-gvisor Handler: %s", rc.Handler)))
 	}
 	return nil
-}
-
-func stringPtr(p string) *string {
-	return &p
 }

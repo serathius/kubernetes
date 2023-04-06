@@ -30,12 +30,8 @@ import (
 	"k8s.io/kubernetes/pkg/apis/node"
 )
 
-func int64Ptr(p int64) *int64 {
-	return &p
-}
-
-func boolPtr(p bool) *bool {
-	return &p
+func toPtr[T any](val T) *T {
+	return &val
 }
 
 func procMountTypePtr(p core.ProcMountType) *core.ProcMountType {
@@ -119,7 +115,7 @@ func TestValidateGVisorPod(t *testing.T) {
 		"pod with existing node selector": {
 			pod: core.Pod{
 				Spec: core.PodSpec{
-					RuntimeClassName: stringPtr(gvisorRuntimeClass),
+					RuntimeClassName: toPtr(gvisorRuntimeClass),
 					NodeSelector:     map[string]string{"other": "selector"},
 				},
 			},
@@ -191,7 +187,7 @@ func TestValidateGVisorPod(t *testing.T) {
 			pod: core.Pod{
 				Spec: core.PodSpec{
 					SecurityContext: &core.PodSecurityContext{
-						FSGroup: int64Ptr(1234),
+						FSGroup: toPtr[int64](1234),
 					},
 				},
 			},
@@ -248,69 +244,6 @@ func TestValidateGVisorPod(t *testing.T) {
 			},
 			expectErr: true,
 		},
-		"pod with empty SecurityContext container": {
-			pod: core.Pod{
-				Spec: core.PodSpec{
-					Containers: []core.Container{
-						{
-							Name:            "container",
-							SecurityContext: &core.SecurityContext{},
-						},
-					},
-				},
-			},
-			expectErr: false,
-		},
-		"pod with non-Privileged container": {
-			pod: core.Pod{
-				Spec: core.PodSpec{
-					Containers: []core.Container{
-						{
-							Name: "container",
-							SecurityContext: &core.SecurityContext{
-								Privileged: boolPtr(false),
-							},
-						},
-					},
-				},
-			},
-			expectErr: false,
-		},
-		"pod with Privileged container": {
-			pod: core.Pod{
-				Spec: core.PodSpec{
-					Containers: []core.Container{
-						{
-							Name: "container",
-							SecurityContext: &core.SecurityContext{
-								Privileged: boolPtr(true),
-							},
-						},
-					},
-				},
-			},
-			expectErr: true,
-		},
-		"pod with SELinux container": {
-			pod: core.Pod{
-				Spec: core.PodSpec{
-					Containers: []core.Container{
-						{
-							Name: "container",
-							SecurityContext: &core.SecurityContext{
-								SELinuxOptions: &core.SELinuxOptions{
-									User:  "user",
-									Role:  "role",
-									Type:  "type",
-									Level: "level",
-								},
-							},
-						},
-					},
-				},
-			},
-			expectErr: true,
-		},
 		"pod with container with RuntimeDefault seccomp profile": {
 			pod: core.Pod{
 				ObjectMeta: metav1.ObjectMeta{
@@ -349,176 +282,6 @@ func TestValidateGVisorPod(t *testing.T) {
 				},
 			},
 			expectErr: false,
-		},
-		"pod with container with invalid seccomp profile": {
-			pod: core.Pod{
-				Spec: core.PodSpec{
-					Containers: []core.Container{
-						{
-							Name: "container",
-							SecurityContext: &core.SecurityContext{
-								SeccompProfile: &core.SeccompProfile{
-									Type: "invalid profile",
-								},
-							},
-						},
-					},
-				},
-			},
-			expectErr: true,
-		},
-		"pod with non-AllowPrivilegeEscalation container": {
-			pod: core.Pod{
-				Spec: core.PodSpec{
-					Containers: []core.Container{
-						{
-							Name: "container",
-							SecurityContext: &core.SecurityContext{
-								AllowPrivilegeEscalation: boolPtr(false),
-							},
-						},
-					},
-				},
-			},
-			expectErr: false,
-		},
-		"pod with AllowPrivilegeEscalation container": {
-			pod: core.Pod{
-				Spec: core.PodSpec{
-					Containers: []core.Container{
-						{
-							Name: "container",
-							SecurityContext: &core.SecurityContext{
-								AllowPrivilegeEscalation: boolPtr(true),
-							},
-						},
-					},
-				},
-			},
-			expectErr: true,
-		},
-		"pod with default ProcMount container": {
-			pod: core.Pod{
-				Spec: core.PodSpec{
-					Containers: []core.Container{
-						{
-							Name: "container",
-							SecurityContext: &core.SecurityContext{
-								ProcMount: procMountTypePtr(core.DefaultProcMount),
-							},
-						},
-					},
-				},
-			},
-			expectErr: false,
-		},
-		"pod with Unmasked ProcMount container": {
-			pod: core.Pod{
-				Spec: core.PodSpec{
-					Containers: []core.Container{
-						{
-							Name: "container",
-							SecurityContext: &core.SecurityContext{
-								ProcMount: procMountTypePtr(core.UnmaskedProcMount),
-							},
-						},
-					},
-				},
-			},
-			expectErr: true,
-		},
-		"pod with VolumeDevices container": {
-			pod: core.Pod{
-				Spec: core.PodSpec{
-					Containers: []core.Container{
-						{
-							Name: "container",
-							VolumeDevices: []core.VolumeDevice{
-								{
-									Name:       "dev1",
-									DevicePath: "/dev/dev1",
-								},
-							},
-						},
-					},
-				},
-			},
-			expectErr: true,
-		},
-		"pod with VolumeMounts container": {
-			pod: core.Pod{
-				Spec: core.PodSpec{
-					Containers: []core.Container{
-						{
-							Name: "container",
-							VolumeMounts: []core.VolumeMount{
-								{
-									Name:      "volume1",
-									MountPath: "/",
-								},
-							},
-						},
-					},
-				},
-			},
-			expectErr: false,
-		},
-		"pod with None MountPropagation container": {
-			pod: core.Pod{
-				Spec: core.PodSpec{
-					Containers: []core.Container{
-						{
-							Name: "container",
-							VolumeMounts: []core.VolumeMount{
-								{
-									Name:             "volume1",
-									MountPath:        "/",
-									MountPropagation: mountPropagationModePtr(core.MountPropagationNone),
-								},
-							},
-						},
-					},
-				},
-			},
-			expectErr: false,
-		},
-		"pod with HostToContainer MountPropagation container": {
-			pod: core.Pod{
-				Spec: core.PodSpec{
-					Containers: []core.Container{
-						{
-							Name: "container",
-							VolumeMounts: []core.VolumeMount{
-								{
-									Name:             "volume1",
-									MountPath:        "/",
-									MountPropagation: mountPropagationModePtr(core.MountPropagationHostToContainer),
-								},
-							},
-						},
-					},
-				},
-			},
-			expectErr: false,
-		},
-		"pod with Bidirectional MountPropagation container": {
-			pod: core.Pod{
-				Spec: core.PodSpec{
-					Containers: []core.Container{
-						{
-							Name: "container",
-							VolumeMounts: []core.VolumeMount{
-								{
-									Name:             "volume1",
-									MountPath:        "/",
-									MountPropagation: mountPropagationModePtr(core.MountPropagationBidirectional),
-								},
-							},
-						},
-					},
-				},
-			},
-			expectErr: true,
 		},
 		"pod with Seccomp": {
 			pod: core.Pod{
@@ -560,50 +323,9 @@ func TestValidateGVisorPod(t *testing.T) {
 			},
 			expectErr: true,
 		},
-		"pod with AppArmor container": {
-			pod: core.Pod{
-				ObjectMeta: metav1.ObjectMeta{
-					Annotations: map[string]string{
-						"container.apparmor.security.beta.kubernetes.io/test": "test",
-					},
-				},
-			},
-			expectErr: true,
-		},
-		"pod with non-Privileged init container": {
-			pod: core.Pod{
-				Spec: core.PodSpec{
-					InitContainers: []core.Container{
-						{
-							Name: "container",
-							SecurityContext: &core.SecurityContext{
-								Privileged: boolPtr(false),
-							},
-						},
-					},
-				},
-			},
-			expectErr: false,
-		},
-		"pod with Privileged init container": {
-			pod: core.Pod{
-				Spec: core.PodSpec{
-					InitContainers: []core.Container{
-						{
-							Name: "container",
-							SecurityContext: &core.SecurityContext{
-								Privileged: boolPtr(true),
-							},
-						},
-					},
-				},
-			},
-			expectErr: true,
-		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			err := validateGVisorPod(&test.pod, true)
-			if test.expectErr {
+			if err := validateGVisorPod(&test.pod); test.expectErr {
 				assert.Error(t, err)
 			} else {
 				assert.NoError(t, err)
@@ -612,9 +334,181 @@ func TestValidateGVisorPod(t *testing.T) {
 	}
 }
 
-func TestGvisor_Admit(t *testing.T) {
-	gvisor := NewGvisor()
+func TestValidateContainer(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		container core.Container
+		expectErr bool
+	}{
+		{
+			name: "empty SecurityContext",
+			container: core.Container{
+				Name:            "container",
+				SecurityContext: &core.SecurityContext{},
+			},
+		},
+		{
+			name: "non-Privileged",
+			container: core.Container{
+				Name: "container",
+				SecurityContext: &core.SecurityContext{
+					Privileged: toPtr(false),
+				},
+			},
+		},
+		{
+			name: "Privileged",
+			container: core.Container{
+				Name: "container",
+				SecurityContext: &core.SecurityContext{
+					Privileged: toPtr(true),
+				},
+			},
+			expectErr: true,
+		},
+		{
+			name: "SELinux",
+			container: core.Container{
+				Name: "container",
+				SecurityContext: &core.SecurityContext{
+					SELinuxOptions: &core.SELinuxOptions{
+						User:  "user",
+						Role:  "role",
+						Type:  "type",
+						Level: "level",
+					},
+				},
+			},
+			expectErr: true,
+		},
+		{
+			name: "invalid seccomp",
+			container: core.Container{
+				Name: "container",
+				SecurityContext: &core.SecurityContext{
+					SeccompProfile: &core.SeccompProfile{
+						Type: "invalid profile",
+					},
+				},
+			},
+			expectErr: true,
+		},
+		{
+			name: "non-AllowPrivilegeEscalation",
+			container: core.Container{
+				Name: "container",
+				SecurityContext: &core.SecurityContext{
+					AllowPrivilegeEscalation: toPtr(false),
+				},
+			},
+		},
+		{
+			name: "AllowPrivilegeEscalation",
+			container: core.Container{
+				Name: "container",
+				SecurityContext: &core.SecurityContext{
+					AllowPrivilegeEscalation: toPtr(true),
+				},
+			},
+			expectErr: true,
+		},
+		{
+			name: "Default ProcMount",
+			container: core.Container{
+				Name: "container",
+				SecurityContext: &core.SecurityContext{
+					ProcMount: procMountTypePtr(core.DefaultProcMount),
+				},
+			},
+		},
+		{
+			name: "Unmasked ProcMount",
+			container: core.Container{
+				Name: "container",
+				SecurityContext: &core.SecurityContext{
+					ProcMount: procMountTypePtr(core.UnmaskedProcMount),
+				},
+			},
+			expectErr: true,
+		},
+		{
+			name: "VolumeDevices",
+			container: core.Container{
+				Name: "container",
+				VolumeDevices: []core.VolumeDevice{
+					{
+						Name:       "dev1",
+						DevicePath: "/dev/dev1",
+					},
+				},
+			},
+			expectErr: true,
+		},
+		{
+			name: "VolumeMounts",
+			container: core.Container{
+				Name: "container",
+				VolumeMounts: []core.VolumeMount{
+					{
+						Name:      "volume1",
+						MountPath: "/",
+					},
+				},
+			},
+			expectErr: false,
+		},
+		{
+			name: "MountPropagation None",
+			container: core.Container{
+				Name: "container",
+				VolumeMounts: []core.VolumeMount{
+					{
+						Name:             "volume1",
+						MountPath:        "/",
+						MountPropagation: mountPropagationModePtr(core.MountPropagationNone),
+					},
+				},
+			},
+		},
+		{
+			name: "MountPropagation HostToContainer",
+			container: core.Container{
+				Name: "container",
+				VolumeMounts: []core.VolumeMount{
+					{
+						Name:             "volume1",
+						MountPath:        "/",
+						MountPropagation: mountPropagationModePtr(core.MountPropagationHostToContainer),
+					},
+				},
+			},
+		},
+		{
+			name: "MountPropagation Bidirectional",
+			container: core.Container{
+				Name: "container",
+				VolumeMounts: []core.VolumeMount{
+					{
+						Name:             "volume1",
+						MountPath:        "/",
+						MountPropagation: mountPropagationModePtr(core.MountPropagationBidirectional),
+					},
+				},
+			},
+			expectErr: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := validateContainer(&tc.container); tc.expectErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
 
+func TestAdmitCreate(t *testing.T) {
 	createPodTests := map[string]struct {
 		pod, expected core.Pod
 		expectErr     bool
@@ -627,33 +521,33 @@ func TestGvisor_Admit(t *testing.T) {
 		"create pod with gvisor runtimeclass": {
 			pod: core.Pod{
 				Spec: core.PodSpec{
-					RuntimeClassName: stringPtr(gvisorRuntimeClass),
+					RuntimeClassName: toPtr(gvisorRuntimeClass),
 				},
 			},
 			expectErr: false,
 			expected: core.Pod{
 				Spec: core.PodSpec{
-					RuntimeClassName: stringPtr(gvisorRuntimeClass),
+					RuntimeClassName: toPtr(gvisorRuntimeClass),
 				},
 			},
 		},
 		"create pod with non-gvisor runtimeclass": {
 			pod: core.Pod{
 				Spec: core.PodSpec{
-					RuntimeClassName: stringPtr("other"),
+					RuntimeClassName: toPtr("other"),
 				},
 			},
 			expectErr: false,
 			expected: core.Pod{
 				Spec: core.PodSpec{
-					RuntimeClassName: stringPtr("other"),
+					RuntimeClassName: toPtr("other"),
 				},
 			},
 		},
 		"create gvisor pod with some disallowed options": {
 			pod: core.Pod{
 				Spec: core.PodSpec{
-					RuntimeClassName: stringPtr(gvisorRuntimeClass),
+					RuntimeClassName: toPtr(gvisorRuntimeClass),
 					SecurityContext: &core.PodSecurityContext{
 						HostNetwork: true,
 						HostPID:     true,
@@ -664,7 +558,7 @@ func TestGvisor_Admit(t *testing.T) {
 							Type:  "type",
 							Level: "level",
 						},
-						FSGroup: int64Ptr(1234),
+						FSGroup: toPtr[int64](1234),
 						Sysctls: []core.Sysctl{
 							{
 								Name:  "kernel.shm_rmid_forced",
@@ -698,9 +592,9 @@ func TestGvisor_Admit(t *testing.T) {
 
 	for name, test := range createPodTests {
 		t.Run(name, func(t *testing.T) {
-			attrs := makePodCreateAttrs(&test.pod, "")
-			err := gvisor.Admit(context.TODO(), attrs, nil)
-			if test.expectErr {
+			gvisor := new()
+			attr := makePodCreateAttrs(&test.pod, "")
+			if err := gvisor.Admit(context.TODO(), attr, nil); test.expectErr {
 				assert.Error(t, err)
 			} else {
 				assert.NoError(t, err)
@@ -708,14 +602,16 @@ func TestGvisor_Admit(t *testing.T) {
 			}
 		})
 	}
+}
 
+func TestAdmitUpdate(t *testing.T) {
 	gvisorPod := &core.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "gvisor-pod",
 		},
 		Spec: core.PodSpec{
 			Containers:       []core.Container{{Image: "my-image:v1"}},
-			RuntimeClassName: stringPtr("gvisor"),
+			RuntimeClassName: toPtr("gvisor"),
 		},
 	}
 	deprecatedGvisorPod := &core.Pod{
@@ -746,33 +642,35 @@ func TestGvisor_Admit(t *testing.T) {
 		expectErr                bool
 	}{
 		"non-gvisor->non-gvisor": {
-			oldPod:    nativePod.DeepCopy(),
-			newPod:    nativePod.DeepCopy(),
+			oldPod:    nativePod,
+			newPod:    nativePod,
 			expectErr: false,
 			expected:  nativePod.DeepCopy(),
 		},
 		"gvisor->deprecated-gvisor": {
-			oldPod:    gvisorPod.DeepCopy(),
-			newPod:    deprecatedGvisorPod.DeepCopy(),
+			oldPod:    gvisorPod,
+			newPod:    deprecatedGvisorPod,
 			expectErr: false, //  It's Validate's job to fail this case, not Admit's
 			expected:  deprecatedGvisorPod.DeepCopy(),
 		},
 		"gvisor->modified-image": {
-			oldPod:    gvisorPod.DeepCopy(),
-			newPod:    gvisorPodNewImage.DeepCopy(),
+			oldPod:    gvisorPod,
+			newPod:    gvisorPodNewImage,
 			expectErr: false,
 			expected:  gvisorPodNewImage.DeepCopy(),
 		},
 	}
 	for name, test := range updatePodTests {
 		t.Run(name, func(t *testing.T) {
-			attrs := makePodUpdateAttrs(test.newPod, test.oldPod, "")
-			err := gvisor.Admit(context.TODO(), attrs, nil)
-			if test.expectErr {
+			gvisor := new()
+			// Ensure test pod isn't changed because it may be used by multiple tests.
+			newPod := test.newPod.DeepCopy()
+			attrs := makePodUpdateAttrs(newPod, test.oldPod, "")
+			if err := gvisor.Admit(context.TODO(), attrs, nil); test.expectErr {
 				assert.Error(t, err)
 			} else {
 				assert.NoError(t, err)
-				assert.Equal(t, test.expected, test.newPod)
+				assert.Equal(t, test.expected, newPod)
 			}
 		})
 	}
@@ -780,10 +678,25 @@ func TestGvisor_Admit(t *testing.T) {
 	gvisorPod = &core.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "testname", Namespace: "testnamespace"},
 		Spec: core.PodSpec{
-			RuntimeClassName: stringPtr(gvisorRuntimeClass),
+			RuntimeClassName: toPtr(gvisorRuntimeClass),
 		},
 	}
 	expectedGvisorPod := gvisorPod.DeepCopy()
+
+	ephemeralPod := gvisorPod.DeepCopy()
+	ephemeralPod.Spec.EphemeralContainers = []core.EphemeralContainer{
+		{
+			EphemeralContainerCommon: core.EphemeralContainerCommon{
+				Name: "ephemeral",
+			},
+		},
+	}
+	expectedEphemeralPod := ephemeralPod.DeepCopy()
+	expectedEphemeralPod.Spec.EphemeralContainers[0].EphemeralContainerCommon.SecurityContext = &core.SecurityContext{
+		Capabilities: &core.Capabilities{
+			Drop: []core.Capability{"NET_RAW"},
+		},
+	}
 
 	otherTests := map[string]struct {
 		obj         runtime.Object
@@ -806,7 +719,6 @@ func TestGvisor_Admit(t *testing.T) {
 			resource:  "foos",
 			operation: admission.Create,
 			options:   &metav1.CreateOptions{},
-			expectErr: false,
 			expected:  expectedGvisorPod,
 		},
 		"non-empty subresource": {
@@ -818,7 +730,6 @@ func TestGvisor_Admit(t *testing.T) {
 			subresource: "foo",
 			operation:   admission.Create,
 			options:     &metav1.CreateOptions{},
-			expectErr:   false,
 			expected:    expectedGvisorPod,
 		},
 		"non-create pod operation": {
@@ -829,7 +740,6 @@ func TestGvisor_Admit(t *testing.T) {
 			resource:  "pods",
 			operation: admission.Delete,
 			options:   &metav1.DeleteOptions{},
-			expectErr: false,
 			expected:  expectedGvisorPod,
 		},
 		"create non-pod marked as kind pod": {
@@ -842,17 +752,34 @@ func TestGvisor_Admit(t *testing.T) {
 			options:   &metav1.CreateOptions{},
 			expectErr: true,
 		},
+		"ephemeral container": {
+			obj:         ephemeralPod,
+			oldObj:      gvisorPod,
+			kind:        "Pod",
+			namespace:   ephemeralPod.Namespace,
+			name:        ephemeralPod.Name,
+			resource:    "pods",
+			subresource: subresEphemeralContainers,
+			operation:   admission.Update,
+			expected:    expectedEphemeralPod,
+		},
 	}
 
 	for name, test := range otherTests {
 		t.Run(name, func(t *testing.T) {
-			attrs := admission.NewAttributesRecord(test.obj, test.oldObj, core.Kind(test.kind).WithVersion("version"), test.namespace, test.name, core.Resource(test.resource).WithVersion("version"), test.subresource, test.operation, test.options, false, nil)
-			err := gvisor.Admit(context.TODO(), attrs, nil)
-			if test.expectErr {
+			gvisor := new()
+			// Ensure test pod isn't changed because it may be used by multiple tests.
+			newObj := test.obj.DeepCopyObject()
+			var oldObj runtime.Object
+			if test.oldObj != nil {
+				oldObj = test.oldObj.DeepCopyObject()
+			}
+			attrs := admission.NewAttributesRecord(newObj, oldObj, core.Kind(test.kind).WithVersion("version"), test.namespace, test.name, core.Resource(test.resource).WithVersion("version"), test.subresource, test.operation, test.options, false, nil)
+			if err := gvisor.Admit(context.TODO(), attrs, nil); test.expectErr {
 				assert.Error(t, err)
 			} else {
 				assert.NoError(t, err)
-				assert.Equal(t, test.expected, test.obj)
+				assert.Equal(t, test.expected, newObj)
 			}
 		})
 	}
@@ -887,33 +814,33 @@ func TestAdmitPodCreate(t *testing.T) {
 		"create pod with gvisor runtimeclass": {
 			pod: core.Pod{
 				Spec: core.PodSpec{
-					RuntimeClassName: stringPtr(gvisorRuntimeClass),
+					RuntimeClassName: toPtr(gvisorRuntimeClass),
 				},
 			},
 			expectErr: false,
 			expected: core.Pod{
 				Spec: core.PodSpec{
-					RuntimeClassName: stringPtr(gvisorRuntimeClass),
+					RuntimeClassName: toPtr(gvisorRuntimeClass),
 				},
 			},
 		},
 		"create pod with non-gvisor runtimeclass": {
 			pod: core.Pod{
 				Spec: core.PodSpec{
-					RuntimeClassName: stringPtr("other"),
+					RuntimeClassName: toPtr("other"),
 				},
 			},
 			expectErr: false,
 			expected: core.Pod{
 				Spec: core.PodSpec{
-					RuntimeClassName: stringPtr("other"),
+					RuntimeClassName: toPtr("other"),
 				},
 			},
 		},
 		"gvisor pod with host path": {
 			pod: core.Pod{
 				Spec: core.PodSpec{
-					RuntimeClassName: stringPtr(gvisorRuntimeClass),
+					RuntimeClassName: toPtr(gvisorRuntimeClass),
 					Volumes: []core.Volume{
 						{
 							Name: "test-host-path",
@@ -931,20 +858,20 @@ func TestAdmitPodCreate(t *testing.T) {
 		"empty pod": {
 			pod: core.Pod{
 				Spec: core.PodSpec{
-					RuntimeClassName: stringPtr(gvisorRuntimeClass),
+					RuntimeClassName: toPtr(gvisorRuntimeClass),
 				},
 			},
 			expectErr: false,
 			expected: core.Pod{
 				Spec: core.PodSpec{
-					RuntimeClassName: stringPtr(gvisorRuntimeClass),
+					RuntimeClassName: toPtr(gvisorRuntimeClass),
 				},
 			},
 		},
 		"pod NET_RAW capability": {
 			pod: core.Pod{
 				Spec: core.PodSpec{
-					RuntimeClassName: stringPtr(gvisorRuntimeClass),
+					RuntimeClassName: toPtr(gvisorRuntimeClass),
 					InitContainers: []core.Container{
 						{
 							Name: "init-container-with-net-raw-added",
@@ -1048,7 +975,7 @@ func TestAdmitPodCreate(t *testing.T) {
 			expectErr: false,
 			expected: core.Pod{
 				Spec: core.PodSpec{
-					RuntimeClassName: stringPtr(gvisorRuntimeClass),
+					RuntimeClassName: toPtr(gvisorRuntimeClass),
 					InitContainers: []core.Container{
 						{
 							Name: "init-container-with-net-raw-added",
@@ -1171,7 +1098,7 @@ func TestAdmitPodCreate(t *testing.T) {
 		"internal annotation": {
 			pod: core.Pod{
 				Spec: core.PodSpec{
-					RuntimeClassName: stringPtr(gvisorRuntimeClass),
+					RuntimeClassName: toPtr(gvisorRuntimeClass),
 				},
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
@@ -1184,7 +1111,7 @@ func TestAdmitPodCreate(t *testing.T) {
 		"seccomp RuntimeDefault": {
 			pod: core.Pod{
 				Spec: core.PodSpec{
-					RuntimeClassName: stringPtr(gvisorRuntimeClass),
+					RuntimeClassName: toPtr(gvisorRuntimeClass),
 					SecurityContext: &core.PodSecurityContext{
 						SeccompProfile: &core.SeccompProfile{
 							Type: core.SeccompProfileTypeRuntimeDefault,
@@ -1202,7 +1129,7 @@ func TestAdmitPodCreate(t *testing.T) {
 			expectErr: false,
 			expected: core.Pod{
 				Spec: core.PodSpec{
-					RuntimeClassName: stringPtr(gvisorRuntimeClass),
+					RuntimeClassName: toPtr(gvisorRuntimeClass),
 					SecurityContext: &core.PodSecurityContext{
 						SeccompProfile: &core.SeccompProfile{
 							Type: core.SeccompProfileTypeRuntimeDefault,
@@ -1270,19 +1197,19 @@ func TestMutateGVisorPod(t *testing.T) {
 		"empty pod": {
 			pod: core.Pod{
 				Spec: core.PodSpec{
-					RuntimeClassName: stringPtr(gvisorRuntimeClass),
+					RuntimeClassName: toPtr(gvisorRuntimeClass),
 				},
 			},
 			expected: core.Pod{
 				Spec: core.PodSpec{
-					RuntimeClassName: stringPtr(gvisorRuntimeClass),
+					RuntimeClassName: toPtr(gvisorRuntimeClass),
 				},
 			},
 		},
 		"pod NET_RAW capability": {
 			pod: core.Pod{
 				Spec: core.PodSpec{
-					RuntimeClassName: stringPtr(gvisorRuntimeClass),
+					RuntimeClassName: toPtr(gvisorRuntimeClass),
 					InitContainers: []core.Container{
 						{
 							Name: "init-container-with-net-raw-added",
@@ -1385,7 +1312,7 @@ func TestMutateGVisorPod(t *testing.T) {
 			},
 			expected: core.Pod{
 				Spec: core.PodSpec{
-					RuntimeClassName: stringPtr(gvisorRuntimeClass),
+					RuntimeClassName: toPtr(gvisorRuntimeClass),
 					InitContainers: []core.Container{
 						{
 							Name: "init-container-with-net-raw-added",
@@ -1517,11 +1444,11 @@ func TestMutateGVisorPod(t *testing.T) {
 func TestNodeSelectorConflict(t *testing.T) {
 	pod := core.Pod{
 		Spec: core.PodSpec{
-			RuntimeClassName: stringPtr(gvisorRuntimeClass),
+			RuntimeClassName: toPtr(gvisorRuntimeClass),
 			NodeSelector:     map[string]string{gvisorNodeKey: "other"},
 		},
 	}
-	err := validateGVisorPod(&pod, true)
+	err := validateGVisorPod(&pod)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "conflict:")
 }
@@ -1678,6 +1605,28 @@ func TestVolumeHints(t *testing.T) {
 					options: "rw,rprivate",
 				}),
 			},
+			test{
+				name: typ + ": rw + ro",
+				volumes: []core.Volume{
+					createEmptyDir("empty", medium),
+				},
+				containers: []core.Container{
+					{
+						Name:         "read-only",
+						VolumeMounts: []core.VolumeMount{{Name: "empty", ReadOnly: true}},
+					},
+					{
+						Name:         "read-write",
+						VolumeMounts: []core.VolumeMount{{Name: "empty"}},
+					},
+				},
+				want: createAnnotations(annotation{
+					name:    "empty",
+					typ:     typ,
+					share:   "pod",
+					options: "rw,rprivate",
+				}),
+			},
 		)
 
 		for _, readonly := range []bool{true, false} {
@@ -1827,9 +1776,23 @@ func TestVolumeHints(t *testing.T) {
 				mutateGVisorPod(&pod)
 				assert.Equal(t, tc.want, pod.Annotations)
 
-				// Now make one of the containers an init container. End result should
+				// Make one of the containers an init container. End result should
 				// be the same.
+				pod.Annotations = nil
 				pod.Spec.InitContainers = []core.Container{containers[0]}
+				pod.Spec.Containers = containers[1:]
+				mutateGVisorPod(&pod)
+				assert.Equal(t, tc.want, pod.Annotations)
+
+				// Make one of the containers an ephemeral container. End result should
+				// be the same.
+				pod.Annotations = nil
+				pod.Spec.InitContainers = nil
+				pod.Spec.EphemeralContainers = []core.EphemeralContainer{
+					{
+						EphemeralContainerCommon: core.EphemeralContainerCommon(containers[0]),
+					},
+				}
 				pod.Spec.Containers = containers[1:]
 				mutateGVisorPod(&pod)
 				assert.Equal(t, tc.want, pod.Annotations)
@@ -1838,8 +1801,8 @@ func TestVolumeHints(t *testing.T) {
 	}
 }
 
-func TestGvisor_Validate(t *testing.T) {
-	gvisor := NewGvisor()
+func TestValidate(t *testing.T) {
+	gvisor := new()
 
 	createPodTests := map[string]struct {
 		pod       core.Pod
@@ -1867,7 +1830,7 @@ func TestGvisor_Validate(t *testing.T) {
 		"create pod with gvisor runtimeclass": {
 			pod: core.Pod{
 				Spec: core.PodSpec{
-					RuntimeClassName: stringPtr(gvisorRuntimeClass),
+					RuntimeClassName: toPtr(gvisorRuntimeClass),
 				},
 			},
 			expectErr: false,
@@ -1875,7 +1838,7 @@ func TestGvisor_Validate(t *testing.T) {
 		"create pod with non-gvisor runtimeclass": {
 			pod: core.Pod{
 				Spec: core.PodSpec{
-					RuntimeClassName: stringPtr("other"),
+					RuntimeClassName: toPtr("other"),
 				},
 			},
 			expectErr: false,
@@ -1883,7 +1846,7 @@ func TestGvisor_Validate(t *testing.T) {
 		"create gvisor pod with some disallowed options": {
 			pod: core.Pod{
 				Spec: core.PodSpec{
-					RuntimeClassName: stringPtr(gvisorRuntimeClass),
+					RuntimeClassName: toPtr(gvisorRuntimeClass),
 					SecurityContext: &core.PodSecurityContext{
 						HostNetwork: true,
 						HostPID:     true,
@@ -1894,7 +1857,7 @@ func TestGvisor_Validate(t *testing.T) {
 							Type:  "type",
 							Level: "level",
 						},
-						FSGroup: int64Ptr(1234),
+						FSGroup: toPtr[int64](1234),
 						Sysctls: []core.Sysctl{
 							{
 								Name:  "kernel.shm_rmid_forced",
@@ -1950,7 +1913,7 @@ func TestGvisor_Validate(t *testing.T) {
 		},
 		Spec: core.PodSpec{
 			Containers:       []core.Container{{Image: "my-image:v1"}},
-			RuntimeClassName: stringPtr("gvisor"),
+			RuntimeClassName: toPtr("gvisor"),
 		},
 	}
 	deprecatedGvisorPod := &core.Pod{
@@ -1985,7 +1948,7 @@ func TestGvisor_Validate(t *testing.T) {
 		},
 		Spec: core.PodSpec{
 			Containers:       []core.Container{{Name: "cont"}},
-			RuntimeClassName: stringPtr("gvisor"),
+			RuntimeClassName: toPtr("gvisor"),
 			SecurityContext: &core.PodSecurityContext{
 				SeccompProfile: &core.SeccompProfile{
 					Type: core.SeccompProfileTypeRuntimeDefault,
@@ -2117,7 +2080,7 @@ func TestGvisor_Validate(t *testing.T) {
 	gvisorPod = &core.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "testname", Namespace: "testnamespace"},
 		Spec: core.PodSpec{
-			RuntimeClassName: stringPtr(gvisorRuntimeClass),
+			RuntimeClassName: toPtr(gvisorRuntimeClass),
 		},
 	}
 
@@ -2217,6 +2180,82 @@ func TestGvisor_Validate(t *testing.T) {
 	})
 }
 
+func TestValidateEphemeral(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		pod     core.Pod
+		wantErr string
+	}{
+		{
+			name: "happy",
+			pod: core.Pod{
+				Spec: core.PodSpec{
+					RuntimeClassName: toPtr("other"),
+					Containers:       []core.Container{{Name: "main"}},
+					EphemeralContainers: []core.EphemeralContainer{
+						{
+							EphemeralContainerCommon: core.EphemeralContainerCommon{Name: "ephemeral"},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "multiple",
+			pod: core.Pod{
+				Spec: core.PodSpec{
+					RuntimeClassName: toPtr("other"),
+					Containers:       []core.Container{{Name: "main"}},
+					EphemeralContainers: []core.EphemeralContainer{
+						{
+							EphemeralContainerCommon: core.EphemeralContainerCommon{Name: "ephemeral1"},
+						},
+						{
+							EphemeralContainerCommon: core.EphemeralContainerCommon{Name: "ephemeral2"},
+						},
+						{
+							EphemeralContainerCommon: core.EphemeralContainerCommon{Name: "ephemeral3"},
+						},
+					},
+				},
+			},
+		},
+		{
+			// Other invalid variations are tested in TestValidateContainer.
+			name: "invalid",
+			pod: core.Pod{
+				Spec: core.PodSpec{
+					RuntimeClassName: toPtr(gvisorRuntimeClass),
+					Containers:       []core.Container{{Name: "main"}},
+					EphemeralContainers: []core.EphemeralContainer{
+						{
+							EphemeralContainerCommon: core.EphemeralContainerCommon{
+								Name: "ephemeral",
+								VolumeDevices: []core.VolumeDevice{
+									{Name: "forbidden"},
+								},
+							},
+						},
+					},
+				},
+			},
+			wantErr: "VolumeDevices is not supported",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			oldPod := tc.pod.DeepCopy()
+			oldPod.Spec.EphemeralContainers = nil
+			attrs := makePodUpdateAttrs(&tc.pod, oldPod, subresEphemeralContainers)
+			gvisor := new()
+			if err := gvisor.Validate(context.TODO(), attrs, nil); len(tc.wantErr) == 0 {
+				assert.NoError(t, err)
+			} else if assert.Error(t, err) {
+				assert.Contains(t, err.Error(), tc.wantErr)
+			}
+		})
+	}
+}
+
 // non-pod
 // no runtimeclass or difference runtimeclass
 // some subset of validation tests
@@ -2247,7 +2286,7 @@ func TestValidatePodCreate(t *testing.T) {
 		"create pod with gvisor runtimeclass": {
 			pod: core.Pod{
 				Spec: core.PodSpec{
-					RuntimeClassName: stringPtr(gvisorRuntimeClass),
+					RuntimeClassName: toPtr(gvisorRuntimeClass),
 				},
 			},
 			expectErr: false,
@@ -2255,7 +2294,7 @@ func TestValidatePodCreate(t *testing.T) {
 		"create pod with non-gvisor runtimeclass": {
 			pod: core.Pod{
 				Spec: core.PodSpec{
-					RuntimeClassName: stringPtr("other"),
+					RuntimeClassName: toPtr("other"),
 				},
 			},
 			expectErr: false,
@@ -2263,7 +2302,7 @@ func TestValidatePodCreate(t *testing.T) {
 		"create gvisor pod with existing node selector": {
 			pod: core.Pod{
 				Spec: core.PodSpec{
-					RuntimeClassName: stringPtr(gvisorRuntimeClass),
+					RuntimeClassName: toPtr(gvisorRuntimeClass),
 					NodeSelector:     map[string]string{"other": "selector"},
 				},
 			},
@@ -2272,7 +2311,7 @@ func TestValidatePodCreate(t *testing.T) {
 		"create gvisor pod with non-gvisor runtime node selector": {
 			pod: core.Pod{
 				Spec: core.PodSpec{
-					RuntimeClassName: stringPtr(gvisorRuntimeClass),
+					RuntimeClassName: toPtr(gvisorRuntimeClass),
 					NodeSelector:     map[string]string{gvisorNodeKey: "other"},
 				},
 			},
@@ -2281,7 +2320,7 @@ func TestValidatePodCreate(t *testing.T) {
 		"gvisor pod with host path": {
 			pod: core.Pod{
 				Spec: core.PodSpec{
-					RuntimeClassName: stringPtr(gvisorRuntimeClass),
+					RuntimeClassName: toPtr(gvisorRuntimeClass),
 					Volumes: []core.Volume{
 						{
 							Name: "test-host-path",
@@ -2299,7 +2338,7 @@ func TestValidatePodCreate(t *testing.T) {
 		"gvisor pod with disallowed security context options": {
 			pod: core.Pod{
 				Spec: core.PodSpec{
-					RuntimeClassName: stringPtr(gvisorRuntimeClass),
+					RuntimeClassName: toPtr(gvisorRuntimeClass),
 					SecurityContext: &core.PodSecurityContext{
 						HostNetwork: true,
 						HostPID:     true,
@@ -2310,7 +2349,7 @@ func TestValidatePodCreate(t *testing.T) {
 							Type:  "type",
 							Level: "level",
 						},
-						FSGroup: int64Ptr(1234),
+						FSGroup: toPtr[int64](1234),
 						Sysctls: []core.Sysctl{
 							{
 								Name:  "kernel.shm_rmid_forced",
@@ -2325,12 +2364,12 @@ func TestValidatePodCreate(t *testing.T) {
 		"gvisor pod with Privileged container": {
 			pod: core.Pod{
 				Spec: core.PodSpec{
-					RuntimeClassName: stringPtr(gvisorRuntimeClass),
+					RuntimeClassName: toPtr(gvisorRuntimeClass),
 					Containers: []core.Container{
 						{
 							Name: "container",
 							SecurityContext: &core.SecurityContext{
-								Privileged: boolPtr(true),
+								Privileged: toPtr(true),
 							},
 						},
 					},
@@ -2341,12 +2380,12 @@ func TestValidatePodCreate(t *testing.T) {
 		"gvisor pod with Privileged init container": {
 			pod: core.Pod{
 				Spec: core.PodSpec{
-					RuntimeClassName: stringPtr(gvisorRuntimeClass),
+					RuntimeClassName: toPtr(gvisorRuntimeClass),
 					InitContainers: []core.Container{
 						{
 							Name: "container",
 							SecurityContext: &core.SecurityContext{
-								Privileged: boolPtr(true),
+								Privileged: toPtr(true),
 							},
 						},
 					},
@@ -2357,12 +2396,12 @@ func TestValidatePodCreate(t *testing.T) {
 		"gvisor pod with AllowPrivilegeEscalation container": {
 			pod: core.Pod{
 				Spec: core.PodSpec{
-					RuntimeClassName: stringPtr(gvisorRuntimeClass),
+					RuntimeClassName: toPtr(gvisorRuntimeClass),
 					Containers: []core.Container{
 						{
 							Name: "container",
 							SecurityContext: &core.SecurityContext{
-								AllowPrivilegeEscalation: boolPtr(true),
+								AllowPrivilegeEscalation: toPtr(true),
 							},
 						},
 					},
@@ -2373,7 +2412,7 @@ func TestValidatePodCreate(t *testing.T) {
 		"gvisor pod with VolumeDevices container": {
 			pod: core.Pod{
 				Spec: core.PodSpec{
-					RuntimeClassName: stringPtr(gvisorRuntimeClass),
+					RuntimeClassName: toPtr(gvisorRuntimeClass),
 					Containers: []core.Container{
 						{
 							Name: "container",
@@ -2392,7 +2431,7 @@ func TestValidatePodCreate(t *testing.T) {
 		"gvisor pod with disallowed annotations": {
 			pod: core.Pod{
 				Spec: core.PodSpec{
-					RuntimeClassName: stringPtr(gvisorRuntimeClass),
+					RuntimeClassName: toPtr(gvisorRuntimeClass),
 				},
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
@@ -2408,7 +2447,7 @@ func TestValidatePodCreate(t *testing.T) {
 
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
-			err := validatePodCreate(makePodCreateAttrs(&test.pod, ""))
+			err := validatePod(makePodCreateAttrs(&test.pod, ""))
 			if test.expectErr {
 				assert.Error(t, err)
 			} else {
@@ -2425,7 +2464,7 @@ func TestValidatePodUpdate(t *testing.T) {
 		},
 		Spec: core.PodSpec{
 			Containers:       []core.Container{{Image: "my-image:v1"}},
-			RuntimeClassName: stringPtr("gvisor"),
+			RuntimeClassName: toPtr("gvisor"),
 		},
 	}
 	deprecatedGvisorPod := &core.Pod{
@@ -2470,11 +2509,21 @@ func TestValidatePodUpdate(t *testing.T) {
 			newPod:    gvisorPodNewImage.DeepCopy(),
 			expectErr: false,
 		},
+		"non-gvisor->gvisor": {
+			oldPod:    nativePod.DeepCopy(),
+			newPod:    gvisorPod.DeepCopy(),
+			expectErr: true,
+		},
+		"gvisor->non-gvisor": {
+			oldPod:    nativePod.DeepCopy(),
+			newPod:    gvisorPod.DeepCopy(),
+			expectErr: true,
+		},
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
 			attrs := makePodUpdateAttrs(test.newPod, test.oldPod, "")
-			err := validatePodUpdate(attrs)
+			err := validatePod(attrs)
 			if test.expectErr {
 				assert.Error(t, err)
 			} else {
@@ -2831,7 +2880,7 @@ func TestSeccomp(t *testing.T) {
 	}
 }
 
-func TestCheckInternalAnnotations(t *testing.T) {
+func TestCheckAnnotations(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		pod  core.Pod
@@ -2982,6 +3031,72 @@ func TestCheckInternalAnnotations(t *testing.T) {
 			},
 			all: []bool{false},
 		},
+		{
+			name: "mount wrong key",
+			pod: core.Pod{
+				Spec: core.PodSpec{
+					Containers: []core.Container{
+						{
+							Name: "cont",
+							VolumeMounts: []core.VolumeMount{
+								{Name: "empty"},
+							},
+						},
+					},
+					Volumes: []core.Volume{
+						createEmptyDir("empty", core.StorageMediumDefault),
+					},
+				},
+			},
+			add: map[string]string{
+				"dev.gvisor.spec.mount.foo.share": "container",
+			},
+			err: `user annotations starting with "dev.gvisor.spec.mount." are not allowed`,
+		},
+		{
+			name: "mount wrong value",
+			pod: core.Pod{
+				Spec: core.PodSpec{
+					Containers: []core.Container{
+						{
+							Name: "cont",
+							VolumeMounts: []core.VolumeMount{
+								{Name: "empty"},
+							},
+						},
+					},
+					Volumes: []core.Volume{
+						createEmptyDir("empty", core.StorageMediumDefault),
+					},
+				},
+			},
+			add: map[string]string{
+				"dev.gvisor.spec.mount.empty.type":    "bind",
+				"dev.gvisor.spec.mount.empty.share":   "foo",
+				"dev.gvisor.spec.mount.empty.options": "rw,rprivate",
+			},
+			err: `expected value: "container"`,
+		},
+		{
+			name: "mount missing",
+			pod: core.Pod{
+				Spec: core.PodSpec{
+					Containers: []core.Container{
+						{
+							Name: "cont",
+							VolumeMounts: []core.VolumeMount{
+								{Name: "empty"},
+							},
+						},
+					},
+					Volumes: []core.Volume{
+						createEmptyDir("empty", core.StorageMediumDefault),
+					},
+				},
+			},
+			all: []bool{true},
+			err: "annotation was removed from pod",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.all == nil {
@@ -2989,7 +3104,7 @@ func TestCheckInternalAnnotations(t *testing.T) {
 			}
 			for _, all := range tc.all {
 				t.Run(fmt.Sprintf("%t", all), func(t *testing.T) {
-					err := checkInternalAnnotations(&tc.pod, tc.add, tc.del, all)
+					err := checkAnnotations(&tc.pod, tc.add, tc.del, all)
 					if len(tc.err) == 0 {
 						assert.NoError(t, err)
 					} else if assert.Error(t, err) {
@@ -3080,6 +3195,67 @@ func TestAnnotationDiff(t *testing.T) {
 			gotAdd, gotDel := annotationDiff(&old, &new)
 			assert.Equal(t, tc.add, gotAdd)
 			assert.Equal(t, tc.del, gotDel)
+		})
+	}
+}
+
+func TestFindNewContainers(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		old, new []string
+		want     []int
+	}{
+		{
+			name: "single",
+			new:  []string{"cont1"},
+			want: []int{0},
+		},
+		{
+			name: "multiple",
+			new:  []string{"cont1", "cont2", "cont3"},
+			want: []int{0, 1, 2},
+		},
+		{
+			name: "remove-all",
+			old:  []string{"cont1", "cont2", "cont3"},
+		},
+		{
+			name: "remove-one",
+			old:  []string{"cont1", "cont2"},
+			new:  []string{"cont1"},
+		},
+		{
+			name: "add-remove",
+			old:  []string{"cont1", "cont-rm", "cont3"},
+			new:  []string{"cont1", "cont-add1", "cont3", "cont-add2"},
+			want: []int{1, 3},
+		},
+		{
+			name: "out-of-order",
+			old:  []string{"cont1", "cont2", "cont3"},
+			new:  []string{"cont3", "cont1", "cont-add1", "cont2", "cont-add2"},
+			want: []int{2, 4},
+		},
+		{
+			name: "empty",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Prepare ephemeral container slices.
+			var old, new []core.EphemeralContainer
+			for _, name := range tc.old {
+				old = append(old, core.EphemeralContainer{
+					EphemeralContainerCommon: core.EphemeralContainerCommon{Name: name},
+				})
+			}
+			for _, name := range tc.new {
+				new = append(new, core.EphemeralContainer{
+					EphemeralContainerCommon: core.EphemeralContainerCommon{Name: name},
+				})
+			}
+
+			got := findNewContainers(old, new)
+			assert.Equal(t, tc.want, got)
 		})
 	}
 }
