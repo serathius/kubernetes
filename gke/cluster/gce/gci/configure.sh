@@ -295,6 +295,7 @@ function download-or-bust {
 
 function record-preload-info {
   echo "$1,$2" >> "${KUBE_HOME}/preload_info"
+  echo "Recording preload info for ${1} ${2}"
 }
 
 function is-preloaded {
