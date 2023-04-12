@@ -28,11 +28,19 @@ set -o pipefail
 ### Hardcoded constants
 METADATA_SERVER_IP="${METADATA_SERVER_IP:-169.254.169.254}"
 
-# This version needs to be the same as in gke/cluster/gce/gci/configure-helper.sh
-GKE_CONTAINERD_INFRA_CONTAINER="${CONTAINERD_INFRA_CONTAINER:-gke.gcr.io/pause:3.8@sha256:880e63f94b145e46f1b1082bb71b85e21f16b99b180b9996407d61240ceb9830}"
+# Backend endpoints (configurable for TPC).
+# May be overridden when kube-env is sourced.
+KUBE_DOCKER_REGISTRY="${KUBE_DOCKER_REGISTRY:-gke.gcr.io}"
 
 # Standard curl flags.
 CURL_FLAGS='--fail --silent --show-error --retry 5 --retry-delay 3 --connect-timeout 10 --retry-connrefused'
+
+# A function to define global variables after kube-env is sourced. Used to declare
+# global variables that depend on kube-env variable values.
+function define-global-vars-after-kube-env {
+  # This version needs to be the same as in gke/cluster/gce/gci/configure-helper.sh
+  declare -g GKE_CONTAINERD_INFRA_CONTAINER="${CONTAINERD_INFRA_CONTAINER:-${KUBE_DOCKER_REGISTRY}/pause:3.8@sha256:880e63f94b145e46f1b1082bb71b85e21f16b99b180b9996407d61240ceb9830}"
+}
 
 function convert-manifest-params {
   # A helper function to convert the manifest args from a string to a list of
@@ -3440,6 +3448,8 @@ function main() {
   fi
   source "${KUBE_HOME}/kube-env"
   log-end 'SourceKubeEnv'
+
+  define-global-vars-after-kube-env
 
   if [[ -f "${KUBE_HOME}/kubelet-config.yaml" ]]; then
     echo "Found Kubelet config file at ${KUBE_HOME}/kubelet-config.yaml"

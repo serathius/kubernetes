@@ -40,9 +40,6 @@ DEFAULT_MOUNTER_ROOTFS_TAR_AMD64_SHA512='631330b7fa911d67e400b1d014df65a7763667d
 DEFAULT_MOUNTER_ROOTFS_TAR_ARM64_SHA512='83cf9ab7961627359654131abd2d4c4b72875d395c50cda9e417149b2eb53b784dfe5c2f744ddbccfe516e36dd64c716d69d161d8bc8b4f42a9207fe676d0bc1'
 ###
 
-# This version needs to be the same as in gke/cluster/gce/gci/configure-helper.sh
-GKE_CONTAINERD_INFRA_CONTAINER="${CONTAINERD_INFRA_CONTAINER:-gke.gcr.io/pause:3.8@sha256:880e63f94b145e46f1b1082bb71b85e21f16b99b180b9996407d61240ceb9830}"
-
 RIPTIDE_FUSE_BUCKET="${RIPTIDE_FUSE_BUCKET:-gke-release}"
 RIPTIDE_SNAPSHOTTER_BUCKET="${RIPTIDE_SNAPSHOTTER_BUCKET:-gke-release}"
 RIPTIDE_FUSE_VERSION="${RIPTIDE_FUSE_VERSION:-v0.162.0}"
@@ -55,8 +52,29 @@ RIPTIDE_SNAPSHOTTER_SHA512='67ca748d45bd7a73ba24773d990aad76656d652aaebff07507b2
 RIPTIDE_SNAPSHOTTER_BIN_ARM64_SHA512='28dd96113793c86b485f2a11b9127225e8cb6a0c861c645a04d72052e792a384503bfc1aa6f3241461d6b4a80bbfb6444e7e2efbb6a476b4b249005e00950d00'
 RIPTIDE_SNAPSHOTTER_BIN_AMD64_SHA512='ed015760f16fccb99091c4a4daf4e2898fb2e107f54ac3c7ddf10d3d9c1d3017c24d6a1dc0b8b6061e2dd1400204969ad3a41ff02a28a11c0e70e04d6d12ecf1'
 
+# Backend endpoints (configurable for TPC).
+# May be overridden when kube-env is sourced.
+#
+# NOTE: Endpoints should behave exactly like a GDU (Google Default Universe)
+# endpoint. E.g., An alternative `STORAGE_ENDPOINT` must have the same buckets
+# and paths as the `storage.googleapis.com` that this script depends on.
+STORAGE_ENDPOINT="${STORAGE_ENDPOINT:-https://storage.googleapis.com}"
+PGA_ENDPOINT="${PGA_ENDPOINT:-private.googleapis.com}"
+KUBE_DOCKER_REGISTRY="${KUBE_DOCKER_REGISTRY:-gke.gcr.io}"
+
+# Whether to configure private google access or not (defaults to true).
+# May be overridden when kube-env is sourced.
+CONFIGURE_PGA="${CONFIGURE_PGA:-true}"
+
 # Standard curl flags.
 CURL_FLAGS='--fail --silent --show-error --retry 5 --retry-delay 3 --connect-timeout 10 --retry-connrefused'
+
+# A function to define global variables after kube-env is sourced. Used to declare
+# global variables that depend on kube-env variable values.
+function define-global-vars-after-kube-env {
+  # This version needs to be the same as in gke/cluster/gce/gci/configure-helper.sh
+  declare -g GKE_CONTAINERD_INFRA_CONTAINER="${CONTAINERD_INFRA_CONTAINER:-${KUBE_DOCKER_REGISTRY}/pause:3.8@sha256:880e63f94b145e46f1b1082bb71b85e21f16b99b180b9996407d61240ceb9830}"
+}
 
 function set-broken-motd {
   cat > /etc/motd <<EOF
@@ -253,7 +271,7 @@ function download-or-bust {
       # if the url belongs to GCS API we should use oauth2_token in the headers if the VM service account has storage scopes
       local curl_headers=""
 
-      if [[ "$url" =~ ^https://storage.googleapis.com.* ]] ; then
+      if [[ "$url" =~ ^${STORAGE_ENDPOINT}.* ]] ; then
         local canUseCredentials=0
 
         echo "Getting the scope of service account configured for VM."
@@ -353,7 +371,7 @@ function install-gci-mounter-tools {
   # Download the debian rootfs required for the mounter container
   mkdir -p "${CONTAINERIZED_MOUNTER_HOME}/rootfs"
   local -r mounter_rootfs_tar="containerized-mounter-${mounter_rootfs_version}_${HOST_PLATFORM}_${HOST_ARCH}.tar.gz"
-  download-or-bust "${mounter_rootfs_tar_sha}" "https://storage.googleapis.com/gke-release/containerized-mounter/${mounter_rootfs_version}/${mounter_rootfs_tar}"
+  download-or-bust "${mounter_rootfs_tar_sha}" "${STORAGE_ENDPOINT}/gke-release/containerized-mounter/${mounter_rootfs_version}/${mounter_rootfs_tar}"
   mv "${KUBE_HOME}/${mounter_rootfs_tar}" "/tmp/${mounter_rootfs_tar}"
   tar xzf "/tmp/${mounter_rootfs_tar}" -C "${CONTAINERIZED_MOUNTER_HOME}/rootfs"
   rm "/tmp/${mounter_rootfs_tar}"
@@ -488,7 +506,7 @@ function install-node-problem-detector {
   fi
 
   echo "Downloading ${npd_tar}."
-  local -r npd_release_path="${NODE_PROBLEM_DETECTOR_RELEASE_PATH:-https://storage.googleapis.com/gke-release}"
+  local -r npd_release_path="${NODE_PROBLEM_DETECTOR_RELEASE_PATH:-${STORAGE_ENDPOINT}/gke-release}"
   download-or-bust "${npd_hash}" "${npd_release_path}/node-problem-detector/${npd_tar}"
   local -r npd_dir="${KUBE_HOME}/node-problem-detector"
   mkdir -p "${npd_dir}"
@@ -564,7 +582,7 @@ EOF
   fi
 
   echo "Downloading crictl"
-  local -r crictl_path="https://storage.googleapis.com/gke-release/cri-tools/${crictl_version}"
+  local -r crictl_path="${STORAGE_ENDPOINT}/gke-release/cri-tools/${crictl_version}"
   download-or-bust "${crictl_hash}" "${crictl_path}/${crictl}"
   tar xf "${crictl}"
   mv crictl "${KUBE_BIN}/crictl"
@@ -750,7 +768,7 @@ function install-auger {
     echo "auger is already installed"
     return
   fi
-  AUGER_STORE_PATH="${AUGER_STORE_PATH:-https://storage.googleapis.com/gke-release-staging/auger}"
+  AUGER_STORE_PATH="${AUGER_STORE_PATH:-${STORAGE_ENDPOINT}/gke-release-staging/auger}"
   AUGER_VERSION="${AUGER_VERSION:-v1.0.0-gke.1}"
   download-or-bust "" "${AUGER_STORE_PATH}/${AUGER_VERSION}/auger.sha1"
   sha1="$(cat auger.sha1)"
@@ -786,11 +804,11 @@ function install-gcfsd {
   fi
 
   if [[ "${HOST_ARCH}" == "arm64" ]]; then
-    RIPTIDE_FUSE_STORE_PATH="https://storage.googleapis.com/${RIPTIDE_FUSE_BUCKET}/gcfsd/${RIPTIDE_FUSE_VERSION}/arm64"
+    RIPTIDE_FUSE_STORE_PATH="${STORAGE_ENDPOINT}/${RIPTIDE_FUSE_BUCKET}/gcfsd/${RIPTIDE_FUSE_VERSION}/arm64"
     TAR_SHA="${RIPTIDE_FUSE_ARM64_SHA512}"
     BIN_SHA="${RIPTIDE_FUSE_BIN_ARM64_SHA512}"
   else
-    RIPTIDE_FUSE_STORE_PATH="https://storage.googleapis.com/${RIPTIDE_FUSE_BUCKET}/gcfsd/${RIPTIDE_FUSE_VERSION}"
+    RIPTIDE_FUSE_STORE_PATH="${STORAGE_ENDPOINT}/${RIPTIDE_FUSE_BUCKET}/gcfsd/${RIPTIDE_FUSE_VERSION}"
     TAR_SHA="${RIPTIDE_FUSE_AMD64_SHA512}"
     BIN_SHA="${RIPTIDE_FUSE_BIN_AMD64_SHA512}"
   fi
@@ -810,7 +828,7 @@ function install-riptide-snapshotter {
     echo "containerd-gcfs-grpc is preloaded."
     return
   fi
-  RIPTIDE_SNAPSHOTTER_STORE_PATH="https://storage.googleapis.com/${RIPTIDE_SNAPSHOTTER_BUCKET}/gcfs-snapshotter/${RIPTIDE_SNAPSHOTTER_VERSION}"
+  RIPTIDE_SNAPSHOTTER_STORE_PATH="${STORAGE_ENDPOINT}/${RIPTIDE_SNAPSHOTTER_BUCKET}/gcfs-snapshotter/${RIPTIDE_SNAPSHOTTER_VERSION}"
 
   echo "Downloading tarball for riptide-snapshotter"
   download-or-bust "${RIPTIDE_SNAPSHOTTER_SHA512}" "${RIPTIDE_SNAPSHOTTER_STORE_PATH}/containerd-gcfs-grpc.tar.gz"
@@ -869,7 +887,7 @@ function install-auth-provider-gcp {
   fi
 
   echo "Downloading auth-provider-gcp" .
-   local -r auth_provider_release_url="https://storage.googleapis.com/gke-release/auth-provider-gcp/${auth_provider_version}/${auth_provider_arch}/${auth_provider_file_name}"
+   local -r auth_provider_release_url="${STORAGE_ENDPOINT}/gke-release/auth-provider-gcp/${auth_provider_version}/${auth_provider_arch}/${auth_provider_file_name}"
   download-or-bust "${auth_provider_sha512_hash}" "${auth_provider_release_url}"
 
   # Keep in sync with --image-credential-provider-bin-dir in cloud/kubernetes/distro/legacy/kube_env.go
@@ -1161,18 +1179,18 @@ function setup-shm-healthcheck-binaries() {
 }
 
 function configure-pga-if-needed() {
-  echo "Detecting connectivity to storage.googleapis.com..."
+  echo "Detecting connectivity to ${STORAGE_ENDPOINT}..."
   local status=0
-  curl --ipv4 -L --connect-timeout 10 --retry 3  --retry-connrefused https://storage.googleapis.com || status="$?"
+  curl --ipv4 -L --connect-timeout 10 --retry 3  --retry-connrefused ${STORAGE_ENDPOINT} || status="$?"
   # connection is refused(7) or timeout(28).
   if [[ "${status}" == "7" || "${status}" == "28" ]]; then
     status=0
     local pga_ip
-    pga_ip=`curl private.googleapis.com -w '%{remote_ip}' --connect-timeout 10 -s -o /dev/null` || status="$?"
+    pga_ip=`curl ${PGA_ENDPOINT} -w '%{remote_ip}' --connect-timeout 10 -s -o /dev/null` || status="$?"
     if [[ "${status}" == "0" ]]; then
       echo "Configure /etc/hosts to use private google access"
-      echo "$pga_ip storage.googleapis.com" >> /etc/hosts
-      echo "$pga_ip gke.gcr.io" >> /etc/hosts
+      echo "$pga_ip ${STORAGE_ENDPOINT#https://}" >> /etc/hosts
+      echo "$pga_ip ${KUBE_DOCKER_REGISTRY}" >> /etc/hosts
     fi
   fi
 }
@@ -1413,11 +1431,14 @@ if [[ "$(is-master)" == "true" ]]; then
   log-wrap 'InstallInplace' install-inplace
 fi
 
-configure-pga-if-needed
-
 # download and source kube-env
 log-wrap 'DownloadKubeEnv' download-kube-env
 log-wrap 'SourceKubeEnv' source "${KUBE_HOME}/kube-env"
+define-global-vars-after-kube-env
+
+if [[ "${CONFIGURE_PGA}" == "true" ]]; then
+  configure-pga-if-needed
+fi
 
 log-wrap 'ConfigureCgroupMode' configure-cgroup-mode
 
