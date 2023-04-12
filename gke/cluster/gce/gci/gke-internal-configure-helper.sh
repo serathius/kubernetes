@@ -369,7 +369,7 @@ function gke-configure-node-sysctls {
   # be used as the base for monitoring sysctl changes by NPD custom plugin
   # sysctl-monitor.
   #
-  # The directory was created in gke-internal-configure.sh.
+  # The directory was created in configure.sh.
   sudo sysctl -a > "${KUBE_HOME}/npd-custom-plugins/configs/init-sysctls.conf"
 }
 
@@ -455,7 +455,7 @@ oom_score = -999
 [plugins."io.containerd.grpc.v1.cri"]
   stream_server_address = "127.0.0.1"
   max_container_log_line_size = ${CONTAINERD_MAX_CONTAINER_LOG_LINE:-262144}
-  sandbox_image = "${GKE_CONTAINERD_INFRA_CONTAINER}"
+  sandbox_image = "${KUBE_DOCKER_REGISTRY}/${GKE_CONTAINERD_INFRA_CONTAINER}"
 [plugins."io.containerd.grpc.v1.cri".cni]
   bin_dir = "${KUBE_HOME}/bin"
   conf_dir = "/etc/cni/net.d"

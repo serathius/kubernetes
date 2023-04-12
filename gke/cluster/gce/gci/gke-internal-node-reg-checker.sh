@@ -4,6 +4,12 @@ set -o nounset
 set -o pipefail
 KUBE_HOME="/home/kubernetes"
 KUBE_BIN=${KUBE_HOME}/bin
+# Backend endpoints (configurable for TPC).
+# May be overridden when kube-env is sourced.
+STORAGE_ENDPOINT="${STORAGE_ENDPOINT:-https://storage.googleapis.com}"
+STACKDRIVER_ENDPOINT="${STACKDRIVER_ENDPOINT:-https://logging.googleapis.com}"
+CLOUD_MONARCH_ENDPOINT="${CLOUD_MONARCH_ENDPOINT:-https://monitoring.googleapis.com}"
+KUBE_DOCKER_REGISTRY="${KUBE_DOCKER_REGISTRY:-gke.gcr.io}"
 #timeout command
 TIMEOUT=("timeout" "--foreground" "10s")
 KUBECTL_TIMEOUT=("timeout" "--foreground" "1m")
@@ -11,12 +17,6 @@ KUBECTL_TIMEOUT=("timeout" "--foreground" "1m")
 CURL_TIMEOUT=("--connect-timeout" "2")
 CURL_RETRY=("--retry" "2" "--retry-delay" "2")
 CURL_RETRY_CONNREFUSED='--retry-connrefused'
-# essential services endpoints
-declare -A SERVICES_ENDPOINTS=( \
-[GCS]="https://storage.googleapis.com/gke-release/" \
-[GCR]="https://gke.gcr.io/" \
-[LOGGING]="https://logging.googleapis.com" \
-)
 # store the status of the checks and are used to generate the summary-report in the end
 declare -A REACHABILITY
 declare -A DNS_RESOLUTION
@@ -32,6 +32,14 @@ CURL_FORMAT="time_namelookup:  %{time_namelookup}\n\
                   ----------\n\
        time_total: %{time_total}\n"
 ## BEGINNING of helper functions
+# Declares essential services endpoints in a global variable after kube-env is sourced.
+function declare-service-endpoints {
+  declare -g -A SERVICES_ENDPOINTS=( \
+    [GCS]="${STORAGE_ENDPOINT}/gke-release/" \
+    [GCR]="https://${KUBE_DOCKER_REGISTRY}/" \
+    [LOGGING]="${STACKDRIVER_ENDPOINT}" \
+  )
+}
 # similar to echo but includes the timestamp in UTC
 # it helps to understand how long each check took to run
 # also if two params are passed to the function $1 is used to cause identation - useful to use inside the checks. ie:
@@ -217,18 +225,18 @@ function check-service-account {
   # The only way to check that is by trying to use it and check if it returns a 401 - Forbidden.
   log 2 "Retrieving token"
   curl_headers="Authorization: Bearer $(get-credentials)"
-  log 2 "Testing token against https://monitoring.googleapis.com"
-  testing_url="https://monitoring.googleapis.com/v1/projects/${numeric_project_id}/dashboards/gke-node-registration-checker-${random_string}"
+  log 2 "Testing token against ${CLOUD_MONARCH_ENDPOINT}"
+  testing_url="${CLOUD_MONARCH_ENDPOINT}/v1/projects/${numeric_project_id}/dashboards/gke-node-registration-checker-${random_string}"
   # we use get-http-response() but it would output the bearer token and we don't want that
   set +e
   HTTP_MONITORING_RESPONSE_CODE=$(time curl --silent ${curl_headers:+-H "${curl_headers}"} "${CURL_TIMEOUT[@]}" "${CURL_RETRY[@]}" ${CURL_RETRY_CONNREFUSED} --ipv4 -o /dev/null -w '%{http_code}' -H 'Metadata-Flavor: Google' "${testing_url}")
   set -e
   if [[ ${HTTP_MONITORING_RESPONSE_CODE} -eq 0 ]]; then
-    log 2 "Failed connecting to monitoring.googleapis.com"
+    log 2 "Failed connecting to ${CLOUD_MONARCH_ENDPOINT}"
     return 0
   fi
   if [[ ${HTTP_MONITORING_RESPONSE_CODE} -eq 401 ]]; then
-    log 2 "Permission denied to monitoring.googleapis.com when using the token"
+    log 2 "Permission denied to ${CLOUD_MONARCH_ENDPOINT} when using the token"
     SA_WORKING="false"
     return 0
   fi
@@ -239,7 +247,7 @@ function check-service-account {
     return 0
   fi
  log 2 "Could not confirm if the service account has the right permissions."
- log 2 "https://monitoring.googleapis.com returned HTTP CODE: ${HTTP_MONITORING_RESPONSE_CODE}"
+ log 2 "${CLOUD_MONARCH_ENDPOINT} returned HTTP CODE: ${HTTP_MONITORING_RESPONSE_CODE}"
 }
 ### END of Checks
 function summary-report {
@@ -320,6 +328,7 @@ function main {
   source "${KUBE_HOME}/kube-env"
   log "Sleeping for ${SLEEP_TIME} to allow registration to complete "
   sleep "${SLEEP_TIME}"
+  declare-service-endpoints
   if ! node-registered ; then
     check-containers
     check-service-endpoint

@@ -30,13 +30,14 @@ DEFAULT_CNI_HASH_LINUX_ARM64='a8cfa6f88b2a8f19cabfd182c2fe26593bbed9228ef35e6010
 DEFAULT_NPD_VERSION='v0.8.13-57-gc3c5389'
 DEFAULT_NPD_HASH_AMD64='2cb0f1610adb5d8d3c077d8ce7a65fb4066f419e82c3ed4ce72a7c4b337bcef7ab9e53d006d97bea70acd980565e2df80466858e6b5291cb1d10587bf0fb9d6c'
 DEFAULT_NPD_HASH_ARM64='e049d37298cbcb3479b3fdc2927ca169fdbe7661dc5c6b1f7cd8f9fb66634eb1c12858155b40f32f86262ebca1171061ce92a520668ce898f89936c668214207'
+NPD_CUSTOM_PLUGINS_VERSION="v1.0.7"
+NPD_CUSTOM_PLUGINS_TAR_HASH="b697497d6bd35268f588e2baca9f6fd8b9ca081a3401ebc6c6dcdc30a305efdd547231a2884586e28ec79eb5cfb620d15c98a5f9af4946c0d2d72a974f230f5b"
 DEFAULT_CRICTL_VERSION='v1.26.1-gke.0'
 DEFAULT_CRICTL_AMD64_SHA512='99d9ee59bcdf1de846ca9c37068160acf824d82c85403b388767e9b0b481a90060f2e6241b17fa0e34936281c4c333d44e5fe92044b6e1445aa5b7fdfed1615f'
 DEFAULT_CRICTL_ARM64_SHA512='9c3ec55815a2e99b05497ce07fe993420b137c251c0c0c100be25278cba7a1b615a0243c840151c368fa9cdd771b07726c0ff76739daf3646522579f976e84b5'
 DEFAULT_MOUNTER_ROOTFS_VERSION='v1.0.0'
 DEFAULT_MOUNTER_ROOTFS_TAR_AMD64_SHA512='631330b7fa911d67e400b1d014df65a7763667d4afd4ecefe11a4a89dc9b8be626e5610d53b536c255a3ab488408ab2da8a0699d9fdad280cb3aa24bc2f30ab0'
 DEFAULT_MOUNTER_ROOTFS_TAR_ARM64_SHA512='83cf9ab7961627359654131abd2d4c4b72875d395c50cda9e417149b2eb53b784dfe5c2f744ddbccfe516e36dd64c716d69d161d8bc8b4f42a9207fe676d0bc1'
-###
 
 RIPTIDE_FUSE_VERSION="v0.188.0"
 RIPTIDE_FUSE_ARM64_SHA512='47122aa005f6c540f1da7c1a31a14dbba1e09ac07bdb835ccec163f4aa30c011ba413046933eb1064a0ecdf387db3371dad7b0d53c6d0f8ffeb931b8e693af01'
@@ -53,11 +54,27 @@ AUTH_PROVIDER_GCP_VERSION="v0.0.2-gke.4"
 AUTH_PROVIDER_GCP_HASH_LINUX_AMD64="156058e5b3994cba91c23831774033e0d505d6d8b80f43541ef6af91b320fd9dfaabe42ec8a8887b51d87104c2b57e1eb895649d681575ffc80dd9aee8e563db"
 AUTH_PROVIDER_GCP_HASH_LINUX_ARM64="1aa3b0bea10a9755231989ffc150cbfa770f1d96932db7535473f7bfeb1108bafdae80202ae738d59495982512e716ff7366d5f414d0e76dd50519f98611f9ab"
 
+###
+
+# Backend endpoints (configurable for TPC).
+# May be overridden when kube-env is sourced.
+#
+# NOTE: Endpoints should behave exactly like a GDU (Google Default Universe)
+# endpoint. E.g., An alternative `STORAGE_ENDPOINT` must have the same buckets
+# and paths as the `storage.googleapis.com` that this script depends on.
+STORAGE_ENDPOINT="${STORAGE_ENDPOINT:-https://storage.googleapis.com}"
+PGA_ENDPOINT="${PGA_ENDPOINT:-private.googleapis.com}"
+KUBE_DOCKER_REGISTRY="${KUBE_DOCKER_REGISTRY:-gke.gcr.io}"
+
+# Whether to configure private google access or not (defaults to true).
+# May be overridden when kube-env is sourced.
+CONFIGURE_PGA="${CONFIGURE_PGA:-true}"
+
 # Standard curl flags.
 CURL_FLAGS='--fail --silent --show-error --retry 5 --retry-delay 3 --connect-timeout 10 --retry-connrefused'
 
 # This version needs to be the same as in gke/cluster/gce/gci/configure-helper.sh
-GKE_CONTAINERD_INFRA_CONTAINER="${CONTAINERD_INFRA_CONTAINER:-gke.gcr.io/pause:3.8@sha256:880e63f94b145e46f1b1082bb71b85e21f16b99b180b9996407d61240ceb9830}"
+GKE_CONTAINERD_INFRA_CONTAINER="pause:3.8@sha256:880e63f94b145e46f1b1082bb71b85e21f16b99b180b9996407d61240ceb9830"
 
 function set-broken-motd {
   cat > /etc/motd <<EOF
@@ -254,7 +271,7 @@ function download-or-bust {
       # if the url belongs to GCS API we should use oauth2_token in the headers if the VM service account has storage scopes
       local curl_headers=""
 
-      if [[ "$url" =~ ^https://storage.googleapis.com.* ]] ; then
+      if [[ "$url" =~ ^${STORAGE_ENDPOINT}/.* ]] ; then
         local canUseCredentials=0
 
         echo "Getting the scope of service account configured for VM."
@@ -354,7 +371,7 @@ function install-gci-mounter-tools {
   # Download the debian rootfs required for the mounter container
   mkdir -p "${CONTAINERIZED_MOUNTER_HOME}/rootfs"
   local -r mounter_rootfs_tar="containerized-mounter-${mounter_rootfs_version}_${HOST_PLATFORM}_${HOST_ARCH}.tar.gz"
-  download-or-bust "${mounter_rootfs_tar_sha}" "https://storage.googleapis.com/gke-release/containerized-mounter/${mounter_rootfs_version}/${mounter_rootfs_tar}"
+  download-or-bust "${mounter_rootfs_tar_sha}" "${STORAGE_ENDPOINT}/gke-release/containerized-mounter/${mounter_rootfs_version}/${mounter_rootfs_tar}"
   mv "${KUBE_HOME}/${mounter_rootfs_tar}" "/tmp/${mounter_rootfs_tar}"
   tar xzf "/tmp/${mounter_rootfs_tar}" -C "${CONTAINERIZED_MOUNTER_HOME}/rootfs"
   rm "/tmp/${mounter_rootfs_tar}"
@@ -489,7 +506,7 @@ function install-node-problem-detector {
   fi
 
   echo "Downloading ${npd_tar}."
-  local -r npd_release_path="${NODE_PROBLEM_DETECTOR_RELEASE_PATH:-https://storage.googleapis.com/gke-release}"
+  local -r npd_release_path="${NODE_PROBLEM_DETECTOR_RELEASE_PATH:-${STORAGE_ENDPOINT}/gke-release}"
   download-or-bust "${npd_hash}" "${npd_release_path}/node-problem-detector/${npd_tar}"
   local -r npd_dir="${KUBE_HOME}/node-problem-detector"
   mkdir -p "${npd_dir}"
@@ -500,6 +517,27 @@ function install-node-problem-detector {
   rm -f "${KUBE_HOME}/${npd_tar}"
 
   record-preload-info "${npd_tar}" "${npd_hash}"
+}
+
+# Install node problem detector custom plugins.
+function install-npd-custom-plugins {
+  local -r version="${NPD_CUSTOM_PLUGINS_VERSION}"
+  local -r hash="${NPD_CUSTOM_PLUGINS_TAR_HASH}"
+  local -r tar="npd-custom-plugins-${version}.tar.gz"
+
+  if is-preloaded "${tar}" "${hash}"; then
+    echo "${tar} is preloaded."
+    return
+  fi
+
+  echo "Downloading ${tar}."
+  download-or-bust "${hash}" "${STORAGE_ENDPOINT}/gke-release/npd-custom-plugins/${version}/${tar}"
+  local -r dir="${KUBE_HOME}/npd-custom-plugins"
+  mkdir -p "${dir}"
+  tar xzf "${KUBE_HOME}/${tar}" -C "${dir}" --overwrite
+  rm -f "${KUBE_HOME}/${tar}"
+
+  record-preload-info "${tar}" "${hash}"
 }
 
 function install-cni-binaries {
@@ -566,7 +604,7 @@ EOF
   fi
 
   echo "Downloading crictl"
-  local -r crictl_path="https://storage.googleapis.com/gke-release/cri-tools/${crictl_version}"
+  local -r crictl_path="${STORAGE_ENDPOINT}/gke-release/cri-tools/${crictl_version}"
   download-or-bust "${crictl_hash}" "${crictl_path}/${crictl}"
   tar xf "${crictl}"
   mv crictl "${KUBE_BIN}/crictl"
@@ -576,7 +614,8 @@ EOF
 }
 
 function preload-pause-image {
-  if is-preloaded "pause" "${GKE_CONTAINERD_INFRA_CONTAINER}"; then
+  local -r pause_image="${KUBE_DOCKER_REGISTRY}/${GKE_CONTAINERD_INFRA_CONTAINER}"
+  if is-preloaded "pause" "${pause_image}"; then
     echo "pause image is preloaded"
     return
   fi
@@ -586,13 +625,13 @@ function preload-pause-image {
   local access_token="";
 
   if access_token=$(get-credentials); then
-    "${KUBE_BIN}/crictl" pull --creds "oauth2accesstoken:${access_token}" ${GKE_CONTAINERD_INFRA_CONTAINER}
+    "${KUBE_BIN}/crictl" pull --creds "oauth2accesstoken:${access_token}" "${pause_image}"
   else
     echo "No access token. Pulling without it."
-    "${KUBE_BIN}/crictl" pull ${GKE_CONTAINERD_INFRA_CONTAINER}
+    "${KUBE_BIN}/crictl" pull "${pause_image}"
   fi
 
-  record-preload-info "pause" "${GKE_CONTAINERD_INFRA_CONTAINER}"
+  record-preload-info "pause" "${pause_image}"
 }
 
 function install-exec-auth-plugin {
@@ -657,9 +696,6 @@ function install-kube-manifests {
   fi
   cp "${dst_dir}/kubernetes/gci-trusty/gci-configure-helper.sh" "${KUBE_BIN}/configure-helper.sh"
   cp "${dst_dir}/kubernetes/gci-trusty/configure-kubeapiserver.sh" "${KUBE_BIN}/configure-kubeapiserver.sh"
-  if [[ -e "${dst_dir}/kubernetes/gci-trusty/gke-internal-configure.sh" ]]; then
-    cp "${dst_dir}/kubernetes/gci-trusty/gke-internal-configure.sh" "${KUBE_BIN}/"
-  fi
   if [[ -e "${dst_dir}/kubernetes/gci-trusty/gke-internal-configure-helper.sh" ]]; then
     cp "${dst_dir}/kubernetes/gci-trusty/gke-internal-configure-helper.sh" "${KUBE_BIN}/"
   fi
@@ -712,11 +748,11 @@ function install-gcfsd {
   fi
 
   if [[ "${HOST_ARCH}" == "arm64" ]]; then
-    RIPTIDE_FUSE_STORE_PATH="https://storage.googleapis.com/${RIPTIDE_FUSE_BUCKET}/gcfsd/${RIPTIDE_FUSE_VERSION}/arm64"
+    RIPTIDE_FUSE_STORE_PATH="${STORAGE_ENDPOINT}/gke-release/gcfsd/${RIPTIDE_FUSE_VERSION}/arm64"
     TAR_SHA="${RIPTIDE_FUSE_ARM64_SHA512}"
     BIN_SHA="${RIPTIDE_FUSE_BIN_ARM64_SHA512}"
   else
-    RIPTIDE_FUSE_STORE_PATH="https://storage.googleapis.com/${RIPTIDE_FUSE_BUCKET}/gcfsd/${RIPTIDE_FUSE_VERSION}"
+    RIPTIDE_FUSE_STORE_PATH="${STORAGE_ENDPOINT}/gke-release/gcfsd/${RIPTIDE_FUSE_VERSION}"
     TAR_SHA="${RIPTIDE_FUSE_AMD64_SHA512}"
     BIN_SHA="${RIPTIDE_FUSE_BIN_AMD64_SHA512}"
   fi
@@ -736,7 +772,7 @@ function install-riptide-snapshotter {
     echo "containerd-gcfs-grpc is preloaded."
     return
   fi
-  RIPTIDE_SNAPSHOTTER_STORE_PATH="https://storage.googleapis.com/${RIPTIDE_SNAPSHOTTER_BUCKET}/gcfs-snapshotter/${RIPTIDE_SNAPSHOTTER_VERSION}"
+  RIPTIDE_SNAPSHOTTER_STORE_PATH="${STORAGE_ENDPOINT}/gke-release/gcfs-snapshotter/${RIPTIDE_SNAPSHOTTER_VERSION}"
 
   echo "Downloading tarball for riptide-snapshotter"
   download-or-bust "${RIPTIDE_SNAPSHOTTER_SHA512}" "${RIPTIDE_SNAPSHOTTER_STORE_PATH}/containerd-gcfs-grpc.tar.gz"
@@ -1029,21 +1065,10 @@ function install-kube-binary-config {
   # TODO(awly): include the binary and license in the OS image.
   install-exec-auth-plugin
 
-  # Source GKE specific scripts.
-  #
-  # This must be done after install-kube-manifests where the
-  # gke-internal-configure.sh is downloaded.
-  if [[ -e "${KUBE_HOME}/bin/gke-internal-configure.sh" ]]; then
-    echo "Running GKE internal configuration script gke-internal-configure.sh"
-    . "${KUBE_HOME}/bin/gke-internal-configure.sh"
-  fi
-
   if [[ "${KUBERNETES_MASTER:-}" == "false" ]] && \
      [[ "${ENABLE_NODE_PROBLEM_DETECTOR:-}" == "standalone" ]]; then
     install-node-problem-detector
-    if [[ -e "${KUBE_HOME}/bin/gke-internal-configure.sh" ]]; then
-      install-npd-custom-plugins
-    fi
+    install-npd-custom-plugins
   fi
 
   # Clean up.
@@ -1072,18 +1097,18 @@ function setup-shm-healthcheck-binaries() {
 }
 
 function configure-pga-if-needed() {
-  echo "Detecting connectivity to storage.googleapis.com..."
+  echo "Detecting connectivity to ${STORAGE_ENDPOINT}..."
   local status=0
-  curl --ipv4 -L --connect-timeout 10 --retry 3  --retry-connrefused https://storage.googleapis.com || status="$?"
+  curl --ipv4 -L --connect-timeout 10 --retry 3  --retry-connrefused ${STORAGE_ENDPOINT} || status="$?"
   # connection is refused(7) or timeout(28).
   if [[ "${status}" == "7" || "${status}" == "28" ]]; then
     status=0
     local pga_ip
-    pga_ip=`curl private.googleapis.com -w '%{remote_ip}' --connect-timeout 10 -s -o /dev/null` || status="$?"
+    pga_ip=`curl ${PGA_ENDPOINT} -w '%{remote_ip}' --connect-timeout 10 -s -o /dev/null` || status="$?"
     if [[ "${status}" == "0" ]]; then
       echo "Configure /etc/hosts to use private google access"
-      echo "$pga_ip storage.googleapis.com" >> /etc/hosts
-      echo "$pga_ip gke.gcr.io" >> /etc/hosts
+      echo "$pga_ip ${STORAGE_ENDPOINT#https://}" >> /etc/hosts
+      echo "$pga_ip ${KUBE_DOCKER_REGISTRY}" >> /etc/hosts
     fi
   fi
 }
@@ -1323,11 +1348,13 @@ if [[ "$(is-master)" == "true" ]]; then
   log-wrap 'InstallHurl' install-hurl
 fi
 
-configure-pga-if-needed
-
 # download and source kube-env
 log-wrap 'DownloadKubeEnv' download-kube-env
 log-wrap 'SourceKubeEnv' source "${KUBE_HOME}/kube-env"
+
+if [[ "${CONFIGURE_PGA}" == "true" ]]; then
+  configure-pga-if-needed
+fi
 
 log-wrap 'ConfigureCgroupMode' configure-cgroup-mode
 
