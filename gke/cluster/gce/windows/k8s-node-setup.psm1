@@ -60,6 +60,11 @@ $MGMT_ADAPTER_NAME = "vEthernet (Ethernet*"
 $CRICTL_VERSION = 'v1.24.2'
 $CRICTL_SHA256 = 'db202de544fb49ffc58d1aa4b574dfaed0aeb71c45a542715b42f7b739ff7394'
 
+# auth-provider-gcp version
+$AUTH_PROVIDER_GCP_VERSION = 'v0.0.2-gke.4'
+# Hash of auth-provider-gcp.exe binary in version defined above
+$AUTH_PROVIDER_GCP_HASH_WINDOWS_AMD64 = '348af2c189d938e1a4fa5ac5c640d21e003da1f000abcd6fd7eef2acd0678638286e40703618758d4fdfe2cc4b90e920f0422128ec777c74054af9dd4405de12'
+
 Import-Module -Force C:\common.psm1
 
 # Writes a TODO with $Message to the console.
@@ -297,6 +302,7 @@ function Set-EnvironmentVars {
     "WINDOWS_ENABLE_PIGZ" = ${kube_env}['WINDOWS_ENABLE_PIGZ']
     "ENABLE_NODE_PROBLEM_DETECTOR" = ${kube_env}['ENABLE_NODE_PROBLEM_DETECTOR']
     "NODEPROBLEMDETECTOR_KUBECONFIG_FILE" = ${kube_env}['WINDOWS_NODEPROBLEMDETECTOR_KUBECONFIG_FILE']
+    "ENABLE_AUTH_PROVIDER_GCP" = ${kube_env}['ENABLE_AUTH_PROVIDER_GCP']
 
     "Path" = ${env:Path} + ";" + ${kube_env}['NODE_DIR']
     "KUBE_NETWORK" = "l2bridge".ToLower()
@@ -2817,6 +2823,52 @@ function Is-Antrea-Enabled {
     return $true
   }
   return $false
+}
+
+# Downloads the out-of-tree kubelet image credential provider binaries.
+function DownloadAndInstall-AuthProviderGcpBinary {
+  if ("${env:ENABLE_AUTH_PROVIDER_GCP}" -eq "true") {
+    $filename = 'auth-provider-gcp.exe'
+    if (ShouldWrite-File "${env:NODE_DIR}\$filename") {
+      Log-Output "Installing auth provider gcp binaries"
+      $tmp_dir = 'C:\k8s_tmp'
+      $url = "https://storage.googleapis.com/gke-release/auth-provider-gcp/$AUTH_PROVIDER_GCP_VERSION/windows_amd64/$filename"
+      New-Item -Force -ItemType 'directory' $tmp_dir | Out-Null
+      MustDownload-File -Hash $AUTH_PROVIDER_GCP_HASH_WINDOWS_AMD64 -Algorithm SHA512 -OutFile $tmp_dir\$filename -URLs $url
+      Move-Item -Force "$tmp_dir\$filename" "${env:NODE_DIR}\$filename"
+      Remove-Item -Force -Recurse $tmp_dir
+    } else {
+      Log-Output "Skipping auth provider gcp binaries installation, auth-provider-gcp.exe file already exists."
+    }
+  }
+}
+
+# Creates config file for the out-of-tree kubelet image credential provider.
+function Create-AuthProviderGcpConfig {
+  if ("${env:ENABLE_AUTH_PROVIDER_GCP}" -eq "true") {
+    $conf_file = "${env:K8S_DIR}\cri_auth_config.yaml"
+    if (ShouldWrite-File $conf_file) {
+      Log-Output "Creating auth provider gcp config file"
+      Set-Content $conf_file @'
+kind: CredentialProviderConfig
+apiVersion: kubelet.config.k8s.io/v1
+providers:
+  - name: auth-provider-gcp.exe
+    apiVersion: credentialprovider.kubelet.k8s.io/v1
+    matchImages:
+    - "container.cloud.google.com"
+    - "gcr.io"
+    - "*.gcr.io"
+    - "*.pkg.dev"
+    args:
+    - get-credentials
+    - --v=3
+    defaultCacheDuration: 1m
+'@
+    } else {
+      Log-Output "Skipping auth provider gcp config file creation, it already exists"
+    }
+  }
 }
 
 ##### End of Google internal patch #####
