@@ -363,6 +363,10 @@ function start-kube-apiserver {
   fi
   container_env+='{"name": "GODEBUG", "value": "x509sha1=1"}'
 
+  # b/255296578
+  container_env+=", {\"name\": \"HTTP2_READ_IDLE_TIMEOUT_SECONDS\", \"value\": \"${KUBE_APISERVER_HTTP2_READ_IDLE_TIMEOUT_SECONDS:-30}\"}"
+  container_env+=", {\"name\": \"HTTP2_PING_TIMEOUT_SECONDS\", \"value\": \"${KUBE_APISERVER_HTTP2_PING_TIMEOUT_SECONDS:-15}\"}"
+
   if [[ -n "${container_env}" ]]; then
     container_env="\"env\":[${container_env}],"
   fi
