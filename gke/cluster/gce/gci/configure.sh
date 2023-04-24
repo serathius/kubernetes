@@ -875,6 +875,8 @@ function install-auth-provider-gcp {
   # Keep in sync with --image-credential-provider-bin-dir in cloud/kubernetes/distro/legacy/kube_env.go
   mv "${KUBE_HOME}/${auth_provider_file_name}" "${KUBE_BIN}/${auth_provider_file_name}"
   chmod a+x "${KUBE_BIN}/${auth_provider_file_name}"
+
+  record-preload-info "auth-provider-gcp" "${auth_provider_sha512_hash}"
 }
 
 function configure-cgroup-mode {
@@ -1376,6 +1378,9 @@ function log-proto {
 # Variables needed for this function to work will be set by the preloader
 function preload {
   cd "${KUBE_HOME}"
+  if [[ "${ENABLE_AUTH_PROVIDER_GCP:-""}" == "true" ]]; then
+    log-wrap 'InstallExternalCredentialProvider' install-auth-provider-gcp
+  fi
 }
 
 ######### Main Function ##########
@@ -1439,10 +1444,6 @@ log-wrap 'InstallKubeBinaryConfig' install-kube-binary-config
 
 if [[ "${ENABLE_GCFS:-""}" == "true" ]]; then
   log-wrap 'InstallRiptide' install-riptide
-fi
-
-if [[ "${ENABLE_AUTH_PROVIDER_GCP:-""}" == "true" ]]; then
-  log-wrap 'InstallExternalCredentialProvider' install-auth-provider-gcp
 fi
 
 # download inplace component manifests
