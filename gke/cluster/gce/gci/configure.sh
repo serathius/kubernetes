@@ -71,12 +71,13 @@ AUTH_PROVIDER_GCP_LINUX_BIN_DIR="/home/kubernetes/bin"
 # Standard curl flags.
 CURL_FLAGS='--fail --silent --show-error --retry 5 --retry-delay 3 --connect-timeout 10 --retry-connrefused'
 
-# A function to define global variables after kube-env is sourced. Used to declare
-# global variables that depend on kube-env variable values.
-function define-global-vars-after-kube-env {
+# A function to define global variables. It is called here for the preloader case.
+# It is also called after kube-env is sourced to declare global variables depending on kube-env variable values.
+function define-global-vars {
   # This version needs to be the same as in gke/cluster/gce/gci/configure-helper.sh
   declare -g GKE_CONTAINERD_INFRA_CONTAINER="${CONTAINERD_INFRA_CONTAINER:-${KUBE_DOCKER_REGISTRY}/pause:3.8@sha256:880e63f94b145e46f1b1082bb71b85e21f16b99b180b9996407d61240ceb9830}"
 }
+define-global-vars
 
 function set-broken-motd {
   cat > /etc/motd <<EOF
@@ -1421,7 +1422,7 @@ fi
 # download and source kube-env
 log-wrap 'DownloadKubeEnv' download-kube-env
 log-wrap 'SourceKubeEnv' source "${KUBE_HOME}/kube-env"
-define-global-vars-after-kube-env
+define-global-vars
 
 if [[ "${CONFIGURE_PGA}" == "true" ]]; then
   configure-pga-if-needed
