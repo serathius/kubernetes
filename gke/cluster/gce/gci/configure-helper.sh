@@ -35,13 +35,8 @@ KUBE_DOCKER_REGISTRY="${KUBE_DOCKER_REGISTRY:-gke.gcr.io}"
 # Standard curl flags.
 CURL_FLAGS='--fail --silent --show-error --retry 5 --retry-delay 3 --connect-timeout 10 --retry-connrefused'
 
-# A function to define global variables. It is called after kube-env is sourced to declare
-# global variables that depend on kube-env variable values.
-function define-global-vars {
-  # This version needs to be the same as in gke/cluster/gce/gci/configure-helper.sh
-  declare -g GKE_CONTAINERD_INFRA_CONTAINER="${CONTAINERD_INFRA_CONTAINER:-${KUBE_DOCKER_REGISTRY}/pause:3.8@sha256:880e63f94b145e46f1b1082bb71b85e21f16b99b180b9996407d61240ceb9830}"
-}
-define-global-vars
+# This version needs to be the same as in gke/cluster/gce/gci/configure.sh
+GKE_CONTAINERD_INFRA_CONTAINER="pause:3.8@sha256:880e63f94b145e46f1b1082bb71b85e21f16b99b180b9996407d61240ceb9830"
 
 function convert-manifest-params {
   # A helper function to convert the manifest args from a string to a list of
@@ -189,7 +184,7 @@ function config-ip-firewall {
     # Calico adds iptables rules that accepts all traffic. Make it a PREROUTING
     # rule to get earlier in the chain and ensure the metadata server is
     # blocked.
-    iptables -t mangle -A PREROUTING -d 169.254.169.254/32 -j DROP
+    iptables -t mangle -A PREROUTING -d ${METADATA_SERVER_IP}/32 -j DROP
   fi
 
   # Flush iptables nat table
@@ -222,9 +217,9 @@ function config-ip-firewall {
     iptables -w -t nat -I PREROUTING -p tcp ! -i eth0 -d "${METADATA_SERVER_IP}" --dport 80 -m comment --comment "metadata-concealment: bridge traffic to metadata server goes to metadata proxy" -j DNAT --to-destination 169.254.169.252:988
     iptables -w -t nat -I PREROUTING -p tcp ! -i eth0 -d "${METADATA_SERVER_IP}" --dport 8080 -m comment --comment "metadata-concealment: bridge traffic to metadata server goes to metadata proxy" -j DNAT --to-destination 169.254.169.252:987
   fi
-  iptables -w -t mangle -I OUTPUT -s 169.254.169.254 -j DROP
-  iptables -w -t mangle -I OUTPUT -s 169.254.169.254 -p udp --sport 53 -j ACCEPT
-  iptables -w -t mangle -I OUTPUT -s 169.254.169.254 -p tcp --sport 53 -j ACCEPT
+  iptables -w -t mangle -I OUTPUT -s ${METADATA_SERVER_IP} -j DROP
+  iptables -w -t mangle -I OUTPUT -s ${METADATA_SERVER_IP} -p udp --sport 53 -j ACCEPT
+  iptables -w -t mangle -I OUTPUT -s ${METADATA_SERVER_IP} -p tcp --sport 53 -j ACCEPT
 
   # Log all metadata access not from approved processes.
   case "${METADATA_SERVER_FIREWALL_MODE:-off}" in
@@ -1622,7 +1617,7 @@ function start-kubelet {
 
   # POD_SYSCTLS is set in function configure-node-sysctls.
   local kubelet_opts="${KUBELET_ARGS} ${KUBELET_CONFIG_FILE_ARG:-} --pod-sysctls='${POD_SYSCTLS:-}' ${kubelet_cgroup_driver:-} ${kubelet_image_service_endpoint:-}"
-  kubelet_opts="${kubelet_opts} --pod-infra-container-image=${GKE_CONTAINERD_INFRA_CONTAINER}"
+  kubelet_opts="${kubelet_opts} --pod-infra-container-image=${KUBE_DOCKER_REGISTRY}/${GKE_CONTAINERD_INFRA_CONTAINER}"
   echo "KUBELET_OPTS=\"${kubelet_opts}\"" > "${kubelet_env_file}"
   echo "KUBE_COVERAGE_FILE=\"/var/log/kubelet.cov\"" >> "${kubelet_env_file}"
 
@@ -1719,10 +1714,7 @@ function prepare-kube-proxy-manifest-variables {
   local -r src_file=$1;
 
   local -r kubeconfig="--kubeconfig=/var/lib/kube-proxy/kubeconfig"
-  local kube_docker_registry="k8s.gcr.io"
-  if [[ -n "${KUBE_DOCKER_REGISTRY:-}" ]]; then
-    kube_docker_registry=${KUBE_DOCKER_REGISTRY}
-  fi
+  local kube_docker_registry=${KUBE_DOCKER_REGISTRY}
   local -r kube_proxy_docker_tag=$(cat /home/kubernetes/kube-docker-files/kube-proxy.docker_tag)
   local api_servers="--master=https://${KUBERNETES_MASTER_NAME}"
   local params="${KUBEPROXY_TEST_LOG_LEVEL:-"--v=2"}"
@@ -2041,10 +2033,7 @@ function compute-master-manifest-variables {
     CLOUD_CONFIG_VOLUME="{\"name\": \"cloudconfigmount\",\"hostPath\": {\"path\": \"/etc/gce.conf\", \"type\": \"FileOrCreate\"}},"
     CLOUD_CONFIG_MOUNT="{\"name\": \"cloudconfigmount\",\"mountPath\": \"/etc/gce.conf\", \"readOnly\": true},"
   fi
-  DOCKER_REGISTRY="k8s.gcr.io"
-  if [[ -n "${KUBE_DOCKER_REGISTRY:-}" ]]; then
-    DOCKER_REGISTRY="${KUBE_DOCKER_REGISTRY}"
-  fi
+  DOCKER_REGISTRY="${KUBE_DOCKER_REGISTRY}"
 
   FLEXVOLUME_HOSTPATH_MOUNT=""
   FLEXVOLUME_HOSTPATH_VOLUME=""
@@ -3078,97 +3067,6 @@ function ensure-master-bootstrap-kubectl-auth {
   fi
 }
 
-function setup-containerd {
-  echo "Generate containerd config"
-  local config_path="${CONTAINERD_CONFIG_PATH:-"/etc/containerd/config.toml"}"
-  mkdir -p "$(dirname "${config_path}")"
-  local cni_template_path="${KUBE_HOME}/cni.template"
-  local MTU="$(detect_mtu)"
-  cat > "${cni_template_path}" <<EOF
-{
-  "name": "k8s-pod-network",
-  "cniVersion": "0.3.1",
-  "plugins": [
-    {
-      "type": "ptp",
-      "mtu": ${MTU},
-      "ipam": {
-        "type": "host-local",
-        "subnet": "{{.PodCIDR}}",
-        "routes": [
-          {
-            "dst": "0.0.0.0/0"
-          }
-        ]
-      }
-    },
-    {
-      "type": "portmap",
-      "capabilities": {
-        "portMappings": true
-      }
-    }
-  ]
-}
-EOF
-  if [[ "${KUBERNETES_MASTER:-}" != "true" ]]; then
-    if [[ "${NETWORK_POLICY_PROVIDER:-"none"}" != "none" || "${ENABLE_NETD:-}" == "true" ]]; then
-      # Use Kubernetes cni daemonset on node if network policy provider is specified
-      # or netd is enabled.
-      cni_template_path=""
-    fi
-  fi
-  cat > "${config_path}" <<EOF
-version = 2
-# Kubernetes requires the cri plugin.
-required_plugins = ["io.containerd.grpc.v1.cri"]
-# Kubernetes doesn't use containerd restart manager.
-disabled_plugins = ["io.containerd.internal.v1.restart"]
-oom_score = -999
-
-[debug]
-  level = "${CONTAINERD_LOG_LEVEL:-"info"}"
-
-[plugins."io.containerd.grpc.v1.cri"]
-  stream_server_address = "127.0.0.1"
-  max_container_log_line_size = ${CONTAINERD_MAX_CONTAINER_LOG_LINE:-262144}
-  sandbox_image = "${GKE_CONTAINERD_INFRA_CONTAINER}"
-[plugins."io.containerd.grpc.v1.cri".cni]
-  bin_dir = "${KUBE_HOME}/bin"
-  conf_dir = "/etc/cni/net.d"
-  conf_template = "${cni_template_path}"
-[plugins."io.containerd.grpc.v1.cri".containerd]
-  default_runtime_name = "runc"
-[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
-  runtime_type = "io.containerd.runc.v2"
-[plugins."io.containerd.grpc.v1.cri".registry.mirrors."docker.io"]
-  endpoint = ["https://mirror.gcr.io","https://registry-1.docker.io"]
-EOF
-
-  if [[ "${CONTAINER_RUNTIME_TEST_HANDLER:-}" == "true" ]]; then
-  cat >> "${config_path}" <<EOF
-# Setup a runtime with the magic name ("test-handler") used for Kubernetes
-# runtime class tests ...
-[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.test-handler]
-  runtime_type = "io.containerd.runc.v2"
-EOF
-  fi
-
-  # Reuse docker group for containerd.
-  local -r containerd_gid="$(grep ^docker: /etc/group | cut -d: -f 3)"
-  if [[ -n "${containerd_gid:-}" ]]; then
-    cat >> "${config_path}" <<EOF
-# reuse id of the docker group
-[grpc]
-  gid = ${containerd_gid}
-EOF
-  fi
-  chmod 644 "${config_path}"
-
-  echo "Restart containerd to load the config change"
-  systemctl restart containerd
-}
-
 function install-bfq {
   if ! modinfo bfq >/dev/null 2>&1; then
     echo "bfq kernel module does not exist"
@@ -3454,8 +3352,6 @@ function main() {
   source "${KUBE_HOME}/kube-env"
   log-end 'SourceKubeEnv'
 
-  define-global-vars
-
   if [[ -f "${KUBE_HOME}/kubelet-config.yaml" ]]; then
     echo "Found Kubelet config file at ${KUBE_HOME}/kubelet-config.yaml"
     KUBELET_CONFIG_FILE_ARG="--config ${KUBE_HOME}/kubelet-config.yaml"
@@ -3543,8 +3439,6 @@ function main() {
   if [[ -e "${KUBE_HOME}/bin/gke-internal-configure-helper.sh" ]]; then
     log-wrap 'ConfigureSMT' configure-smt
     log-wrap 'GKESetupContainerd' gke-setup-containerd
-  else
-    log-wrap 'SetupContainerd' setup-containerd
   fi
 
   log-start 'SetupKubePodLogReadersGroupDir'

@@ -29,25 +29,29 @@ DEFAULT_CNI_HASH='b5a59660053a5f1a33b5dd5624d9ed61864482d9dc8e5b79c9b3afc3d6f62c
 DEFAULT_NPD_VERSION='v0.8.13'
 DEFAULT_NPD_HASH_AMD64='24e705d30b5839264cb64c54a19928a1a7e6fe7b8cba730f50bb737e920136f16410572f2bfe065a5f4aa1a77f9d2616d7dac37e9d4e1edd30b870c586937f65'
 DEFAULT_NPD_HASH_ARM64='f41858b118cd8c09351cc5518d554728324713b8ee77e71184ef856f89e9302560aefbc3bb9a43b37bce5cb272bc508f991c2c2e4e7e940aeac4384d8f4de5c1'
+NPD_CUSTOM_PLUGINS_VERSION="v1.0.7"
+NPD_CUSTOM_PLUGINS_TAR_HASH="b697497d6bd35268f588e2baca9f6fd8b9ca081a3401ebc6c6dcdc30a305efdd547231a2884586e28ec79eb5cfb620d15c98a5f9af4946c0d2d72a974f230f5b"
 DEFAULT_CRICTL_VERSION='v1.26.1-gke.0'
 DEFAULT_CRICTL_AMD64_SHA512='99d9ee59bcdf1de846ca9c37068160acf824d82c85403b388767e9b0b481a90060f2e6241b17fa0e34936281c4c333d44e5fe92044b6e1445aa5b7fdfed1615f'
 DEFAULT_CRICTL_ARM64_SHA512='9c3ec55815a2e99b05497ce07fe993420b137c251c0c0c100be25278cba7a1b615a0243c840151c368fa9cdd771b07726c0ff76739daf3646522579f976e84b5'
 DEFAULT_MOUNTER_ROOTFS_VERSION='v1.0.0'
 DEFAULT_MOUNTER_ROOTFS_TAR_AMD64_SHA512='631330b7fa911d67e400b1d014df65a7763667d4afd4ecefe11a4a89dc9b8be626e5610d53b536c255a3ab488408ab2da8a0699d9fdad280cb3aa24bc2f30ab0'
 DEFAULT_MOUNTER_ROOTFS_TAR_ARM64_SHA512='83cf9ab7961627359654131abd2d4c4b72875d395c50cda9e417149b2eb53b784dfe5c2f744ddbccfe516e36dd64c716d69d161d8bc8b4f42a9207fe676d0bc1'
-###
 
-RIPTIDE_FUSE_BUCKET="${RIPTIDE_FUSE_BUCKET:-gke-release}"
-RIPTIDE_SNAPSHOTTER_BUCKET="${RIPTIDE_SNAPSHOTTER_BUCKET:-gke-release}"
-RIPTIDE_FUSE_VERSION="${RIPTIDE_FUSE_VERSION:-v0.162.0}"
+RIPTIDE_FUSE_VERSION="v0.162.0"
 RIPTIDE_FUSE_ARM64_SHA512='470a23eba2bc291d628db7607f522c5eb3ce06a07f8c9ca60908db01f832f2935bdcf14565d58cceb3d1326689f1e7853e8ab9fa3c435fa2b50142152d5337fa'
 RIPTIDE_FUSE_BIN_ARM64_SHA512='c46d39902602652b348d596fb2fc79d4fc64f136e52ddc7b35acb8e2d178f4f24fda8168ef0cfd6cae2e949f664be31af3ef9fb15c8b490f15cb16f972c90386'
 RIPTIDE_FUSE_AMD64_SHA512='a4b50d81dd17381a033e64008a4bab82db5629414a44fc27cd0f033bbd4d3922b67c6a68e2c2051aa173bd16bd70fb6d2e33abea05f44d24b2025b07d5a48863'
 RIPTIDE_FUSE_BIN_AMD64_SHA512='dc09d14cea2b69a08c4ae80c56acd65cc6dc7831aec09f933ce62fbfbc0b30f6a755282fe683c85578769641d1d753e88d43417519dafd5745681ad52b0848bd'
-RIPTIDE_SNAPSHOTTER_VERSION="${RIPTIDE_SNAPSHOTTER_VERSION:-v1.4-25}"
+RIPTIDE_SNAPSHOTTER_VERSION="v1.4-25"
 RIPTIDE_SNAPSHOTTER_SHA512='67ca748d45bd7a73ba24773d990aad76656d652aaebff07507b279a77d2a86fd51571eae664a75fa2204f750a25f8070b99cc3df135fd3aa2e206478a8b88098'
 RIPTIDE_SNAPSHOTTER_BIN_ARM64_SHA512='28dd96113793c86b485f2a11b9127225e8cb6a0c861c645a04d72052e792a384503bfc1aa6f3241461d6b4a80bbfb6444e7e2efbb6a476b4b249005e00950d00'
 RIPTIDE_SNAPSHOTTER_BIN_AMD64_SHA512='ed015760f16fccb99091c4a4daf4e2898fb2e107f54ac3c7ddf10d3d9c1d3017c24d6a1dc0b8b6061e2dd1400204969ad3a41ff02a28a11c0e70e04d6d12ecf1'
+AUTH_PROVIDER_GCP_VERSION="v0.0.2-gke.4"
+AUTH_PROVIDER_GCP_HASH_LINUX_AMD64="156058e5b3994cba91c23831774033e0d505d6d8b80f43541ef6af91b320fd9dfaabe42ec8a8887b51d87104c2b57e1eb895649d681575ffc80dd9aee8e563db"
+AUTH_PROVIDER_GCP_HASH_LINUX_ARM64="1aa3b0bea10a9755231989ffc150cbfa770f1d96932db7535473f7bfeb1108bafdae80202ae738d59495982512e716ff7366d5f414d0e76dd50519f98611f9ab"
+
+###
 
 # Backend endpoints (configurable for TPC).
 # May be overridden when kube-env is sourced.
@@ -63,21 +67,11 @@ KUBE_DOCKER_REGISTRY="${KUBE_DOCKER_REGISTRY:-gke.gcr.io}"
 # May be overridden when kube-env is sourced.
 CONFIGURE_PGA="${CONFIGURE_PGA:-true}"
 
-AUTH_PROVIDER_GCP_VERSION="v0.0.2-gke.4"
-AUTH_PROVIDER_GCP_HASH_LINUX_AMD64="156058e5b3994cba91c23831774033e0d505d6d8b80f43541ef6af91b320fd9dfaabe42ec8a8887b51d87104c2b57e1eb895649d681575ffc80dd9aee8e563db"
-AUTH_PROVIDER_GCP_HASH_LINUX_ARM64="1aa3b0bea10a9755231989ffc150cbfa770f1d96932db7535473f7bfeb1108bafdae80202ae738d59495982512e716ff7366d5f414d0e76dd50519f98611f9ab"
-AUTH_PROVIDER_GCP_LINUX_BIN_DIR="/home/kubernetes/bin"
-
 # Standard curl flags.
 CURL_FLAGS='--fail --silent --show-error --retry 5 --retry-delay 3 --connect-timeout 10 --retry-connrefused'
 
-# A function to define global variables. It is called here for the preloader case.
-# It is also called after kube-env is sourced to declare global variables depending on kube-env variable values.
-function define-global-vars {
-  # This version needs to be the same as in gke/cluster/gce/gci/configure-helper.sh
-  declare -g GKE_CONTAINERD_INFRA_CONTAINER="${CONTAINERD_INFRA_CONTAINER:-${KUBE_DOCKER_REGISTRY}/pause:3.8@sha256:880e63f94b145e46f1b1082bb71b85e21f16b99b180b9996407d61240ceb9830}"
-}
-define-global-vars
+# This version needs to be the same as in gke/cluster/gce/gci/configure-helper.sh
+GKE_CONTAINERD_INFRA_CONTAINER="pause:3.8@sha256:880e63f94b145e46f1b1082bb71b85e21f16b99b180b9996407d61240ceb9830"
 
 function set-broken-motd {
   cat > /etc/motd <<EOF
@@ -274,7 +268,7 @@ function download-or-bust {
       # if the url belongs to GCS API we should use oauth2_token in the headers if the VM service account has storage scopes
       local curl_headers=""
 
-      if [[ "$url" =~ ^${STORAGE_ENDPOINT}.* ]] ; then
+      if [[ "$url" =~ ^${STORAGE_ENDPOINT}/.* ]] ; then
         local canUseCredentials=0
 
         echo "Getting the scope of service account configured for VM."
@@ -522,6 +516,27 @@ function install-node-problem-detector {
   record-preload-info "${npd_tar}" "${npd_hash}"
 }
 
+# Install node problem detector custom plugins.
+function install-npd-custom-plugins {
+  local -r version="${NPD_CUSTOM_PLUGINS_VERSION}"
+  local -r hash="${NPD_CUSTOM_PLUGINS_TAR_HASH}"
+  local -r tar="npd-custom-plugins-${version}.tar.gz"
+
+  if is-preloaded "${tar}" "${hash}"; then
+    echo "${tar} is preloaded."
+    return
+  fi
+
+  echo "Downloading ${tar}."
+  download-or-bust "${hash}" "${STORAGE_ENDPOINT}/gke-release/npd-custom-plugins/${version}/${tar}"
+  local -r dir="${KUBE_HOME}/npd-custom-plugins"
+  mkdir -p "${dir}"
+  tar xzf "${KUBE_HOME}/${tar}" -C "${dir}" --overwrite
+  rm -f "${KUBE_HOME}/${tar}"
+
+  record-preload-info "${tar}" "${hash}"
+}
+
 function install-cni-binaries {
   local -r cni_version=${CNI_VERSION:-$DEFAULT_CNI_VERSION}
   if [[ -n "${CNI_VERSION:-}" ]]; then
@@ -595,7 +610,8 @@ EOF
 }
 
 function preload-pause-image {
-  if is-preloaded "pause" "${GKE_CONTAINERD_INFRA_CONTAINER}"; then
+  local -r pause_image="${KUBE_DOCKER_REGISTRY}/${GKE_CONTAINERD_INFRA_CONTAINER}"
+  if is-preloaded "pause" "${pause_image}"; then
     echo "pause image is preloaded"
     return
   fi
@@ -605,13 +621,13 @@ function preload-pause-image {
   local access_token="";
 
   if access_token=$(get-credentials); then
-    "${KUBE_BIN}/crictl" pull --creds "oauth2accesstoken:${access_token}" ${GKE_CONTAINERD_INFRA_CONTAINER}
+    "${KUBE_BIN}/crictl" pull --creds "oauth2accesstoken:${access_token}" "${pause_image}"
   else
     echo "No access token. Pulling without it."
-    "${KUBE_BIN}/crictl" pull ${GKE_CONTAINERD_INFRA_CONTAINER}
+    "${KUBE_BIN}/crictl" pull "${pause_image}"
   fi
 
-  record-preload-info "pause" "${GKE_CONTAINERD_INFRA_CONTAINER}"
+  record-preload-info "pause" "${pause_image}"
 }
 
 function install-exec-auth-plugin {
@@ -676,9 +692,6 @@ function install-kube-manifests {
   fi
   cp "${dst_dir}/kubernetes/gci-trusty/gci-configure-helper.sh" "${KUBE_BIN}/configure-helper.sh"
   cp "${dst_dir}/kubernetes/gci-trusty/configure-kubeapiserver.sh" "${KUBE_BIN}/configure-kubeapiserver.sh"
-  if [[ -e "${dst_dir}/kubernetes/gci-trusty/gke-internal-configure.sh" ]]; then
-    cp "${dst_dir}/kubernetes/gci-trusty/gke-internal-configure.sh" "${KUBE_BIN}/"
-  fi
   if [[ -e "${dst_dir}/kubernetes/gci-trusty/gke-internal-configure-helper.sh" ]]; then
     cp "${dst_dir}/kubernetes/gci-trusty/gke-internal-configure-helper.sh" "${KUBE_BIN}/"
   fi
@@ -807,11 +820,11 @@ function install-gcfsd {
   fi
 
   if [[ "${HOST_ARCH}" == "arm64" ]]; then
-    RIPTIDE_FUSE_STORE_PATH="${STORAGE_ENDPOINT}/${RIPTIDE_FUSE_BUCKET}/gcfsd/${RIPTIDE_FUSE_VERSION}/arm64"
+    RIPTIDE_FUSE_STORE_PATH="${STORAGE_ENDPOINT}/gke-release/gcfsd/${RIPTIDE_FUSE_VERSION}/arm64"
     TAR_SHA="${RIPTIDE_FUSE_ARM64_SHA512}"
     BIN_SHA="${RIPTIDE_FUSE_BIN_ARM64_SHA512}"
   else
-    RIPTIDE_FUSE_STORE_PATH="${STORAGE_ENDPOINT}/${RIPTIDE_FUSE_BUCKET}/gcfsd/${RIPTIDE_FUSE_VERSION}"
+    RIPTIDE_FUSE_STORE_PATH="${STORAGE_ENDPOINT}/gke-release/gcfsd/${RIPTIDE_FUSE_VERSION}"
     TAR_SHA="${RIPTIDE_FUSE_AMD64_SHA512}"
     BIN_SHA="${RIPTIDE_FUSE_BIN_AMD64_SHA512}"
   fi
@@ -831,7 +844,7 @@ function install-riptide-snapshotter {
     echo "containerd-gcfs-grpc is preloaded."
     return
   fi
-  RIPTIDE_SNAPSHOTTER_STORE_PATH="${STORAGE_ENDPOINT}/${RIPTIDE_SNAPSHOTTER_BUCKET}/gcfs-snapshotter/${RIPTIDE_SNAPSHOTTER_VERSION}"
+  RIPTIDE_SNAPSHOTTER_STORE_PATH="${STORAGE_ENDPOINT}/gke-release/gcfs-snapshotter/${RIPTIDE_SNAPSHOTTER_VERSION}"
 
   echo "Downloading tarball for riptide-snapshotter"
   download-or-bust "${RIPTIDE_SNAPSHOTTER_SHA512}" "${RIPTIDE_SNAPSHOTTER_STORE_PATH}/containerd-gcfs-grpc.tar.gz"
@@ -879,8 +892,8 @@ function install-auth-provider-gcp {
   download-or-bust "${auth_provider_gcp_hash}" "${auth_provider_storage_url}"
 
   # Keep in sync with --image-credential-provider-bin-dir in cloud/kubernetes/distro/legacy/kube_env.go
-  mv "${KUBE_HOME}/auth-provider-gcp" "${AUTH_PROVIDER_GCP_LINUX_BIN_DIR}"
-  chmod a+x "${AUTH_PROVIDER_GCP_LINUX_BIN_DIR}/auth-provider-gcp"
+  mv "${KUBE_HOME}/auth-provider-gcp" "${KUBE_BIN}"
+  chmod a+x "${KUBE_BIN}/auth-provider-gcp"
 
   record-preload-info "auth-provider-gcp" "${auth_provider_gcp_hash}"
 }
@@ -1124,21 +1137,10 @@ function install-kube-binary-config {
   # TODO(awly): include the binary and license in the OS image.
   install-exec-auth-plugin
 
-  # Source GKE specific scripts.
-  #
-  # This must be done after install-kube-manifests where the
-  # gke-internal-configure.sh is downloaded.
-  if [[ -e "${KUBE_HOME}/bin/gke-internal-configure.sh" ]]; then
-    echo "Running GKE internal configuration script gke-internal-configure.sh"
-    . "${KUBE_HOME}/bin/gke-internal-configure.sh"
-  fi
-
   if [[ "${KUBERNETES_MASTER:-}" == "false" ]] && \
      [[ "${ENABLE_NODE_PROBLEM_DETECTOR:-}" == "standalone" ]]; then
     install-node-problem-detector
-    if [[ -e "${KUBE_HOME}/bin/gke-internal-configure.sh" ]]; then
-      install-npd-custom-plugins
-    fi
+    install-npd-custom-plugins
   fi
 
   # Clean up.
@@ -1422,7 +1424,6 @@ fi
 # download and source kube-env
 log-wrap 'DownloadKubeEnv' download-kube-env
 log-wrap 'SourceKubeEnv' source "${KUBE_HOME}/kube-env"
-define-global-vars
 
 if [[ "${CONFIGURE_PGA}" == "true" ]]; then
   configure-pga-if-needed
