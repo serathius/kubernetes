@@ -2776,6 +2776,14 @@ function Start-AntreaService {
   & sc.exe create antrea-agent binPath= "${env:NODE_DIR}\antrea-agent.exe --service --gke --config ${env:K8S_DIR}\antrea.conf ${antrea_args}" start= demand
   & sc.exe failure antrea-agent reset= 0 actions= restart/10000
   & sc.exe start antrea-agent
+
+  # wait till antrea creates the openvswitch bridge and the antrea-nosnat-gw0 interface
+  # as an indication that antrea is ready with networking.
+  ovs-vsctl --timeout=60 wait-until bridge br-int
+  ovs-vsctl --timeout=60 wait-until interface antrea-nosnat-gw0
+
+  Log-Output "Waiting 60 seconds for antrea-agent to stabilize"
+  Start-Sleep 60
 }
 
 # Configure Antrea's CNI config file
