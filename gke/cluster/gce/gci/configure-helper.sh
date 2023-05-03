@@ -3417,10 +3417,14 @@ function config-ip-envoy {
   echo -e '100\tenvoy.tproxy' >> /etc/iproute2/rt_tables
   ip rule add fwmark $packet_mark lookup envoy.tproxy
   ip route add local 0.0.0.0/0 dev lo table envoy.tproxy
-  iptables -t nat -A PREROUTING -p tcp --dport 443  -s 192.168.0.0/20  -j REDIRECT --to-port 7443
-  iptables -t nat -A PREROUTING -p tcp --dport 8132 -s 192.168.0.0/20  -j REDIRECT --to-port 7444
-  iptables -t nat -A PREROUTING -p tcp --dport 443  -s 192.168.16.0/20 -j REDIRECT --to-port 7443
-  iptables -t nat -A PREROUTING -p tcp --dport 8132 -s 192.168.16.0/20 -j REDIRECT --to-port 7444
+  if [[ "${ENABLE_PSC_NAT_IPV4_CIDR_FORWARDING:-true}" == "true" ]]; then
+    iptables -t nat -A PREROUTING -p tcp --dport 443  -s 192.168.0.0/20  -j REDIRECT --to-port 7443
+    iptables -t nat -A PREROUTING -p tcp --dport 8132 -s 192.168.0.0/20  -j REDIRECT --to-port 7444
+  fi
+  if [[ "${ENABLE_ALT_PSC_NAT_IPV4_CIDR_FORWARDING:-true}" == "true" ]]; then
+    iptables -t nat -A PREROUTING -p tcp --dport 443  -s 192.168.16.0/20 -j REDIRECT --to-port 7443
+    iptables -t nat -A PREROUTING -p tcp --dport 8132 -s 192.168.16.0/20 -j REDIRECT --to-port 7444
+  fi
 }
 
 ########### Main Function ###########
