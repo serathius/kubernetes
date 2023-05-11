@@ -24,8 +24,9 @@ set -o nounset
 set -o pipefail
 
 ### Hardcoded constants
-DEFAULT_CNI_VERSION='v0.9.1'
-DEFAULT_CNI_HASH='b5a59660053a5f1a33b5dd5624d9ed61864482d9dc8e5b79c9b3afc3d6f62c9830e1c30f9ccba6ee76f5fb1ff0504e58984420cc0680b26cb643f1cb07afbd1c'
+DEFAULT_CNI_VERSION='v1.0.1-gke.5'
+DEFAULT_CNI_HASH_LINUX_AMD64='a90697fbb67cb3a914e5709f4d581d3d8374768abc9c2b5d56ed814d69d46d5a1a06bccc87cb88c4858eb03de578bfd1aff7b1ac0381717e48996be16eef27e8'
+DEFAULT_CNI_HASH_LINUX_ARM64='7a65ee37763a073eb8eddcf1f7f2df613ed569d2fba313be2ea0ba075cc3927f27ee5be07e479f8cd4ddd008f000d3e83a9b0fbc84b6e05d3d2dcd72837ac319'
 DEFAULT_NPD_VERSION='v0.8.13'
 DEFAULT_NPD_HASH_AMD64='24e705d30b5839264cb64c54a19928a1a7e6fe7b8cba730f50bb737e920136f16410572f2bfe065a5f4aa1a77f9d2616d7dac37e9d4e1edd30b870c586937f65'
 DEFAULT_NPD_HASH_ARM64='f41858b118cd8c09351cc5518d554728324713b8ee77e71184ef856f89e9302560aefbc3bb9a43b37bce5cb272bc508f991c2c2e4e7e940aeac4384d8f4de5c1'
@@ -540,13 +541,14 @@ function install-npd-custom-plugins {
 function install-cni-binaries {
   local -r cni_version=${CNI_VERSION:-$DEFAULT_CNI_VERSION}
   if [[ -n "${CNI_VERSION:-}" ]]; then
-      local -r cni_hash="${CNI_HASH:-}"
+    local -r cni_hash="${CNI_HASH:-}"
   else
-      local -r cni_hash="${DEFAULT_CNI_HASH}"
+    local -r cni_hash_var="DEFAULT_CNI_HASH_${HOST_PLATFORM^^}_${HOST_ARCH^^}"
+    local -r cni_hash="${!cni_hash_var}"
   fi
 
-  local -r cni_tar="${CNI_TAR_PREFIX}${cni_version}.tgz"
-  local -r cni_url="${CNI_STORAGE_URL_BASE}/${cni_version}/${cni_tar}"
+  local -r cni_tar="cni-plugins-${HOST_PLATFORM}-${HOST_ARCH}-${cni_version}.tgz"
+  local -r cni_url="${STORAGE_ENDPOINT}/gke-release/cni-plugins/${cni_version}/${cni_tar}"
 
   if is-preloaded "${cni_tar}" "${cni_hash}"; then
     echo "${cni_tar} is preloaded."

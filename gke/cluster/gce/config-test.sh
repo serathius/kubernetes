@@ -320,10 +320,6 @@ export ENABLE_NODE_PROBLEM_DETECTOR
 NODE_PROBLEM_DETECTOR_RELEASE_PATH=${NODE_PROBLEM_DETECTOR_RELEASE_PATH:-}
 NODE_PROBLEM_DETECTOR_CUSTOM_FLAGS=${NODE_PROBLEM_DETECTOR_CUSTOM_FLAGS:-}
 
-CNI_HASH=${CNI_HASH:-}
-CNI_TAR_PREFIX=${CNI_TAR_PREFIX:-cni-plugins-linux-amd64-}
-CNI_STORAGE_URL_BASE=${CNI_STORAGE_URL_BASE:-https://storage.googleapis.com/k8s-artifacts-cni/release}
-
 # Optional: Create autoscaler for cluster's nodes.
 export ENABLE_CLUSTER_AUTOSCALER=${KUBE_ENABLE_CLUSTER_AUTOSCALER:-false}
 if [[ "${ENABLE_CLUSTER_AUTOSCALER}" = 'true' ]]; then
@@ -413,7 +409,7 @@ STORAGE_BACKEND=${STORAGE_BACKEND:-}
 # Storage media type: application/json and application/vnd.kubernetes.protobuf are supported.
 STORAGE_MEDIA_TYPE=${STORAGE_MEDIA_TYPE:-}
 
-NETWORK_PROVIDER=${NETWORK_PROVIDER:-kubenet} # none, kubenet
+NETWORK_PROVIDER=${NETWORK_PROVIDER:-kubenet} # none, kubenet, cni
 
 # Network Policy plugin specific settings.
 NETWORK_POLICY_PROVIDER=${NETWORK_POLICY_PROVIDER:-none} # calico
