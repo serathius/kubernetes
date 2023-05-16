@@ -114,7 +114,7 @@ usage: $0 [KEY=VALUE..]
   concatenanted by a dash).
 
 
-  [INJECT_DEV_VERSION_MARKER] decides whether to inject a '-gke.99.99+' string
+  [INJECT_DEV_VERSION_MARKER] decides whether to inject a '-gke.999999.99+' string
   into the version string. Can be '1' or '0'. Default is '0' (false).
 
 
@@ -354,7 +354,7 @@ process_args()
   fi
 }
 
-# Inject "-gke.99.99\+" as a substring if there is no "-gke.n.n+" substring
+# Inject "-gke.999999.99\+" as a substring if there is no "-gke.n.n+" substring
 # found. This is to make sure that other downstream systems can recognize it as
 # a GKE build for dev/test environments. See
 # go/gke-build-k8s#test-out-your-change.
@@ -411,27 +411,27 @@ inject_gke_dev_version_marker()
     fi
   fi
 
-  # Otherwise, there is nothing to preserve so inject "-gke.99.99+" as soon as
+  # Otherwise, there is nothing to preserve so inject "-gke.999999.99+" as soon as
   # we find a '-' character. This matches the old behavior where we used to just
   # pipe to sed like this:
   #
-  #   sed '/-gke\.[0-9]\+\.[0-9]\++/! s/-/-gke.99.99+/'
+  #   sed '/-gke\.[0-9]\+\.[0-9]\++/! s/-/-gke.999999.99+/'
   #
   # Example:
   #
-  #   "v1.21.0-alpha.0-692-g94a623a45a77eb" => "v1.21.0-gke.99.99+alpha.0-692-g94a623a45a77eb"
+  #   "v1.21.0-alpha.0-692-g94a623a45a77eb" => "v1.21.0-gke.999999.99+alpha.0-692-g94a623a45a77eb"
   if [[ "${version}" =~ ^[^-]+- ]]; then
     # Inject the substring into the middle of the string.
-    new_version="${version/-/-gke.99.99+}"
-    log.info "nothing to preserve; injecting \`-gke.99.99+' directly as \`${new_version}'"
+    new_version="${version/-/-gke.999999.99+}"
+    log.info "nothing to preserve; injecting \`-gke.999999.99+' directly as \`${new_version}'"
     echo "${new_version}"
     return
   else
     # Append the substring at the end. However we also need to prevent appending
     # a trailing '+' at the end, so we inject '+dev-unknown' at the end instead
     # of just '+'.
-    new_version="${version}-gke.99.99+dev-unknown"
-    log.info "nothing to preserve; appending \`-gke.99.99+dev-unknown' at the end as \`${new_version}'"
+    new_version="${version}-gke.999999.99+dev-unknown"
+    log.info "nothing to preserve; appending \`-gke.999999.99+dev-unknown' at the end as \`${new_version}'"
     echo "${new_version}"
     return
   fi
@@ -548,7 +548,7 @@ set_version()
     # Set default version string by asking git.
     KUBE_GIT_VERSION=$(git describe --tags --match='v*' --abbrev=14)
 
-    # If requested, inject a "-gke.99.99+" string if there isn't one like that
+    # If requested, inject a "-gke.999999.99+" string if there isn't one like that
     # ("-gke.n.n+") already.
     if (( ${__INJECT_DEV_VERSION_MARKER:-0} )); then
       # If we are asked to inject a dev version marker, we *cannot* use a
@@ -2227,15 +2227,15 @@ self_test()
   expected="v1.20.2-gke.800.99+1-g8783f10452667a"
   assert_variable_equality "${got}" "${expected}"
 
-  # If there is no "-gke.N" pattern at all, inject "-gke.99.99+".
+  # If there is no "-gke.N" pattern at all, inject "-gke.999999.99+".
   got=$(inject_gke_dev_version_marker "v1.21.0-alpha.0-692-g94a623a45a77eb")
-  expected="v1.21.0-gke.99.99+alpha.0-692-g94a623a45a77eb"
+  expected="v1.21.0-gke.999999.99+alpha.0-692-g94a623a45a77eb"
   assert_variable_equality "${got}" "${expected}"
 
   # If we're forced to inject a dev version marker into a plain tag without any
-  # "-gke.N", still append the "-gke.99.99+" substring.
+  # "-gke.N", still append the "-gke.999999.99+" substring.
   got=$(inject_gke_dev_version_marker "v1.21.0")
-  expected="v1.21.0-gke.99.99+dev-unknown"
+  expected="v1.21.0-gke.999999.99+dev-unknown"
   assert_variable_equality "${got}" "${expected}"
 
   # If we're given a prod version "v1.21.0-gke.1200" *without* any other

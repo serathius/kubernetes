@@ -100,7 +100,7 @@ Below is a list of supported options and their descriptions.
   string with a dash, as in `<VERSION>-<VERSION_SUFFIX>`. A typical use case is
   `VERSION_SUFFIX=${USER}` to append your username to the end of the version
   string artifact.
-- `INJECT_DEV_VERSION_MARKER`: Decides whether to inject a '-gke.99.99+' string.
+- `INJECT_DEV_VERSION_MARKER`: Decides whether to inject a '-gke.999999.99+' string.
   Used to guarantee that the final build artifacts look like CI/dev builds.
 - `TARGET_PLATFORMS`: CSV of different platforms to for all build actions. E.g.,
   `make_custom.sh TARGET_PLATFORMS=linux/amd64,linux/arm64,windows/amd64`.
