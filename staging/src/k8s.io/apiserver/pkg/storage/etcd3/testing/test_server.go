@@ -21,7 +21,6 @@ import (
 
 	clientv3 "go.etcd.io/etcd/client/v3"
 
-	"k8s.io/apiserver/pkg/storage/etcd3/testserver"
 	"k8s.io/apiserver/pkg/storage/storagebackend"
 )
 
@@ -37,14 +36,9 @@ func (e *EtcdTestServer) Terminate(t *testing.T) {
 // NewUnsecuredEtcd3TestClientServer creates a new client and server for testing
 func NewUnsecuredEtcd3TestClientServer(t *testing.T) (*EtcdTestServer, *storagebackend.Config) {
 	server := &EtcdTestServer{}
-	server.V3Client = testserver.RunEtcd(t, nil)
 	config := &storagebackend.Config{
 		Type:   "etcd3",
 		Prefix: PathPrefix(),
-		Transport: storagebackend.TransportConfig{
-			ServerList: server.V3Client.Endpoints(),
-		},
-		//Paging: true,
 		Paging: false,
 	}
 	return server, config

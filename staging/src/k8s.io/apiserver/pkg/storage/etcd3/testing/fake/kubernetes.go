@@ -9,6 +9,15 @@ import (
 	"k8s.io/apiserver/pkg/storage"
 )
 
+func NewEtcdFake() storage.MvccKVClient {
+	return &mvccFake{etcdState: etcdState{
+		Revision:  1,
+		KeyValues: map[string]ValueRevision{},
+		KeyLeases: map[string]int64{},
+		Leases:    map[int64]EtcdLease{},
+	}}
+}
+
 type mvccFake struct {
 	mux sync.RWMutex
 	etcdState
@@ -18,7 +27,7 @@ func (f *mvccFake) Get(ctx context.Context, key string) (fullKey []byte, value [
 	f.mux.RLock()
 	defer f.mux.RUnlock()
 	var resp EtcdResponse
-	f.etcdState, resp = f.etcdState.step(getRequest(key))
+	_, resp = f.etcdState.step(getRequest(key))
 	if len(resp.Txn.Results[0].KVs) == 0 {
 		return nil, nil, 0, resp.Revision, nil
 	}
@@ -31,7 +40,7 @@ func (f *mvccFake) List(ctx context.Context, key string, opts []clientv3.OpOptio
 	defer f.mux.RUnlock()
 	var resp EtcdResponse
 	// TODO: Transfer opts into arguments
-	f.etcdState, resp = f.etcdState.step(rangeRequest(key, true, 0))
+	_, resp = f.etcdState.step(rangeRequest(key, true, 0))
 	for _, kv := range resp.Txn.Results[0].KVs {
 		kvs = append(kvs, &storage.KV{
 			Key:   []byte(kv.Key),
@@ -46,13 +55,13 @@ func (f *mvccFake) Count(ctx context.Context, key string) (count int64, err erro
 	f.mux.RLock()
 	defer f.mux.RUnlock()
 	var resp EtcdResponse
-	f.etcdState, resp = f.etcdState.step(rangeRequest(key, true, 0))
+	_, resp = f.etcdState.step(rangeRequest(key, true, 0))
 	return resp.Txn.Results[0].Count, nil
 }
 
 func (f *mvccFake) OptimisticCreate(ctx context.Context, key string, data []byte, ttl int64) (headerRev int64, err error) {
-	f.mux.RLock()
-	defer f.mux.RUnlock()
+	f.mux.Lock()
+	defer f.mux.Unlock()
 	var resp EtcdResponse
 	// TODO: Handle TTL
 	request := txnRequest([]EtcdCondition{{Key: key, ExpectedRevision: 0}}, []EtcdOperation{{Type: Put, Key: key, Value: ValueOrHash{Value: string(data)}}}, nil)
@@ -61,14 +70,14 @@ func (f *mvccFake) OptimisticCreate(ctx context.Context, key string, data []byte
 }
 
 func (f *mvccFake) OptimisticUpdate(ctx context.Context, key string, newData []byte, ttl int64, expectedRV int64) (kv *storage.KV, succeeded bool, txnRV int64, err error) {
-	f.mux.RLock()
-	defer f.mux.RUnlock()
+	f.mux.Lock()
+	defer f.mux.Unlock()
 	var resp EtcdResponse
 	// TODO: Handle TTL
 	request := txnRequest([]EtcdCondition{{Key: key, ExpectedRevision: expectedRV}}, []EtcdOperation{{Type: Put, Key: key, Value: ValueOrHash{Value: string(newData)}}}, []EtcdOperation{{Type: Range, Key: key}})
 	f.etcdState, resp = f.etcdState.step(request)
 	succeeded = !resp.Txn.Failure
-	if !succeeded {
+	if !succeeded && len(resp.Txn.Results[0].KVs) == 1 {
 		result := resp.Txn.Results[0].KVs[0]
 		kv = &storage.KV{
 			Key:   []byte(result.Key),
@@ -80,13 +89,12 @@ func (f *mvccFake) OptimisticUpdate(ctx context.Context, key string, newData []b
 }
 
 func (f *mvccFake) OptimisticDelete(ctx context.Context, key string, expectedRV int64) (succeeded bool, kv *storage.KV, err error) {
-	f.mux.RLock()
-	defer f.mux.RUnlock()
+	f.mux.Lock()
+	defer f.mux.Unlock()
 	var resp EtcdResponse
 	request := txnRequest([]EtcdCondition{{Key: key, ExpectedRevision: expectedRV}}, []EtcdOperation{{Type: Delete, Key: key}}, []EtcdOperation{{Type: Range, Key: key}})
 	f.etcdState, resp = f.etcdState.step(request)
-	succeeded = !resp.Txn.Failure
-	if !succeeded {
+	if !succeeded && len(resp.Txn.Results[0].KVs) == 1 {
 		result := resp.Txn.Results[0].KVs[0]
 		kv = &storage.KV{
 			Key:   []byte(result.Key),
@@ -107,9 +115,16 @@ func (f *mvccFake) GrantLease(ctx context.Context, ttl int64) (leaseID int64, er
 	panic("implement me")
 }
 
-func (f *mvccFake) Watch(ctx context.Context, cancelFunc context.CancelFunc, key string, startRV int64, withPrefix bool, withProgressNotify bool, errCh chan<- error) <-chan *storage.Event {
+func (f *mvccFake) Watch(ctx context.Context, key string, startRV int64, withPrefix bool, withProgressNotify bool, errCh chan<- error) <-chan *storage.Event {
 	//TODO implement me
-	panic("implement me")
+	respCh := make(chan *storage.Event)
+	go func() {
+		select {
+		case <-ctx.Done():
+			close(respCh)
+		}
+	}()
+	return respCh
 }
 
 func (f *mvccFake) GetLeaseManager() storage.LeaseManager {

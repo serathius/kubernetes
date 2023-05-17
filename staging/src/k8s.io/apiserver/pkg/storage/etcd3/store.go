@@ -98,9 +98,6 @@ func New(c *clientv3.Client, codec runtime.Codec, newFunc func() runtime.Object,
 
 func newStore(c *clientv3.Client, codec runtime.Codec, newFunc func() runtime.Object, prefix string, groupResource schema.GroupResource, transformer value.Transformer, pagingEnabled bool, leaseManagerConfig etcd.LeaseManagerConfig) *store {
 	versioner := storage.APIObjectVersioner{}
-	//if c == nil {
-	//	panic("bingo")
-	//}
 	mvccClient := etcd.NewClient(c, leaseManagerConfig)
 	result := &store{
 		mvccClient:    mvccClient,
@@ -114,7 +111,7 @@ func newStore(c *clientv3.Client, codec runtime.Codec, newFunc func() runtime.Ob
 		pathPrefix:          path.Join("/", prefix),
 		groupResource:       groupResource,
 		groupResourceString: groupResource.String(),
-		leaseManager:        mvccClient.GetLeaseManager(),
+		watcher:             newWatcher(mvccClient, codec, newFunc, versioner, transformer),
 	}
 	return result
 }
@@ -772,7 +769,12 @@ func growSlice(v reflect.Value, maxCapacity int, sizes ...int) {
 
 // Watch implements storage.Interface.Watch.
 func (s *store) Watch(ctx context.Context, key string, opts storage.ListOptions) (watch.Interface, error) {
-	panic("not migrated yet to MvvcKVClient yet")
+	rev, err := s.versioner.ParseResourceVersion(opts.ResourceVersion)
+	if err != nil {
+		return nil, err
+	}
+	key = path.Join(s.pathPrefix, key)
+	return s.watcher.Watch(ctx, key, int64(rev), opts.Recursive, opts.ProgressNotify, opts.Predicate)
 }
 
 func (s *store) getState(ctx context.Context, kv *storage.KV, key string, v reflect.Value, ignoreNotFound bool) (*objState, error) {

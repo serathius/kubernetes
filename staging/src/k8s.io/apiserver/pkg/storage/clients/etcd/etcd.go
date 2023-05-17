@@ -19,6 +19,7 @@ package etcd
 import (
 	"context"
 	"fmt"
+	"k8s.io/apiserver/pkg/storage/etcd3/testing/fake"
 	"strconv"
 
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -36,11 +37,7 @@ type Client struct {
 }
 
 func NewClient(c *clientv3.Client, leaseManagerConfig LeaseManagerConfig) storage.MvccKVClient {
-	return &Client{
-		etcdClient: c,
-		// todo(hankang) verify this is the right thing to do
-		leaseManager: newDefaultLeaseManager(c, leaseManagerConfig),
-	}
+	return fake.NewEtcdFake()
 }
 
 func (c Client) GetLeaseManager() storage.LeaseManager {

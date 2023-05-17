@@ -296,7 +296,7 @@ type MvccKVClient interface {
 	OptimisticDelete(ctx context.Context, key string, expectedRV int64) (bool, *KV, error)
 	Compact(ctx context.Context, t int64, rev int64) (curTime int64, curRev int64, err error)
 	GrantLease(ctx context.Context, ttl int64) (leaseID int64, err error)
-	Watch(ctx context.Context, cancelFunc context.CancelFunc, key string, startRV int64, withPrefix bool, withProgressNotify bool, errCh chan<- error) <-chan *Event
+	Watch(ctx context.Context, key string, startRV int64, withPrefix bool, withProgressNotify bool, errCh chan<- error) <-chan *Event
 	GetLeaseManager() LeaseManager
 }
 

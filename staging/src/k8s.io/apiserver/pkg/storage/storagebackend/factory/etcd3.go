@@ -19,6 +19,7 @@ package factory
 import (
 	"context"
 	"fmt"
+	"k8s.io/apiserver/pkg/storage/value"
 	"net"
 	"net/url"
 	"path"
@@ -42,7 +43,6 @@ import (
 	"k8s.io/apiserver/pkg/storage/etcd3"
 	"k8s.io/apiserver/pkg/storage/etcd3/metrics"
 	"k8s.io/apiserver/pkg/storage/storagebackend"
-	"k8s.io/apiserver/pkg/storage/value"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/component-base/metrics/legacyregistry"
 	"k8s.io/component-base/traces"
@@ -283,41 +283,42 @@ func startCompactorOnce(c storagebackend.TransportConfig, interval time.Duration
 }
 
 func newETCD3Storage(c storagebackend.ConfigForResource, newFunc func() runtime.Object) (storage.Interface, DestroyFunc, error) {
-	stopCompactor, err := startCompactorOnce(c.Transport, c.CompactionInterval)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	client, err := newETCD3Client(c.Transport)
-	if err != nil {
-		stopCompactor()
-		return nil, nil, err
-	}
-
-	// decorate the KV instance so we can track etcd latency per request.
-	client.KV = etcd3.NewETCDLatencyTracker(client.KV)
-
-	stopDBSizeMonitor, err := startDBSizeMonitorPerEndpoint(client, c.DBMetricPollInterval)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	var once sync.Once
-	destroyFunc := func() {
-		// we know that storage destroy funcs are called multiple times (due to reuse in subresources).
-		// Hence, we only destroy once.
-		// TODO: fix duplicated storage destroy calls higher level
-		once.Do(func() {
-			stopCompactor()
-			stopDBSizeMonitor()
-			client.Close()
-		})
-	}
+	//stopCompactor, err := startCompactorOnce(c.Transport, c.CompactionInterval)
+	//if err != nil {
+	//	return nil, nil, err
+	//}
+	//
+	//client, err := newETCD3Client(c.Transport)
+	//if err != nil {
+	//	stopCompactor()
+	//	return nil, nil, err
+	//}
+	//
+	//// decorate the KV instance so we can track etcd latency per request.
+	//client.KV = etcd3.NewETCDLatencyTracker(client.KV)
+	//
+	//stopDBSizeMonitor, err := startDBSizeMonitorPerEndpoint(client, c.DBMetricPollInterval)
+	//if err != nil {
+	//	return nil, nil, err
+	//}
+	//
+	//var once sync.Once
+	//destroyFunc := func() {
+	//	// we know that storage destroy funcs are called multiple times (due to reuse in subresources).
+	//	// Hence, we only destroy once.
+	//	// TODO: fix duplicated storage destroy calls higher level
+	//	once.Do(func() {
+	//		stopCompactor()
+	//		stopDBSizeMonitor()
+	//		client.Close()
+	//	})
+	//}
 	transformer := c.Transformer
 	if transformer == nil {
 		transformer = value.IdentityTransformer
 	}
-	return etcd3.New(client, c.Codec, newFunc, c.Prefix, c.GroupResource, transformer, c.Paging, c.LeaseManagerConfig), destroyFunc, nil
+	//return etcd3.New(client, c.Codec, newFunc, c.Prefix, c.GroupResource, transformer, c.Paging, c.LeaseManagerConfig), destroyFunc, nil
+	return etcd3.New(nil, c.Codec, newFunc, c.Prefix, c.GroupResource, transformer, c.Paging, c.LeaseManagerConfig), func() {}, nil
 }
 
 // startDBSizeMonitorPerEndpoint starts a loop to monitor etcd database size and update the

@@ -35,6 +35,17 @@ func parseKV(kv *mvccpb.KeyValue) *storage.Event {
 	}
 }
 
+func kvToEvent(kv *storage.KV) *storage.Event {
+	return &storage.Event{
+		Key:       string(kv.Key),
+		Value:     kv.Value,
+		PrevValue: nil,
+		RV:        kv.RV,
+		IsDeleted: false,
+		IsCreated: true,
+	}
+}
+
 func parseEvent(e *clientv3.Event) (*storage.Event, error) {
 	if !e.IsCreate() && e.PrevKv == nil {
 		// If the previous value is nil, error. One example of how this is possible is if the previous value has been compacted already.

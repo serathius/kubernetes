@@ -30,7 +30,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/apiserver/pkg/storage"
-	"k8s.io/apiserver/pkg/storage/etcd3/metrics"
 	"k8s.io/apiserver/pkg/storage/value"
 	utilflowcontrol "k8s.io/apiserver/pkg/util/flowcontrol"
 
@@ -69,7 +68,7 @@ func TestOnlySetFatalOnDecodeError(b bool) {
 }
 
 type watcher struct {
-	client      *clientv3.Client
+	client      storage.MvccKVClient
 	codec       runtime.Codec
 	newFunc     func() runtime.Object
 	objectType  string
@@ -92,7 +91,7 @@ type watchChan struct {
 	errChan           chan error
 }
 
-func newWatcher(client *clientv3.Client, codec runtime.Codec, newFunc func() runtime.Object, versioner storage.Versioner, transformer value.Transformer) *watcher {
+func newWatcher(client storage.MvccKVClient, codec runtime.Codec, newFunc func() runtime.Object, versioner storage.Versioner, transformer value.Transformer) *watcher {
 	res := &watcher{
 		client:      client,
 		codec:       codec,
@@ -206,17 +205,31 @@ func (wc *watchChan) ResultChan() <-chan watch.Event {
 // The revision to watch will be set to the revision in response.
 // All events sent will have isCreated=true
 func (wc *watchChan) sync() error {
-	opts := []clientv3.OpOption{}
+	var kvs []*storage.KV
+	var headerRev int64
+	var err error
 	if wc.recursive {
-		opts = append(opts, clientv3.WithPrefix())
+		kvs, _, _, headerRev, err = wc.watcher.client.List(wc.ctx, wc.key, nil)
+		if err != nil {
+			return err
+		}
+
+	} else {
+		var key, value []byte
+		var modRev int64
+		key, value, modRev, headerRev, err = wc.watcher.client.Get(wc.ctx, wc.key)
+		if err != nil {
+			return err
+		}
+		kvs = append(kvs, &storage.KV{
+			Key:   key,
+			Value: value,
+			RV:    modRev,
+		})
 	}
-	getResp, err := wc.watcher.client.Get(wc.ctx, wc.key, opts...)
-	if err != nil {
-		return err
-	}
-	wc.initialRev = getResp.Header.Revision
-	for _, kv := range getResp.Kvs {
-		wc.sendEvent(parseKV(kv))
+	wc.initialRev = headerRev
+	for _, kv := range kvs {
+		wc.sendEvent(kvToEvent(kv))
 	}
 	return nil
 }
@@ -248,30 +261,9 @@ func (wc *watchChan) startWatching(watchClosedCh chan struct{}) {
 	if wc.progressNotify {
 		opts = append(opts, clientv3.WithProgressNotify())
 	}
-	wch := wc.watcher.client.Watch(wc.ctx, wc.key, opts...)
-	for wres := range wch {
-		if wres.Err() != nil {
-			err := wres.Err()
-			// If there is an error on server (e.g. compaction), the channel will return it before closed.
-			logWatchChannelErr(err)
-			wc.sendError(err)
-			return
-		}
-		if wres.IsProgressNotify() {
-			wc.sendEvent(progressNotifyEvent(wres.Header.GetRevision()))
-			metrics.RecordEtcdBookmark(wc.watcher.objectType)
-			continue
-		}
-
-		for _, e := range wres.Events {
-			parsedEvent, err := parseEvent(e)
-			if err != nil {
-				logWatchChannelErr(err)
-				wc.sendError(err)
-				return
-			}
-			wc.sendEvent(parsedEvent)
-		}
+	wch := wc.watcher.client.Watch(wc.ctx, wc.key, wc.initialRev+1, wc.recursive, wc.progressNotify, wc.errChan)
+	for event := range wch {
+		wc.sendEvent(event)
 	}
 	// When we come to this point, it's only possible that client side ends the watch.
 	// e.g. cancel the context, close the client.
