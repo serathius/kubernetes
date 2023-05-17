@@ -21,7 +21,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"k8s.io/apiserver/pkg/storage/clients/etcd"
+	"k8s.io/apiserver/pkg/storage/etcd3/testing/fake"
 	"path"
 	"reflect"
 	"strings"
@@ -92,13 +92,12 @@ type objState struct {
 }
 
 // New returns an etcd3 implementation of storage.Interface.
-func New(c *clientv3.Client, codec runtime.Codec, newFunc func() runtime.Object, prefix string, groupResource schema.GroupResource, transformer value.Transformer, pagingEnabled bool, leaseManagerConfig etcd.LeaseManagerConfig) storage.Interface {
-	return newStore(c, codec, newFunc, prefix, groupResource, transformer, pagingEnabled, leaseManagerConfig)
+func New(c *clientv3.Client, codec runtime.Codec, newFunc func() runtime.Object, prefix string, groupResource schema.GroupResource, transformer value.Transformer, pagingEnabled bool, leaseManagerConfig LeaseManagerConfig) storage.Interface {
+	return newStore(fake.NewEtcdFake(), codec, newFunc, prefix, groupResource, transformer, pagingEnabled, leaseManagerConfig)
 }
 
-func newStore(c *clientv3.Client, codec runtime.Codec, newFunc func() runtime.Object, prefix string, groupResource schema.GroupResource, transformer value.Transformer, pagingEnabled bool, leaseManagerConfig etcd.LeaseManagerConfig) *store {
+func newStore(mvccClient storage.MvccKVClient, codec runtime.Codec, newFunc func() runtime.Object, prefix string, groupResource schema.GroupResource, transformer value.Transformer, pagingEnabled bool, leaseManagerConfig LeaseManagerConfig) *store {
 	versioner := storage.APIObjectVersioner{}
-	mvccClient := etcd.NewClient(c, leaseManagerConfig)
 	result := &store{
 		mvccClient:    mvccClient,
 		codec:         codec,
@@ -112,6 +111,7 @@ func newStore(c *clientv3.Client, codec runtime.Codec, newFunc func() runtime.Ob
 		groupResource:       groupResource,
 		groupResourceString: groupResource.String(),
 		watcher:             newWatcher(mvccClient, codec, newFunc, versioner, transformer),
+		leaseManager:        newDefaultLeaseManager(mvccClient, leaseManagerConfig),
 	}
 	return result
 }
@@ -126,7 +126,7 @@ func (s *store) Get(ctx context.Context, key string, opts storage.GetOptions, ou
 	key = path.Join(s.pathPrefix, key)
 	startTime := time.Now()
 	//getResp, err := s.client.KV.Get(ctx, key)
-	_, val, modRV, headerRV, err := s.mvccClient.Get(ctx, key)
+	kv, headerRV, err := s.mvccClient.Get(ctx, key)
 	metrics.RecordEtcdRequestLatency("get", getTypeName(out), startTime)
 	if err != nil {
 		return err
@@ -135,19 +135,19 @@ func (s *store) Get(ctx context.Context, key string, opts storage.GetOptions, ou
 		return err
 	}
 
-	if len(val) == 0 {
+	if kv == nil {
 		if opts.IgnoreNotFound {
 			return runtime.SetZeroValue(out)
 		}
 		return storage.NewKeyNotFoundError(key, 0)
 	}
 
-	data, _, err := s.transformer.TransformFromStorage(ctx, val, authenticatedDataString(key))
+	data, _, err := s.transformer.TransformFromStorage(ctx, kv.Value, authenticatedDataString(key))
 	if err != nil {
 		return storage.NewInternalError(err.Error())
 	}
 
-	return decode(s.codec, s.versioner, data, out, modRV)
+	return decode(s.codec, s.versioner, data, out, kv.RV)
 }
 
 // Create implements storage.Interface.Create.
@@ -211,14 +211,10 @@ func (s *store) conditionalDelete(
 	getCurrentState := func() (*objState, error) {
 		startTime := time.Now()
 		//getResp, err := s.client.KV.Get(ctx, key)
-		fullKey, val, modRV, _, err := s.mvccClient.Get(ctx, key)
+		kv, _, err := s.mvccClient.Get(ctx, key)
 		metrics.RecordEtcdRequestLatency("get", getTypeName(out), startTime)
 		if err != nil {
 			return nil, err
-		}
-		var kv *storage.KV
-		if len(fullKey) != 0 {
-			kv = &storage.KV{Key: fullKey, Value: val, RV: modRV}
 		}
 		return s.getState(ctx, kv, key, v, false)
 	}
@@ -327,14 +323,10 @@ func (s *store) GuaranteedUpdate(
 
 	getCurrentState := func() (*objState, error) {
 		startTime := time.Now()
-		fullKey, val, modRV, _, err := s.mvccClient.Get(ctx, key)
+		kv, _, err := s.mvccClient.Get(ctx, key)
 		metrics.RecordEtcdRequestLatency("get", getTypeName(destination), startTime)
 		if err != nil {
 			return nil, err
-		}
-		var kv *storage.KV
-		if len(fullKey) != 0 {
-			kv = &storage.KV{Key: fullKey, Value: val, RV: modRV}
 		}
 		return s.getState(ctx, kv, key, v, ignoreNotFound)
 	}

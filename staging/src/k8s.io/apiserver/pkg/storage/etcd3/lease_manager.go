@@ -14,10 +14,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package etcd
+package etcd3
 
 import (
 	"context"
+	"k8s.io/apiserver/pkg/storage"
 	"sync"
 	"time"
 
@@ -52,7 +53,7 @@ func NewDefaultLeaseManagerConfig() LeaseManagerConfig {
 // are expensive. In the implementation, we only store one previous lease,
 // since all the events have the same ttl.
 type leaseManager struct {
-	client                  *clientv3.Client // etcd client used to grant leases
+	client                  storage.MvccKVClient // etcd client used to grant leases
 	leaseMu                 sync.Mutex
 	prevLeaseID             clientv3.LeaseID
 	prevLeaseExpirationTime time.Time
@@ -66,7 +67,7 @@ type leaseManager struct {
 }
 
 // newDefaultLeaseManager creates a new lease manager using default setting.
-func newDefaultLeaseManager(client *clientv3.Client, config LeaseManagerConfig) *leaseManager {
+func newDefaultLeaseManager(client storage.MvccKVClient, config LeaseManagerConfig) *leaseManager {
 	if config.MaxObjectCount <= 0 {
 		config.MaxObjectCount = defaultLeaseMaxObjectCount
 	}
@@ -76,7 +77,7 @@ func newDefaultLeaseManager(client *clientv3.Client, config LeaseManagerConfig) 
 // newLeaseManager creates a new lease manager with the number of buffered
 // leases, lease reuse duration in seconds and percentage. The percentage
 // value x means x*100%.
-func newLeaseManager(client *clientv3.Client, leaseReuseDurationSeconds int64, leaseReuseDurationPercent float64, maxObjectCount int64) *leaseManager {
+func newLeaseManager(client storage.MvccKVClient, leaseReuseDurationSeconds int64, leaseReuseDurationPercent float64, maxObjectCount int64) *leaseManager {
 	return &leaseManager{
 		client:                      client,
 		leaseReuseDurationSeconds:   leaseReuseDurationSeconds,
@@ -106,17 +107,17 @@ func (l *leaseManager) GetLease(ctx context.Context, ttl int64) (clientv3.LeaseI
 
 	// request a lease with a little extra ttl from etcd
 	ttl += reuseDurationSeconds
-	lcr, err := l.client.Lease.Grant(ctx, ttl)
+	lcr, err := l.client.GrantLease(ctx, ttl)
 	if err != nil {
 		return clientv3.LeaseID(0), err
 	}
 	// cache the new lease id
-	l.prevLeaseID = lcr.ID
+	l.prevLeaseID = clientv3.LeaseID(lcr)
 	l.prevLeaseExpirationTime = now.Add(time.Duration(ttl) * time.Second)
 	// refresh count
 	metrics.UpdateLeaseObjectCount(l.leaseAttachedObjectCount)
 	l.leaseAttachedObjectCount = 1
-	return lcr.ID, nil
+	return clientv3.LeaseID(lcr), nil
 }
 
 // GetReuseDurationSecondsLocked returns the reusable duration in seconds

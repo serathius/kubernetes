@@ -23,16 +23,20 @@ type mvccFake struct {
 	etcdState
 }
 
-func (f *mvccFake) Get(ctx context.Context, key string) (fullKey []byte, value []byte, modRevision int64, headerRev int64, err error) {
+func (f *mvccFake) Get(ctx context.Context, key string) (kv *storage.KV, headerRev int64, err error) {
 	f.mux.RLock()
 	defer f.mux.RUnlock()
 	var resp EtcdResponse
 	_, resp = f.etcdState.step(getRequest(key))
 	if len(resp.Txn.Results[0].KVs) == 0 {
-		return nil, nil, 0, resp.Revision, nil
+		return nil, resp.Revision, nil
 	}
-	kv := resp.Txn.Results[0].KVs[0]
-	return []byte(kv.Key), []byte(kv.Value.Value), kv.ModRevision, resp.Revision, nil
+	kvs := resp.Txn.Results[0].KVs
+	return &storage.KV{
+		Key:   []byte(kvs[0].Key),
+		Value: []byte(kvs[0].Value.Value),
+		RV:    kvs[0].ModRevision,
+	}, resp.Revision, nil
 }
 
 func (f *mvccFake) List(ctx context.Context, key string, opts []clientv3.OpOption) (kvs []*storage.KV, hasMore bool, count int64, headerRev int64, err error) {
@@ -66,6 +70,9 @@ func (f *mvccFake) OptimisticCreate(ctx context.Context, key string, data []byte
 	// TODO: Handle TTL
 	request := txnRequest([]EtcdCondition{{Key: key, ExpectedRevision: 0}}, []EtcdOperation{{Type: Put, Key: key, Value: ValueOrHash{Value: string(data)}}}, nil)
 	f.etcdState, resp = f.etcdState.step(request)
+	if resp.Txn.Failure {
+		return resp.Revision, storage.NewKeyExistsError(key, resp.Revision)
+	}
 	return resp.Revision, nil
 }
 
@@ -94,6 +101,7 @@ func (f *mvccFake) OptimisticDelete(ctx context.Context, key string, expectedRV 
 	var resp EtcdResponse
 	request := txnRequest([]EtcdCondition{{Key: key, ExpectedRevision: expectedRV}}, []EtcdOperation{{Type: Delete, Key: key}}, []EtcdOperation{{Type: Range, Key: key}})
 	f.etcdState, resp = f.etcdState.step(request)
+	succeeded = !resp.Txn.Failure
 	if !succeeded && len(resp.Txn.Results[0].KVs) == 1 {
 		result := resp.Txn.Results[0].KVs[0]
 		kv = &storage.KV{
@@ -102,12 +110,13 @@ func (f *mvccFake) OptimisticDelete(ctx context.Context, key string, expectedRV 
 			RV:    result.ModRevision,
 		}
 	}
-	return succeeded, nil, nil
+	return succeeded, kv, nil
 }
 
-func (f *mvccFake) Compact(ctx context.Context, t int64, rev int64) (curTime int64, curRev int64, err error) {
-	//TODO implement me
-	panic("implement me")
+func (f *mvccFake) Compact(ctx context.Context, rev int64) (curRev int64, err error) {
+	f.mux.RLock()
+	defer f.mux.RUnlock()
+	return f.Revision, nil
 }
 
 func (f *mvccFake) GrantLease(ctx context.Context, ttl int64) (leaseID int64, err error) {
@@ -125,11 +134,6 @@ func (f *mvccFake) Watch(ctx context.Context, key string, startRV int64, withPre
 		}
 	}()
 	return respCh
-}
-
-func (f *mvccFake) GetLeaseManager() storage.LeaseManager {
-	//TODO implement me
-	panic("implement me")
 }
 
 var _ storage.MvccKVClient = (*mvccFake)(nil)

@@ -19,8 +19,6 @@ package etcd
 import (
 	"context"
 	"fmt"
-	"k8s.io/apiserver/pkg/storage/etcd3/testing/fake"
-	"strconv"
 
 	clientv3 "go.etcd.io/etcd/client/v3"
 
@@ -32,28 +30,24 @@ const (
 )
 
 type Client struct {
-	etcdClient   *clientv3.Client
-	leaseManager *leaseManager
+	etcdClient *clientv3.Client
 }
 
-func NewClient(c *clientv3.Client, leaseManagerConfig LeaseManagerConfig) storage.MvccKVClient {
-	return fake.NewEtcdFake()
+func NewClient(c *clientv3.Client) storage.MvccKVClient {
+	return Client{c}
 }
 
-func (c Client) GetLeaseManager() storage.LeaseManager {
-	return c.leaseManager
-}
-
-func (c Client) Get(ctx context.Context, key string) (fullKey []byte, value []byte, modRevision int64, headerRev int64, err error) {
+func (c Client) Get(ctx context.Context, key string) (kv *storage.KV, headerRev int64, err error) {
 	resp, err := c.etcdClient.KV.Get(ctx, key)
 	// always return headerRV
 	headerRev = resp.Header.Revision
 	// only return value when we have a KV returned
 	if len(resp.Kvs) != 0 {
-		kv := resp.Kvs[0]
-		value = kv.Value
-		fullKey = kv.Key
-		modRevision = kv.ModRevision
+		kv = &storage.KV{
+			Key:   resp.Kvs[0].Key,
+			Value: resp.Kvs[0].Value,
+			RV:    resp.Kvs[0].ModRevision,
+		}
 		return
 	}
 	// else return zero values and the error if it exists
@@ -161,44 +155,43 @@ func (c Client) OptimisticDelete(ctx context.Context, key string, expectedRV int
 	return succeeded, nil, nil
 }
 
-func (c Client) Compact(ctx context.Context, t int64, rev int64) (curTime int64, curRev int64, err error) {
-	resp, err := c.etcdClient.KV.Txn(ctx).If(
-		clientv3.Compare(clientv3.Version(compactRevKey), "=", t),
-	).Then(
-		clientv3.OpPut(compactRevKey, strconv.FormatInt(rev, 10)), // Expect side effect: increment Version
-	).Else(
-		clientv3.OpGet(compactRevKey),
-	).Commit()
+func (c Client) Compact(ctx context.Context, rev int64) (headerRev int64, err error) {
+	//resp, err := c.etcdClient.KV.Txn(ctx).If(
+	//	clientv3.Compare(clientv3.Version(compactRevKey), "=", t),
+	//).Then(
+	//	clientv3.OpPut(compactRevKey, strconv.FormatInt(rev, 10)), // Expect side effect: increment Version
+	//).Else(
+	//	clientv3.OpGet(compactRevKey),
+	//).Commit()
+	//if err != nil {
+	//	return t, rev, err
+	//}
+	//
+	//curRev = resp.Header.Revision
+	//
+	//if !resp.Succeeded {
+	//	curTime := resp.Responses[0].GetResponseRange().Kvs[0].Version
+	//	return curTime, curRev, nil
+	//}
+	//curTime = t + 1
+	//
+	//if rev == 0 {
+	//	// We don't compact on bootstrap.
+	//	return curTime, curRev, nil
+	//}
+	//
+	resp, err := c.etcdClient.Compact(ctx, rev)
 	if err != nil {
-		return t, rev, err
+		return 0, err
 	}
-
-	curRev = resp.Header.Revision
-
-	if !resp.Succeeded {
-		curTime := resp.Responses[0].GetResponseRange().Kvs[0].Version
-		return curTime, curRev, nil
-	}
-	curTime = t + 1
-
-	if rev == 0 {
-		// We don't compact on bootstrap.
-		return curTime, curRev, nil
-	}
-
-	if _, err = c.etcdClient.Compact(ctx, rev); err != nil {
-		return curTime, curRev, err
-	}
-
-	return curTime, curRev, nil
+	return resp.Header.Revision, nil
 }
 
 func (c Client) GrantLease(ctx context.Context, ttl int64) (leaseID int64, err error) {
 	return
 }
 
-func (c Client) Watch(ctx context.Context, cancel context.CancelFunc, key string, startRV int64, withPrefix bool, withProgressNotify bool, errCh chan<- error) <-chan *storage.Event {
-	childCtx, childCancel := context.WithCancel(clientv3.WithRequireLeader(ctx))
+func (c Client) Watch(ctx context.Context, key string, startRV int64, withPrefix bool, withProgressNotify bool, errCh chan<- error) <-chan *storage.Event {
 	opts := []clientv3.OpOption{clientv3.WithRev(startRV + 1), clientv3.WithPrevKV()}
 	if withPrefix {
 		opts = append(opts, clientv3.WithPrefix())
@@ -207,19 +200,9 @@ func (c Client) Watch(ctx context.Context, cancel context.CancelFunc, key string
 		opts = append(opts, clientv3.WithProgressNotify())
 	}
 	retCh := make(chan *storage.Event, 1)
-	go func() {
-		select {
-		case <-childCtx.Done():
-			cancel()
-			return
-		case <-ctx.Done():
-			childCancel()
-			return
-		}
-	}()
-	wch := c.etcdClient.Watch(childCtx, key, opts...)
+	wch := c.etcdClient.Watch(ctx, key, opts...)
 	go func(ch clientv3.WatchChan) {
-		for wres := range ch {
+		for wres := range wch {
 			if err := wres.Err(); err != nil {
 				errCh <- err
 				return
@@ -274,11 +257,8 @@ func (c *Client) ttlOpts(ctx context.Context, ttl int64) ([]clientv3.OpOption, e
 	if ttl == 0 {
 		return nil, nil
 	}
-	id, err := c.leaseManager.GetLease(ctx, ttl)
-	if err != nil {
-		return nil, err
-	}
-	return []clientv3.OpOption{clientv3.WithLease(id)}, nil
+	// TODO: Fix
+	return []clientv3.OpOption{clientv3.WithLease(0)}, nil
 }
 
 func notFound(key string) clientv3.Cmp {

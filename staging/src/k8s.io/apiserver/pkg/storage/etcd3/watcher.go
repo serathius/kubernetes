@@ -215,17 +215,12 @@ func (wc *watchChan) sync() error {
 		}
 
 	} else {
-		var key, value []byte
-		var modRev int64
-		key, value, modRev, headerRev, err = wc.watcher.client.Get(wc.ctx, wc.key)
+		var kv *storage.KV
+		kv, headerRev, err = wc.watcher.client.Get(wc.ctx, wc.key)
 		if err != nil {
 			return err
 		}
-		kvs = append(kvs, &storage.KV{
-			Key:   key,
-			Value: value,
-			RV:    modRev,
-		})
+		kvs = append(kvs, kv)
 	}
 	wc.initialRev = headerRev
 	for _, kv := range kvs {

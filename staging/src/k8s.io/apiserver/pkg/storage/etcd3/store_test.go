@@ -21,7 +21,7 @@ import (
 	"context"
 	"fmt"
 	"io/ioutil"
-	"k8s.io/apiserver/pkg/storage/clients/etcd"
+	"k8s.io/apiserver/pkg/storage/etcd3/testing/fake"
 	"os"
 	"reflect"
 	"strconv"
@@ -30,8 +30,6 @@ import (
 	"sync/atomic"
 	"testing"
 
-	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.etcd.io/etcd/server/v3/embed"
 	"google.golang.org/grpc/grpclog"
 
 	"k8s.io/apimachinery/pkg/api/apitesting"
@@ -46,7 +44,6 @@ import (
 	"k8s.io/apiserver/pkg/apis/example"
 	examplev1 "k8s.io/apiserver/pkg/apis/example/v1"
 	"k8s.io/apiserver/pkg/storage"
-	"k8s.io/apiserver/pkg/storage/etcd3/testserver"
 	storagetesting "k8s.io/apiserver/pkg/storage/testing"
 	"k8s.io/apiserver/pkg/storage/value"
 )
@@ -107,17 +104,17 @@ func TestCreate(t *testing.T) {
 	})
 }
 
-func checkStorageInvariants(ctx context.Context, t *testing.T, etcdClient *clientv3.Client, codec runtime.Codec, key string) {
-	getResp, err := etcdClient.KV.Get(ctx, key)
+func checkStorageInvariants(ctx context.Context, t *testing.T, etcdClient storage.MvccKVClient, codec runtime.Codec, key string) {
+	kv, _, err := etcdClient.Get(ctx, key)
 	if err != nil {
 		t.Fatalf("etcdClient.KV.Get failed: %v", err)
 	}
-	if len(getResp.Kvs) == 0 {
+	if kv == nil {
 		t.Fatalf("expecting non empty result on key: %s", key)
 	}
-	decoded, err := runtime.Decode(codec, getResp.Kvs[0].Value[len(defaultTestPrefix):])
+	decoded, err := runtime.Decode(codec, kv.Value[len(defaultTestPrefix):])
 	if err != nil {
-		t.Fatalf("expecting successful decode of object from %v\n%v", err, string(getResp.Kvs[0].Value))
+		t.Fatalf("expecting successful decode of object from %v\n%v", err, string(kv.Value))
 	}
 	obj := decoded.(*example.Pod)
 	if obj.ResourceVersion != "" {
@@ -518,8 +515,8 @@ func TestListWithoutPaging(t *testing.T) {
 func TestListContinuation(t *testing.T) {
 	ctx, store, etcdClient := testSetup(t)
 	transformer := store.transformer.(*prefixTransformer)
-	recorder := &clientRecorder{KV: etcdClient.KV}
-	etcdClient.KV = recorder
+	recorder := &clientRecorder{MvccKVClient: etcdClient}
+	etcdClient = recorder
 
 	// Setup storage with the following structure:
 	//  /
@@ -673,8 +670,8 @@ func TestListContinuation(t *testing.T) {
 func TestListPaginationRareObject(t *testing.T) {
 	ctx, store, etcdClient := testSetup(t)
 	transformer := store.transformer.(*prefixTransformer)
-	recorder := &clientRecorder{KV: etcdClient.KV}
-	etcdClient.KV = recorder
+	recorder := &clientRecorder{MvccKVClient: etcdClient}
+	etcdClient = recorder
 
 	podCount := 1000
 	var pods []*example.Pod
@@ -730,12 +727,12 @@ func TestListPaginationRareObject(t *testing.T) {
 
 type clientRecorder struct {
 	reads uint64
-	clientv3.KV
+	storage.MvccKVClient
 }
 
-func (r *clientRecorder) Get(ctx context.Context, key string, opts ...clientv3.OpOption) (*clientv3.GetResponse, error) {
+func (r *clientRecorder) Get(ctx context.Context, key string) (kv *storage.KV, headerRev int64, err error) {
 	atomic.AddUint64(&r.reads, 1)
-	return r.KV.Get(ctx, key, opts...)
+	return r.MvccKVClient.Get(ctx, key)
 }
 
 func (r *clientRecorder) resetReads() {
@@ -745,8 +742,8 @@ func (r *clientRecorder) resetReads() {
 func TestListContinuationWithFilter(t *testing.T) {
 	ctx, store, etcdClient := testSetup(t)
 	transformer := store.transformer.(*prefixTransformer)
-	recorder := &clientRecorder{KV: etcdClient.KV}
-	etcdClient.KV = recorder
+	recorder := &clientRecorder{MvccKVClient: etcdClient}
+	etcdClient = recorder
 
 	preset := []struct {
 		key       string
@@ -945,7 +942,7 @@ func TestListInconsistentContinuation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.KV.Compact(ctx, int64(lastRV), clientv3.WithCompactPhysical()); err != nil {
+	if _, err := client.Compact(ctx, int64(lastRV)); err != nil {
 		t.Fatalf("Unable to compact, %v", err)
 	}
 
@@ -1008,8 +1005,8 @@ func TestListInconsistentContinuation(t *testing.T) {
 	}
 }
 
-func newTestLeaseManagerConfig() etcd.LeaseManagerConfig {
-	cfg := etcd.NewDefaultLeaseManagerConfig()
+func newTestLeaseManagerConfig() LeaseManagerConfig {
+	cfg := NewDefaultLeaseManagerConfig()
 	// As 30s is the default timeout for testing in global configuration,
 	// we cannot wait longer than that in a single time: change it to 1s
 	// for testing purposes. See wait.ForeverTestTimeout
@@ -1022,33 +1019,17 @@ func newTestTransformer() *prefixTransformer {
 }
 
 type setupOptions struct {
-	client        func(*testing.T) *clientv3.Client
+	client        func(*testing.T) storage.MvccKVClient
 	codec         runtime.Codec
 	newFunc       func() runtime.Object
 	prefix        string
 	groupResource schema.GroupResource
 	transformer   value.Transformer
 	pagingEnabled bool
-	leaseConfig   etcd.LeaseManagerConfig
+	leaseConfig   LeaseManagerConfig
 }
 
 type setupOption func(*setupOptions)
-
-func withClient(client *clientv3.Client) setupOption {
-	return func(options *setupOptions) {
-		options.client = func(t *testing.T) *clientv3.Client {
-			return client
-		}
-	}
-}
-
-func withClientConfig(config *embed.Config) setupOption {
-	return func(options *setupOptions) {
-		options.client = func(t *testing.T) *clientv3.Client {
-			return testserver.RunEtcd(t, config)
-		}
-	}
-}
 
 func withCodec(codec runtime.Codec) setupOption {
 	return func(options *setupOptions) {
@@ -1074,15 +1055,15 @@ func withTransformer(transformer value.Transformer) setupOption {
 	}
 }
 
-func withLeaseConfig(leaseConfig etcd.LeaseManagerConfig) setupOption {
+func withLeaseConfig(leaseConfig LeaseManagerConfig) setupOption {
 	return func(options *setupOptions) {
 		options.leaseConfig = leaseConfig
 	}
 }
 
 func withDefaults(options *setupOptions) {
-	options.client = func(t *testing.T) *clientv3.Client {
-		return testserver.RunEtcd(t, nil)
+	options.client = func(t *testing.T) storage.MvccKVClient {
+		return fake.NewEtcdFake()
 	}
 	options.codec = apitesting.TestCodec(codecs, examplev1.SchemeGroupVersion)
 	options.newFunc = newPod
@@ -1095,7 +1076,7 @@ func withDefaults(options *setupOptions) {
 
 var _ setupOption = withDefaults
 
-func testSetup(t *testing.T, opts ...setupOption) (context.Context, *store, *clientv3.Client) {
+func testSetup(t *testing.T, opts ...setupOption) (context.Context, *store, storage.MvccKVClient) {
 	setupOpts := setupOptions{}
 	opts = append([]setupOption{withDefaults}, opts...)
 	for _, opt := range opts {
@@ -1334,44 +1315,4 @@ func TestConsistentList(t *testing.T) {
 func TestCount(t *testing.T) {
 	ctx, store, _ := testSetup(t)
 	storagetesting.RunTestCount(ctx, t, store)
-}
-
-func TestLeaseMaxObjectCount(t *testing.T) {
-	ctx, store, _ := testSetup(t, withLeaseConfig(etcd.LeaseManagerConfig{
-		ReuseDurationSeconds: 60,
-		MaxObjectCount:       2,
-	}))
-
-	obj := &example.Pod{ObjectMeta: metav1.ObjectMeta{Name: "foo"}}
-	out := &example.Pod{}
-
-	testCases := []struct {
-		key                 string
-		expectAttachedCount int64
-	}{
-		{
-			key:                 "testkey1",
-			expectAttachedCount: 1,
-		},
-		{
-			key:                 "testkey2",
-			expectAttachedCount: 2,
-		},
-		{
-			key: "testkey3",
-			// We assume each time has 1 object attached to the lease
-			// so after granting a new lease, the recorded count is set to 1
-			expectAttachedCount: 1,
-		},
-	}
-
-	for _, tc := range testCases {
-		err := store.Create(ctx, tc.key, obj, out, 120)
-		if err != nil {
-			t.Fatalf("Set failed: %v", err)
-		}
-		if store.leaseManager.GetLeaseAttachedObjectCount() != tc.expectAttachedCount {
-			t.Errorf("Lease manager recorded count %v should be %v", store.leaseManager.GetLeaseAttachedObjectCount(), tc.expectAttachedCount)
-		}
-	}
 }

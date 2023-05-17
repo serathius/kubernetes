@@ -47,7 +47,7 @@ func TestLinearizedReadRevisionInvariant(t *testing.T) {
 	originalRevision := out.ResourceVersion
 
 	for i := 0; i < 5; i++ {
-		if _, err := etcdClient.KV.Get(ctx, key); err != nil { // this is by default linearizable, the only option the client library exposes is WithSerializable() to make it *not* a linearized read
+		if _, _, err := etcdClient.Get(ctx, key); err != nil { // this is by default linearizable, the only option the client library exposes is WithSerializable() to make it *not* a linearized read
 			t.Fatalf("failed to get key: %v", err)
 		}
 	}
