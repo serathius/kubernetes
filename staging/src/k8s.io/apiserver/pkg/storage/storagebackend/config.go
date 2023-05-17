@@ -23,7 +23,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apiserver/pkg/server/egressselector"
-	"k8s.io/apiserver/pkg/storage/etcd3"
+	"k8s.io/apiserver/pkg/storage/clients/etcd"
 	"k8s.io/apiserver/pkg/storage/value"
 	flowcontrolrequest "k8s.io/apiserver/pkg/util/flowcontrol/request"
 )
@@ -85,7 +85,7 @@ type Config struct {
 	// HealthcheckTimeout specifies the timeout used when checking health
 	HealthcheckTimeout time.Duration
 
-	LeaseManagerConfig etcd3.LeaseManagerConfig
+	LeaseManagerConfig etcd.LeaseManagerConfig
 
 	// StorageObjectCountTracker is used to keep track of the total
 	// number of objects in the storage per resource.
@@ -117,6 +117,6 @@ func NewDefaultConfig(prefix string, codec runtime.Codec) *Config {
 		CompactionInterval:   DefaultCompactInterval,
 		DBMetricPollInterval: DefaultDBMetricPollInterval,
 		HealthcheckTimeout:   DefaultHealthcheckTimeout,
-		LeaseManagerConfig:   etcd3.NewDefaultLeaseManagerConfig(),
+		LeaseManagerConfig:   etcd.NewDefaultLeaseManagerConfig(),
 	}
 }

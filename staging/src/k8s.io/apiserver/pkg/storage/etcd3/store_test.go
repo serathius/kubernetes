@@ -128,11 +128,6 @@ func checkStorageInvariants(ctx context.Context, t *testing.T, etcdClient *clien
 	}
 }
 
-func TestCreateWithTTL(t *testing.T) {
-	ctx, store, _ := testSetup(t)
-	storagetesting.RunTestCreateWithTTL(ctx, t, store)
-}
-
 func TestCreateWithKeyExist(t *testing.T) {
 	ctx, store, _ := testSetup(t)
 	storagetesting.RunTestCreateWithKeyExist(ctx, t, store)
@@ -359,11 +354,6 @@ func TestGuaranteedUpdate(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestGuaranteedUpdateWithTTL(t *testing.T) {
-	ctx, store, _ := testSetup(t)
-	storagetesting.RunTestGuaranteedUpdateWithTTL(ctx, t, store)
 }
 
 func TestGuaranteedUpdateChecksStoredData(t *testing.T) {
