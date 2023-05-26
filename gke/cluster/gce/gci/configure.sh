@@ -904,6 +904,16 @@ function install-auth-provider-gcp {
   record-preload-info "auth-provider-gcp" "${auth_provider_gcp_hash}"
 }
 
+function download-gvisor-installer {
+  local -r installer_image_hash=$1
+  local -r installer_image="${KUBE_DOCKER_REGISTRY}/gke-gvisor-installer@sha256:${installer_image_hash}"
+  if access_token=$(get-credentials); then
+    "${KUBE_BIN}/crictl" pull --creds "oauth2accesstoken:${access_token}" "${installer_image}"
+  else
+    "${KUBE_BIN}/crictl" pull "${installer_image}"
+  fi
+}
+
 function configure-cgroup-mode {
   if which cgroup_helper > /dev/null 2>&1; then
     if [[ "${CGROUP_MODE:-}" == "v1" ]] && cgroup_helper show | grep -q 'unified'; then
@@ -1394,6 +1404,10 @@ function preload {
   cd "${KUBE_HOME}"
   if [[ "${ENABLE_AUTH_PROVIDER_GCP:-""}" == "true" ]]; then
     log-wrap 'InstallExternalCredentialProvider' install-auth-provider-gcp
+  fi
+
+  if [[ "${KUBERNETES_MASTER:-}" != "true" && -n "${GVISOR_INSTALLER_IMAGE_HASH:-}" ]]; then
+    log-wrap 'DownloadGvisorInstaller' download-gvisor-installer "${GVISOR_INSTALLER_IMAGE_HASH}"
   fi
 }
 

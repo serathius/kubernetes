@@ -524,11 +524,30 @@ EOF
   fi
   chmod 644 "${config_path}"
 
+  local -r gvisor_platform="${GVISOR_PLATFORM:-"ptrace"}"
+
+  # If we can install via the installer container, do so.
+  # The installation container:
+  # 1. Installs the requred binaries (runsc and containerd-shim) to the expected
+  # directories (under /home/containerd/...).
+  # 2. Writes the required gVisor config.toml file to /run/containerd/runsc/config.toml.
+  #
+  # We do this here so that we can dynamically load versions of gVisor by downloading the
+  # passed container image. The installation mounts root and runs as a priviledged container
+  # so that it can write binaries and files to the host's file system and inspect the
+  # system configuration so that it can use flags in specific contexts (e.g. Is this an
+  # x86 machine? If so, set the 'core-tags' flag to mitigate side-channel attacks.)
+  # Note that 'ctr' will not pull the image itself as that is done in config.sh.
+  #
+  # See: http://google3/cloud/kubernetes/distro/containers/gvisor
+  if [[ -n "${GVISOR_INSTALLER_IMAGE_HASH:-}" ]]; then
+    local -r installer_image_hash="${GVISOR_INSTALLER_IMAGE_HASH:-}"
+    local -r installer_image="${KUBE_DOCKER_REGISTRY}/gke-gvisor-installer@sha256:${installer_image_hash}"
+    ctr -n k8s.io run --rm --mount=type=bind,src=/,dst=/host,options=rbind:rw --privileged "${installer_image}" gvisor-installer
   # Generate gvisor containerd shim config
-  if [[ -n "${GVISOR_CONTAINERD_SHIM_PATH:-}" ]]; then
+  elif [[ -n "${GVISOR_CONTAINERD_SHIM_PATH:-}" ]]; then
     cp "${GVISOR_CONTAINERD_SHIM_PATH}" "${containerd_opt_path}/bin"
     # gvisor_platform is the platform to use for gvisor.
-    local -r gvisor_platform="${GVISOR_PLATFORM:-"ptrace"}"
     local -r gvisor_net_raw="${GVISOR_NET_RAW:-"true"}"
     local -r gvisor_seccomp="${GVISOR_SECCOMP:-"true"}"
     local -r gvisor_core_tags="${GVISOR_CORE_TAGS:-"false"}"
@@ -548,11 +567,12 @@ EOF
     if [[ -n "${GVISOR_METRIC_SERVER:-}" ]]; then
       echo "  metric-server = \"${GVISOR_METRIC_SERVER}\"" >> "${shim_config_path}"
     fi
-    if [[ "${gvisor_platform}" == "xemu" ]]; then
-      # COS versions cos-97-16919-29-21 and after contain XEMU in the base
-      # image.
-      modprobe xemu
-    fi
+  fi
+
+  if [[ "${gvisor_platform}" == "xemu" ]]; then
+    # COS versions cos-97-16919-29-21 and after contain XEMU in the base
+    # image.
+    modprobe xemu
   fi
 
   # Mount /home/containerd as readonly to avoid security issues.
