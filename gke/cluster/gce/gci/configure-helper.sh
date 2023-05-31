@@ -2704,19 +2704,6 @@ function setup-nodelocaldns-manifest {
   sed -i -e "s/__PILLAR__LOCAL__DNS__/${LOCAL_DNS_IP}/g" "${localdns_file}"
 }
 
-# Sets up the manifests of netd for k8s addons.
-function setup-netd-manifest {
-  local -r netd_file="${dst_dir}/netd/netd.yaml"
-  mkdir -p "${dst_dir}/netd"
-  touch "${netd_file}"
-  if [ -n "${CUSTOM_NETD_YAML:-}" ]; then
-    # Replace with custom GCP netd deployment.
-    cat > "${netd_file}" <<EOF
-$CUSTOM_NETD_YAML
-EOF
-  fi
-}
-
 # A helper function to set up a custom yaml for a k8s addon.
 #
 # $1: addon category under /etc/kubernetes
@@ -2810,9 +2797,6 @@ EOF
     if [[ "${ENABLE_NODELOCAL_DNS:-}" == "true" ]]; then
       setup-nodelocaldns-manifest
     fi
-  fi
-  if [[ "${ENABLE_NETD:-}" == "true" ]]; then
-    setup-netd-manifest
   fi
   if [[ "${ENABLE_NODE_LOGGING:-}" == "true" ]] && \
      [[ "${LOGGING_DESTINATION:-}" == "gcp" ]]; then
