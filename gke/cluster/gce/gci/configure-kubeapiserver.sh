@@ -393,6 +393,10 @@ EOF
     params+=" --egress-selector-config-file=/etc/srv/kubernetes/egress_selector_configuration.yaml"
   fi
 
+  if [[ -n "${KUBE_APISERVER_VERSION:-}" ]]; then
+    params+=" --version=${KUBE_APISERVER_VERSION}"
+  fi
+
   local container_env=""
 
   # b/255296578
