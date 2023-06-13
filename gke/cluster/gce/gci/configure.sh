@@ -974,105 +974,11 @@ function load-docker-images {
   fi
 }
 
-# If we are on ubuntu we can try to install containerd
-function install-containerd-ubuntu {
-  # bailout if we are not on ubuntu
-  if ! is-ubuntu; then
-    echo "Unable to automatically install containerd in non-ubuntu image. Bailing out..."
-    exit 2
-  fi
-
-  # Install dependencies, some of these are already installed in the image but
-  # that's fine since they won't re-install and we can reuse the code below
-  # for another image someday.
-  apt-get update
-  apt-get install -y --no-install-recommends \
-    apt-transport-https \
-    ca-certificates \
-    socat \
-    curl \
-    gnupg2 \
-    software-properties-common \
-    lsb-release
-
-  release=$(lsb_release -cs)
-
-  # Add the Docker apt-repository (as we install containerd from there)
-  # shellcheck disable=SC2086
-  curl ${CURL_FLAGS} \
-    --location \
-    "https://download.docker.com/${HOST_PLATFORM}/$(. /etc/os-release; echo "$ID")/gpg" \
-  | apt-key add -
-  add-apt-repository \
-    "deb [arch=${HOST_ARCH}] https://download.docker.com/${HOST_PLATFORM}/$(. /etc/os-release; echo "$ID") \
-    $release stable"
-
-  # Install containerd from Docker repo
-  apt-get update && \
-    apt-get install -y --no-install-recommends containerd
-  rm -rf /var/lib/apt/lists/*
-
-  # Override to latest versions of containerd and runc
-  systemctl stop containerd
-  if [[ -n "${UBUNTU_INSTALL_CONTAINERD_VERSION:-}" ]]; then
-    # TODO(https://github.com/containerd/containerd/issues/2901): Remove this check once containerd has arm64 release.
-    if [[ $(dpkg --print-architecture) != "amd64" ]]; then
-      echo "Unable to automatically install containerd in non-amd64 image. Bailing out..."
-      exit 2
-    fi
-    # containerd versions have slightly different url(s), so try both
-    # shellcheck disable=SC2086
-    ( curl ${CURL_FLAGS} \
-        --location \
-        "https://github.com/containerd/containerd/releases/download/${UBUNTU_INSTALL_CONTAINERD_VERSION}/containerd-${UBUNTU_INSTALL_CONTAINERD_VERSION:1}-${HOST_PLATFORM}-${HOST_ARCH}.tar.gz" \
-      || curl ${CURL_FLAGS} \
-        --location \
-        "https://github.com/containerd/containerd/releases/download/${UBUNTU_INSTALL_CONTAINERD_VERSION}/containerd-${UBUNTU_INSTALL_CONTAINERD_VERSION:1}.${HOST_PLATFORM}-${HOST_ARCH}.tar.gz" ) \
-    | tar --overwrite -xzv -C /usr/
-  fi
-  if [[ -n "${UBUNTU_INSTALL_RUNC_VERSION:-}" ]]; then
-    # TODO: Remove this check once runc has arm64 release.
-    if [[ $(dpkg --print-architecture) != "amd64" ]]; then
-      echo "Unable to automatically install runc in non-amd64. Bailing out..."
-      exit 2
-    fi
-    # shellcheck disable=SC2086
-    curl ${CURL_FLAGS} \
-      --location \
-      "https://github.com/opencontainers/runc/releases/download/${UBUNTU_INSTALL_RUNC_VERSION}/runc.${HOST_ARCH}" --output /usr/sbin/runc \
-    && chmod 755 /usr/sbin/runc
-  fi
-  sudo systemctl start containerd
-}
-
 function ensure-container-runtime {
   if [[ "${CONTAINER_RUNTIME}" == "docker" ]]; then
     echo "Dockershim is not supported. Container runtime must be set to containerd"
     exit 2
   fi
-
-  # Install containerd/runc if requested
-  if [[ -n "${UBUNTU_INSTALL_CONTAINERD_VERSION:-}" || -n "${UBUNTU_INSTALL_RUNC_VERSION:-}" ]]; then
-    install-containerd-ubuntu
-  fi
-  # Verify presence and print versions of ctr, containerd, runc
-  if ! command -v ctr >/dev/null 2>&1; then
-    echo "ERROR ctr not found. Aborting."
-    exit 2
-  fi
-  ctr --version
-
-  if ! command -v containerd >/dev/null 2>&1; then
-    echo "ERROR containerd not found. Aborting."
-    exit 2
-  fi
-  containerd --version
-
-  if ! command -v runc >/dev/null 2>&1; then
-    echo "ERROR runc not found. Aborting."
-    exit 2
-  fi
-  runc --version
 }
 
 # Downloads kubernetes binaries and kube-system manifest tarball, unpacks them,
