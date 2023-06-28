@@ -44,7 +44,7 @@ type continueToken struct {
 
 // DecodeContinue transforms an encoded predicate from into a versioned struct.
 // TODO: return a typed error that instructs clients that they must relist
-func DecodeContinue(continueValue, keyPrefix string) (fromKey string, rv int64, err error) {
+func DecodeContinue(continueValue string) (continueKey string, rv int64, err error) {
 	data, err := base64.RawURLEncoding.DecodeString(continueValue)
 	if err != nil {
 		return "", 0, fmt.Errorf("%w: %v", ErrGenericInvalidKey, err)
@@ -73,7 +73,7 @@ func DecodeContinue(continueValue, keyPrefix string) (fromKey string, rv int64, 
 		if cleaned != key {
 			return "", 0, fmt.Errorf("%w: %v", ErrGenericInvalidKey, c.StartKey)
 		}
-		return keyPrefix + cleaned[1:], c.ResourceVersion, nil
+		return cleaned[1:], c.ResourceVersion, nil
 	default:
 		return "", 0, fmt.Errorf("%w %v", ErrUnrecognizedEncodedVersion, c.APIVersion)
 	}

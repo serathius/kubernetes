@@ -50,7 +50,7 @@ import (
 var scheme = runtime.NewScheme()
 var codecs = serializer.NewCodecFactory(scheme)
 
-const defaultTestPrefix = "test!"
+const defaultTestPrefix = "/test!/"
 
 func init() {
 	metav1.AddToGroupVersion(scheme, metav1.SchemeGroupVersion)

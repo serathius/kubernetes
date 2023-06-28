@@ -52,6 +52,7 @@ func NewDefaultLeaseManagerConfig() LeaseManagerConfig {
 // are expensive. In the implementation, we only store one previous lease,
 // since all the events have the same ttl.
 type leaseManager struct {
+	// TODO: Use clientv3.Kubernetes to avoid issues like https://github.com/kubernetes/kubernetes/issues/110210
 	client                  *clientv3.Client // etcd client used to grant leases
 	leaseMu                 sync.Mutex
 	prevLeaseID             clientv3.LeaseID

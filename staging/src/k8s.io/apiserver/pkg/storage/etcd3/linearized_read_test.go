@@ -37,8 +37,8 @@ func TestLinearizedReadRevisionInvariant(t *testing.T) {
 	// [1] https://etcd.io/docs/v3.5/learning/api_guarantees/#isolation-level-and-consistency-of-replicas
 	ctx, store, etcdClient := testSetup(t)
 
-	dir := "/testing"
-	key := dir + "/testkey"
+	dir := defaultTestPrefix
+	key := dir + "testkey"
 	out := &example.Pod{}
 	obj := &example.Pod{ObjectMeta: metav1.ObjectMeta{Name: "foo", SelfLink: "testlink"}}
 

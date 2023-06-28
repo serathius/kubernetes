@@ -63,7 +63,7 @@ func TestOnlySetFatalOnDecodeError(b bool) {
 }
 
 type watcher struct {
-	client        *clientv3.Client
+	client        clientv3.Kubernetes
 	codec         runtime.Codec
 	newFunc       func() runtime.Object
 	objectType    string
@@ -87,7 +87,7 @@ type watchChan struct {
 	errChan           chan error
 }
 
-func newWatcher(client *clientv3.Client, codec runtime.Codec, groupResource schema.GroupResource, newFunc func() runtime.Object, versioner storage.Versioner) *watcher {
+func newWatcher(client clientv3.Kubernetes, codec runtime.Codec, groupResource schema.GroupResource, newFunc func() runtime.Object, versioner storage.Versioner) *watcher {
 	res := &watcher{
 		client:        client,
 		codec:         codec,
@@ -110,11 +110,11 @@ func newWatcher(client *clientv3.Client, codec runtime.Codec, groupResource sche
 // If recursive is false, it watches on given key.
 // If recursive is true, it watches any children and directories under the key, excluding the root key itself.
 // pred must be non-nil. Only if pred matches the change, it will be returned.
-func (w *watcher) Watch(ctx context.Context, key string, rev int64, recursive, progressNotify bool, transformer value.Transformer, pred storage.SelectionPredicate) (watch.Interface, error) {
+func (w *watcher) Watch(ctx context.Context, key string, rev int64, recursive bool, transformer value.Transformer, pred storage.SelectionPredicate) (watch.Interface, error) {
 	if recursive && !strings.HasSuffix(key, "/") {
 		key += "/"
 	}
-	wc := w.createWatchChan(ctx, key, rev, recursive, progressNotify, transformer, pred)
+	wc := w.createWatchChan(ctx, key, rev, recursive, transformer, pred)
 	go wc.run()
 
 	// For etcd watch we don't have an easy way to answer whether the watch
@@ -127,14 +127,13 @@ func (w *watcher) Watch(ctx context.Context, key string, rev int64, recursive, p
 	return wc, nil
 }
 
-func (w *watcher) createWatchChan(ctx context.Context, key string, rev int64, recursive, progressNotify bool, transformer value.Transformer, pred storage.SelectionPredicate) *watchChan {
+func (w *watcher) createWatchChan(ctx context.Context, key string, rev int64, recursive bool, transformer value.Transformer, pred storage.SelectionPredicate) *watchChan {
 	wc := &watchChan{
 		watcher:           w,
 		transformer:       transformer,
 		key:               key,
 		initialRev:        rev,
 		recursive:         recursive,
-		progressNotify:    progressNotify,
 		internalPred:      pred,
 		incomingEventChan: make(chan *event, incomingBufSize),
 		resultChan:        make(chan watch.Event, outgoingBufSize),
@@ -223,16 +222,21 @@ func (wc *watchChan) RequestWatchProgress() error {
 // The revision to watch will be set to the revision in response.
 // All events sent will have isCreated=true
 func (wc *watchChan) sync() error {
-	opts := []clientv3.OpOption{}
 	if wc.recursive {
-		opts = append(opts, clientv3.WithPrefix())
-	}
-	getResp, err := wc.watcher.client.Get(wc.ctx, wc.key, opts...)
-	if err != nil {
-		return err
-	}
-	wc.initialRev = getResp.Header.Revision
-	for _, kv := range getResp.Kvs {
+		kvs, _, rev, err := wc.watcher.client.List(wc.ctx, wc.key, 0, 0, "")
+		if err != nil {
+			return err
+		}
+		wc.initialRev = rev
+		for _, kv := range kvs {
+			wc.sendEvent(parseKV(kv))
+		}
+	} else {
+		kv, rev, err := wc.watcher.client.Get(wc.ctx, wc.key, 0)
+		if err != nil {
+			return err
+		}
+		wc.initialRev = rev
 		wc.sendEvent(parseKV(kv))
 	}
 	return nil
@@ -261,14 +265,12 @@ func (wc *watchChan) startWatching(watchClosedCh chan struct{}) {
 			return
 		}
 	}
-	opts := []clientv3.OpOption{clientv3.WithRev(wc.initialRev + 1), clientv3.WithPrevKV()}
+	var wch clientv3.WatchChan
 	if wc.recursive {
-		opts = append(opts, clientv3.WithPrefix())
+		wch = wc.watcher.client.WatchPrefix(wc.ctx, wc.key, wc.initialRev+1)
+	} else {
+		wch = wc.watcher.client.WatchKey(wc.ctx, wc.key, wc.initialRev+1)
 	}
-	if wc.progressNotify {
-		opts = append(opts, clientv3.WithProgressNotify())
-	}
-	wch := wc.watcher.client.Watch(wc.ctx, wc.key, opts...)
 	for wres := range wch {
 		if wres.Err() != nil {
 			err := wres.Err()
