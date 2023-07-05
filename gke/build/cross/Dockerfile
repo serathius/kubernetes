@@ -58,7 +58,8 @@ RUN apt-get -q update \
         jq \
         patch \
         rsync \
-        unzip
+        unzip \
+        gnupg
 
 # Use dynamic cgo linking for architectures other than amd64 for the server platforms
 # To install crossbuild essential for other architectures add the following repository.

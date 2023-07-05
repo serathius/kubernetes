@@ -760,7 +760,7 @@ set_global_vars()
   if [[ -z "${__golang_image}" ]]; then
     log.info "no build-env.compiler-image.deps.golang-image specified, using .go-version if available"
     __golang_image_version=$(cat "${KUBE_ROOT}/.go-version")
-    __golang_image="golang:${__golang_image_version}-bullseye"
+    __golang_image="google-go.pkg.dev/golang:${__golang_image_version}"
     log.debugvar __golang_image
   fi
 
