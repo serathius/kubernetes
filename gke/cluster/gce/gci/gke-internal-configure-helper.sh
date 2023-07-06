@@ -1186,3 +1186,23 @@ providers:
     defaultCacheDuration: 1m
 EOF
 }
+
+# See b/289436536 for context.
+function gke-configure-multinic-no-hostname {
+  echo "Stop accepting DHCP hostname from non-eth0 interfaces"
+  if is-ubuntu; then
+    echo "Only COS is accepting DHCP hostname, skipping"
+    return
+  fi
+  default_net_conf="/usr/lib/systemd/network/99-default.network"
+  new_config="/etc/systemd/network/90-non-eth0.network"
+  if [[ -e "${default_net_conf}" ]]; then
+    cp "${default_net_conf}" "${new_config}"
+    sed -i 's/\[Match\]/\[Match\]\nName=!eth0/g' "${new_config}"
+    sed -i 's/\[DHCP\]/\[DHCP\]\nUseHostname=false/g' "${new_config}"
+  else
+    echo "Error: Default network config not found: ${default_net_conf}"
+    exit 1
+  fi
+  networkctl reload
+}

@@ -3518,6 +3518,9 @@ function main() {
      [ -n "${MAX_SHARED_CLIENTS_PER_GPU:-}" ] || [ -n "${GPU_SHARING_STRATEGY:-}" ]; then
       log-wrap 'GKECreateGPUConfig' gke-create-gpu-config
     fi
+    if [[ -e "${KUBE_HOME}/bin/gke-internal-configure-helper.sh" ]]; then
+      log-wrap 'GKEConfigureMultiNICNoHostname' gke-configure-multinic-no-hostname
+    fi
 
     # This must be the last step as part of configure-helper.sh, we want to ensure
     # `systemctl-daemon reload` will not be run after this step.
