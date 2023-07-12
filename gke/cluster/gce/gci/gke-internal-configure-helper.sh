@@ -1204,5 +1204,5 @@ function gke-configure-multinic-no-hostname {
     echo "Error: Default network config not found: ${default_net_conf}"
     exit 1
   fi
-  networkctl reload
+  systemctl restart systemd-networkd
 }
