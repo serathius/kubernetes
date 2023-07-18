@@ -1318,6 +1318,12 @@ function Start-Kubelet {
     $kubelet_args = (${kubelet_args} +
                      "--bootstrap-kubeconfig=${env:BOOTSTRAP_KUBECONFIG}")
   }
+  if ($kube_env.ContainsKey('KUBELET_VERSION')) {
+    $kubelet_version = ${kube_env}['KUBELET_VERSION']
+    Log-Output "Using kubelet version override: ${kubelet_version}"
+    $kubelet_args = (${kubelet_args} +
+                     "--version=${kubelet_version}")
+  }
   Log-Output "Final kubelet_args: ${kubelet_args}"
 
   # TODO(pjh): kubelet is emitting these messages:
