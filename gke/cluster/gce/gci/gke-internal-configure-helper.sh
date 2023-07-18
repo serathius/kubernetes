@@ -617,6 +617,19 @@ EOF
   done
 }
 
+function gke-setup-containerd-drop-in-systemd-config {
+  local -r CONTAINERD_DROP_IN="/etc/systemd/system/containerd.service.d"
+  mkdir -p "${CONTAINERD_DROP_IN}"
+  if [[ "${SET_MEMLOCK_LIMIT_UNLIMITED:-}" == "true" ]]; then
+    echo "Generating containerd system drop in config for memlock limit"
+    local memlock_limit_path="${CONTAINERD_DROP_IN}/30-LimitMEMLOCK-infinity.conf"
+    cat >> "${memlock_limit_path}" <<EOF
+[Service]
+LimitMEMLOCK=infinity
+EOF
+  fi
+}
+
 function gke-setup-containerd {
   local -r CONTAINERD_HOME="/home/containerd"
   mkdir -p "${CONTAINERD_HOME}"
@@ -797,6 +810,7 @@ EOF
   mount --bind -o ro,exec "${CONTAINERD_HOME}" "${CONTAINERD_HOME}"
 
   echo "Restart containerd to load the config change"
+  systemctl daemon-reload
   systemctl restart containerd
 }
 

@@ -3324,6 +3324,7 @@ function main() {
   log-wrap 'OverrideKubectl' override-kubectl
   if [[ -e "${KUBE_HOME}/bin/gke-internal-configure-helper.sh" ]]; then
     log-wrap 'ConfigureSMT' configure-smt
+    log-wrap 'GKESetupContainerdDropInConfig' gke-setup-containerd-drop-in-systemd-config
     log-wrap 'GKESetupContainerd' gke-setup-containerd
   fi
 
