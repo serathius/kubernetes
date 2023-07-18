@@ -974,6 +974,54 @@ function load-docker-images {
   fi
 }
 
+# A helper function for retagging a docker image.
+# $1: Image prefix
+# $2: Image tag
+# $3: Destination tag
+function retag-docker-image {
+  local -r img_prefix=$1
+  local -r img_tag=$2
+  local -r dest_tag=$3
+  if [[ "${img_tag}" == "${dest_tag}" ]]; then
+    echo "Source image tag: ${img_tag} and destination image tag: ${dest_tag} are the same. Skipping retagging."
+  else
+    echo "Retagging all images with prefix: ${img_prefix} and tag: ${img_tag} with new tag: ${dest_tag}"
+    local src_img=""
+    for src_img in $(ctr -n=k8s.io images list -q | grep "/${img_prefix}" | grep ":${img_tag}$"); do
+      dest_img=${src_img/:${img_tag}/:${dest_tag}}
+      cmd="ctr -n=k8s.io image tag ${src_img} ${dest_img} --force"
+      echo "Retag command: ${cmd}"
+      ${cmd}
+    done
+  fi
+}
+
+
+# Retags kube-system docker images with passed in kube-apiserver/kubelet versions.
+function retag-docker-images {
+  echo "Start retagging kube-system docker images"
+  local src_tag=""
+  local dest_tag=""
+  if [[ "${KUBERNETES_MASTER:-}" == "true" ]]; then
+    if [[ -n "${KUBE_APISERVER_VERSION:-}" ]]; then
+      src_tag=$(cat /home/kubernetes/kube-docker-files/kube-apiserver.docker_tag)
+      # Docker tags cannot contain '+', make CI versions a valid docker tag.
+      dest_tag=${KUBE_APISERVER_VERSION/+/_}
+      retag-docker-image "kube-apiserver" "${src_tag}" "${dest_tag}"
+      retag-docker-image "kube-controller-manager" "${src_tag}" "${dest_tag}"
+      retag-docker-image "kube-scheduler" "${src_tag}" "${dest_tag}"
+    fi
+  else
+    if [[ -n "${KUBELET_VERSION:-}" ]]; then
+      src_tag=$(cat /home/kubernetes/kube-docker-files/kube-proxy.docker_tag)
+      # Docker tags cannot contain '+', make CI versions a valid docker tag.
+      dest_tag=${KUBELET_VERSION/+/_}
+      retag-docker-image "kube-proxy" "${src_tag}" "${dest_tag}"
+    fi
+  fi
+}
+
+
 function ensure-container-runtime {
   if [[ "${CONTAINER_RUNTIME}" == "docker" ]]; then
     echo "Dockershim is not supported. Container runtime must be set to containerd"
@@ -1029,6 +1077,8 @@ function install-kube-binary-config {
 
     record-preload-info "${server_binary_tar}" "${server_binary_tar_hash}"
   fi
+
+  retag-docker-images
 
   if [[ "${NETWORK_PROVIDER:-}" == "kubenet" ]] || \
      [[ "${NETWORK_PROVIDER:-}" == "cni" ]]; then

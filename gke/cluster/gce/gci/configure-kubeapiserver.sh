@@ -396,7 +396,11 @@ function start-kube-apiserver {
 
   params="$(convert-manifest-params "${params}")"
   # Evaluate variables.
-  local -r kube_apiserver_docker_tag="${KUBE_API_SERVER_DOCKER_TAG:-$(cat /home/kubernetes/kube-docker-files/kube-apiserver.docker_tag)}"
+  local kube_apiserver_docker_tag="${KUBE_API_SERVER_DOCKER_TAG:-$(cat /home/kubernetes/kube-docker-files/kube-apiserver.docker_tag)}"
+  if [[ -n "${KUBE_APISERVER_VERSION:-}" ]]; then
+    # Docker tags cannot contain '+', make CI versions a valid docker tag.
+    kube_apiserver_docker_tag=${KUBE_APISERVER_VERSION/+/_}
+  fi
   sed -i -e "s@{{params}}@${params}@g" "${src_file}"
   sed -i -e "s@{{container_env}}@${container_env}@g" "${src_file}"
   sed -i -e "s@{{srv_sshproxy_path}}@/etc/srv/sshproxy@g" "${src_file}"

@@ -1718,7 +1718,11 @@ function prepare-kube-proxy-manifest-variables {
 
   local -r kubeconfig="--kubeconfig=/var/lib/kube-proxy/kubeconfig"
   local kube_docker_registry=${KUBE_DOCKER_REGISTRY}
-  local -r kube_proxy_docker_tag=$(cat /home/kubernetes/kube-docker-files/kube-proxy.docker_tag)
+  local kube_proxy_docker_tag=$(cat /home/kubernetes/kube-docker-files/kube-proxy.docker_tag)
+  if [[ -n "${KUBELET_VERSION:-}" ]]; then
+    # Docker tags cannot contain '+', make CI versions a valid docker tag.
+    kube_proxy_docker_tag=${KUBELET_VERSION/+/_}
+  fi
   local api_servers="--master=https://${KUBERNETES_MASTER_NAME}"
   local params="${KUBEPROXY_TEST_LOG_LEVEL:-"--v=2"}"
   if [[ -n "${FEATURE_GATES:-}" ]]; then
@@ -2206,7 +2210,11 @@ function start-kube-controller-manager {
     params+=("--controllers=${RUN_CONTROLLERS}")
   fi
 
-  local -r kube_rc_docker_tag=$(cat /home/kubernetes/kube-docker-files/kube-controller-manager.docker_tag)
+  local kube_rc_docker_tag=$(cat /home/kubernetes/kube-docker-files/kube-controller-manager.docker_tag)
+  if [[ -n "${KUBE_APISERVER_VERSION:-}" ]]; then
+    # Docker tags cannot contain '+', make CI versions a valid docker tag.
+    kube_rc_docker_tag=${KUBE_APISERVER_VERSION/+/_}
+  fi
   local container_env=""
   if [[ -n "${ENABLE_CACHE_MUTATION_DETECTOR:-}" ]]; then
     container_env="\"env\":[{\"name\": \"KUBE_CACHE_MUTATION_DETECTOR\", \"value\": \"${ENABLE_CACHE_MUTATION_DETECTOR}\"}],"
@@ -2287,7 +2295,11 @@ function start-kube-scheduler {
 
   local paramstring
   paramstring="$(convert-manifest-params "${params[*]}")"
-  local -r kube_scheduler_docker_tag=$(cat "${KUBE_HOME}/kube-docker-files/kube-scheduler.docker_tag")
+  local kube_scheduler_docker_tag=$(cat "${KUBE_HOME}/kube-docker-files/kube-scheduler.docker_tag")
+  if [[ -n "${KUBE_APISERVER_VERSION:-}" ]]; then
+    # Docker tags cannot contain '+', make CI versions a valid docker tag.
+    kube_scheduler_docker_tag=${KUBE_APISERVER_VERSION/+/_}
+  fi
 
   # Remove salt comments and replace variables with values.
   local -r src_file="${KUBE_HOME}/kube-manifests/kubernetes/gci-trusty/kube-scheduler.manifest"
