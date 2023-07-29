@@ -704,6 +704,19 @@ EOF
 EOF
   fi
 
+  if [[ "${ENABLE_CONTAINERD_NRI:-}" == "true" ]]; then
+    cat >> "${config_path}" <<EOF
+[plugins."io.containerd.nri.v1.nri"]
+ disable = false
+ disable_connections = false
+ plugin_config_path = "/etc/nri/conf.d"
+ plugin_path = "/home/kubernetes/nri/plugins"
+ plugin_registration_timeout = "5s"
+ plugin_request_timeout = "5s"
+ socket_path = "/var/run/nri/nri.sock"
+EOF
+  fi
+
   if [[ "${ENABLE_GCFS:-}" == "true" ]]; then
     gke-setup-gcfs
     cat >> "${config_path}" <<EOF
