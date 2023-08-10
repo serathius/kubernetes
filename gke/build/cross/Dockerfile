@@ -69,11 +69,6 @@ RUN echo "deb http://archive.ubuntu.com/ubuntu xenial main universe" > /etc/apt/
   && apt-get install -y build-essential \
   && for platform in ${KUBE_DYNAMIC_CROSSPLATFORMS}; do apt-get install -y crossbuild-essential-${platform}; done
 
-# Get the code coverage tool and goimports
-RUN go install golang.org/x/tools/cmd/cover@latest \
-    && go install golang.org/x/tools/cmd/goimports@latest \
-    && go clean -cache
-
 # Cleanup a bit
 RUN apt-get -qqy remove \
       wget \
