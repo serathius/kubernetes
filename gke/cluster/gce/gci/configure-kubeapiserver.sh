@@ -351,25 +351,17 @@ function start-kube-apiserver {
   fi
 
   local container_env=""
-  if [[ -n "${ENABLE_CACHE_MUTATION_DETECTOR:-}" ]]; then
-    container_env+="{\"name\": \"KUBE_CACHE_MUTATION_DETECTOR\", \"value\": \"${ENABLE_CACHE_MUTATION_DETECTOR}\"}"
-  fi
-  if [[ -n "${ENABLE_PATCH_CONVERSION_DETECTOR:-}" ]]; then
-    if [[ -n "${container_env}" ]]; then
-      container_env="${container_env}, "
-    fi
-    container_env+="{\"name\": \"KUBE_PATCH_CONVERSION_DETECTOR\", \"value\": \"${ENABLE_PATCH_CONVERSION_DETECTOR}\"}"
-  fi
-
-  # b/227456358
-  if [[ -n "${container_env}" ]]; then
-    container_env="${container_env}, "
-  fi
-  container_env+='{"name": "GODEBUG", "value": "x509sha1=1"}'
 
   # b/255296578
-  container_env+=", {\"name\": \"HTTP2_READ_IDLE_TIMEOUT_SECONDS\", \"value\": \"${KUBE_APISERVER_HTTP2_READ_IDLE_TIMEOUT_SECONDS:-30}\"}"
-  container_env+=", {\"name\": \"HTTP2_PING_TIMEOUT_SECONDS\", \"value\": \"${KUBE_APISERVER_HTTP2_PING_TIMEOUT_SECONDS:-15}\"}"
+  container_env+="{\"name\": \"HTTP2_READ_IDLE_TIMEOUT_SECONDS\", \"value\": \"${KUBE_APISERVER_HTTP2_READ_IDLE_TIMEOUT_SECONDS:-30}\"}"
+  container_env+=",{\"name\": \"HTTP2_PING_TIMEOUT_SECONDS\", \"value\": \"${KUBE_APISERVER_HTTP2_PING_TIMEOUT_SECONDS:-15}\"}"
+
+  if [[ -n "${ENABLE_CACHE_MUTATION_DETECTOR:-}" ]]; then
+    container_env+=",{\"name\": \"KUBE_CACHE_MUTATION_DETECTOR\", \"value\": \"${ENABLE_CACHE_MUTATION_DETECTOR}\"}"
+  fi
+  if [[ -n "${ENABLE_PATCH_CONVERSION_DETECTOR:-}" ]]; then
+    container_env+=",{\"name\": \"KUBE_PATCH_CONVERSION_DETECTOR\", \"value\": \"${ENABLE_PATCH_CONVERSION_DETECTOR}\"}"
+  fi
 
   if [[ -n "${container_env}" ]]; then
     container_env="\"env\":[${container_env}],"
