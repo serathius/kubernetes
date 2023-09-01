@@ -207,24 +207,29 @@ func (rc *reconciler) reconcile(ctx context.Context) {
 				logger.Error(err, "Cannot trigger detach because it fails to set detach request time with error")
 				continue
 			}
-			// Check whether timeout has reached the maximum waiting time
-			timeout := elapsedTime > rc.maxWaitForUnmountDuration
+			// Check whether the umount drain timer expired
+			maxWaitForUnmountDurationExpired := elapsedTime > rc.maxWaitForUnmountDuration
 
 			isHealthy, err := rc.nodeIsHealthy(attachedVolume.NodeName)
 			if err != nil {
 				logger.Error(err, "Failed to get health of node", "node", klog.KRef("", string(attachedVolume.NodeName)))
 			}
 
-			// Force detach volumes from unhealthy nodes after maxWaitForUnmountDuration.
-			forceDetach := !isHealthy && timeout
+			// Force detach volumes from unhealthy nodes after maxWaitForUnmountDuration if force detach is enabled
+			// Ensure that the timeout condition checks this correctly so that the correct metric is updated below
+			forceDetatchTimeoutExpired := maxWaitForUnmountDurationExpired && !DisableForceDetachOnTimeout
+			if maxWaitForUnmountDurationExpired && DisableForceDetachOnTimeout {
+				logger.V(5).Info("Drain timeout expired for volume but disableForceDetachOnTimeout was set", "node", klog.KRef("", string(attachedVolume.NodeName)), "volumeName", attachedVolume.VolumeName)
+			}
+			forceDetach := !isHealthy && forceDetatchTimeoutExpired
 
 			hasOutOfServiceTaint, err := rc.hasOutOfServiceTaint(attachedVolume.NodeName)
 			if err != nil {
 				logger.Error(err, "Failed to get taint specs for node", "node", klog.KRef("", string(attachedVolume.NodeName)))
 			}
 
-			// Check whether volume is still mounted. Skip detach if it is still mounted unless force detach timeout
-			// or the node has `node.kubernetes.io/out-of-service` taint.
+			// Check whether volume is still mounted. Skip detach if it is still mounted unless we have
+			// decided to force detach or the node has `node.kubernetes.io/out-of-service` taint.
 			if attachedVolume.MountedByNode && !forceDetach && !hasOutOfServiceTaint {
 				logger.V(5).Info("Cannot detach volume because it is still mounted", "node", klog.KRef("", string(attachedVolume.NodeName)), "volumeName", attachedVolume.VolumeName)
 				continue
@@ -254,19 +259,19 @@ func (rc *reconciler) reconcile(ctx context.Context) {
 			}
 
 			// Trigger detach volume which requires verifying safe to detach step
-			// If timeout is true, skip verifySafeToDetach check
+			// If forceDetatchTimeoutExpired is true, skip verifySafeToDetach check
 			// If the node has node.kubernetes.io/out-of-service taint with NoExecute effect, skip verifySafeToDetach check
 			logger.V(5).Info("Starting attacherDetacher.DetachVolume", "node", klog.KRef("", string(attachedVolume.NodeName)), "volumeName", attachedVolume.VolumeName)
 			if hasOutOfServiceTaint {
 				logger.V(4).Info("node has out-of-service taint", "node", klog.KRef("", string(attachedVolume.NodeName)))
 			}
-			verifySafeToDetach := !(timeout || hasOutOfServiceTaint)
+			verifySafeToDetach := !(forceDetatchTimeoutExpired || hasOutOfServiceTaint)
 			err = rc.attacherDetacher.DetachVolume(logger, attachedVolume.AttachedVolume, verifySafeToDetach, rc.actualStateOfWorld)
 			if err == nil {
 				if verifySafeToDetach { // normal detach
 					logger.Info("attacherDetacher.DetachVolume started", "node", klog.KRef("", string(attachedVolume.NodeName)), "volumeName", attachedVolume.VolumeName)
 				} else { // force detach
-					if timeout {
+					if forceDetatchTimeoutExpired {
 						metrics.RecordForcedDetachMetric(metrics.ForceDetachReasonTimeout)
 						logger.Info("attacherDetacher.DetachVolume started: this volume is not safe to detach, but maxWaitForUnmountDuration expired, force detaching",
 							"duration", rc.maxWaitForUnmountDuration,
