@@ -719,7 +719,7 @@ func (s *store) list(ctx context.Context, key string, opts storage.ListOptions, 
 	// get children "directories". e.g. if we have key "/a", "/a/b", "/ab", getting keys
 	// with prefix "/a" will return all three, while with prefix "/a/" will return only
 	// "/a/b" which is the correct answer.
-	if opts.Recursive && !strings.HasSuffix(key, "/") {
+	if !strings.HasSuffix(key, "/") {
 		key += "/"
 	}
 	keyPrefix := key
@@ -747,7 +747,7 @@ func (s *store) list(ctx context.Context, key string, opts storage.ListOptions, 
 	var continueRV int64
 	var continueKey string
 	switch {
-	case opts.Recursive && s.pagingEnabled && len(opts.Predicate.Continue) > 0:
+	case s.pagingEnabled && len(opts.Predicate.Continue) > 0:
 		continueKey, continueRV, err = storage.DecodeContinue(opts.Predicate.Continue, keyPrefix)
 		if err != nil {
 			return withRev, nextContinue, remainingItemCount, apierrors.NewBadRequest(fmt.Sprintf("invalid continue token: %v", err))
@@ -772,7 +772,7 @@ func (s *store) list(ctx context.Context, key string, opts storage.ListOptions, 
 			case metav1.ResourceVersionMatchExact:
 				withRev = int64(*fromRV)
 			case "": // legacy case
-				if opts.Recursive && s.pagingEnabled && opts.Predicate.Limit > 0 && *fromRV > 0 {
+				if s.pagingEnabled && opts.Predicate.Limit > 0 && *fromRV > 0 {
 					withRev = int64(*fromRV)
 				}
 			default:
@@ -781,10 +781,8 @@ func (s *store) list(ctx context.Context, key string, opts storage.ListOptions, 
 		}
 	}
 
-	if opts.Recursive {
-		rangeEnd := clientv3.GetPrefixRangeEnd(keyPrefix)
-		options = append(options, clientv3.WithRange(rangeEnd))
-	}
+	rangeEnd := clientv3.GetPrefixRangeEnd(keyPrefix)
+	options = append(options, clientv3.WithRange(rangeEnd))
 	if withRev != 0 {
 		options = append(options, clientv3.WithRev(withRev))
 	}
@@ -802,15 +800,10 @@ func (s *store) list(ctx context.Context, key string, opts storage.ListOptions, 
 		metrics.RecordStorageListMetrics(s.groupResourceString, numFetched, numEvald, numReturn)
 	}()
 
-	metricsOp := "get"
-	if opts.Recursive {
-		metricsOp = "list"
-	}
-
 	for {
 		startTime := time.Now()
 		getResp, err = s.client.KV.Get(ctx, key, options...)
-		metrics.RecordEtcdRequest(metricsOp, s.groupResourceString, err, startTime)
+		metrics.RecordEtcdRequest("list", s.groupResourceString, err, startTime)
 		if err != nil {
 			return withRev, nextContinue, remainingItemCount, interpretListError(err, len(opts.Predicate.Continue) > 0, continueKey, keyPrefix)
 		}
