@@ -630,33 +630,24 @@ func (s *store) getList(ctx context.Context, key string, opts storage.ListOption
 	if err != nil || v.Kind() != reflect.Slice {
 		return fmt.Errorf("need ptr to slice: %v", err)
 	}
-	keyPrefix := key
-
 	// set the appropriate clientv3 options to filter the returned data set
 	newItemFunc := getNewItemFunc(listObj, v)
-
-	var fromRV *uint64
-	if len(opts.ResourceVersion) > 0 {
-		parsedRV, err := s.versioner.ParseResourceVersion(opts.ResourceVersion)
-		if err != nil {
-			return apierrors.NewBadRequest(fmt.Sprintf("invalid resource version: %v", err))
-		}
-		fromRV = &parsedRV
-	}
-
 	var withRev int64
-
-	if fromRV != nil {
-		switch opts.ResourceVersionMatch {
-		case metav1.ResourceVersionMatchNotOlderThan:
-			// The not older than constraint is checked after we get a response from etcd,
-			// and returnedRV is then set to the revision we get from the etcd response.
-		case metav1.ResourceVersionMatchExact:
-			withRev = int64(*fromRV)
-		case "": // legacy case
-		default:
-			return fmt.Errorf("unknown ResourceVersionMatch value: %v", opts.ResourceVersionMatch)
+	switch opts.ResourceVersionMatch {
+	case metav1.ResourceVersionMatchNotOlderThan:
+		// The not older than constraint is checked after we get a response from etcd,
+		// and returnedRV is then set to the revision we get from the etcd response.
+	case metav1.ResourceVersionMatchExact:
+		if len(opts.ResourceVersion) > 0 {
+			parsedRV, err := s.versioner.ParseResourceVersion(opts.ResourceVersion)
+			if err != nil {
+				return apierrors.NewBadRequest(fmt.Sprintf("invalid resource version: %v", err))
+			}
+			withRev = int64(parsedRV)
 		}
+	case "": // legacy case
+	default:
+		return fmt.Errorf("unknown ResourceVersionMatch value: %v", opts.ResourceVersionMatch)
 	}
 
 	options := make([]clientv3.OpOption, 0, 1)
@@ -679,7 +670,7 @@ func (s *store) getList(ctx context.Context, key string, opts storage.ListOption
 	getResp, err = s.client.KV.Get(ctx, key, options...)
 	metrics.RecordEtcdRequest("get", s.groupResourceString, err, startTime)
 	if err != nil {
-		return interpretListError(err, false, "", keyPrefix)
+		return interpretListError(err, false, "", key)
 	}
 	numFetched += len(getResp.Kvs)
 	if err = s.validateMinimumResourceVersion(opts.ResourceVersion, uint64(getResp.Header.Revision)); err != nil {
