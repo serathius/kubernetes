@@ -26,10 +26,10 @@
 # Except from etcd-$(version) and etcdctl-$(version) binaries, we also
 # need etcd and etcdctl binaries for backward compatibility reasons.
 # That binary will be set to the last version from $(BUNDLED_ETCD_VERSIONS).
-BUNDLED_ETCD_VERSIONS?=3.0.17 3.1.12 3.2.24 3.3.17 3.4.13 3.5.0
+BUNDLED_ETCD_VERSIONS?=
 
 # LATEST_ETCD_VERSION identifies the most recent etcd version available.
-LATEST_ETCD_VERSION?=3.5.0
+LATEST_ETCD_VERSION?=3.4.27
 
 # REVISION provides a version number for this image and all it's bundled
 # artifacts. It should start at zero for each LATEST_ETCD_VERSION and increment
@@ -62,24 +62,24 @@ endif
 # This option is for running docker manifest command
 export DOCKER_CLI_EXPERIMENTAL := enabled
 # This go version is used to build migrate, backup and restore binaries.
-GOLANG_VERSION?=1.16.3
+GOLANG_VERSION?=1.19.12
 GOARM?=7
 TEMP_DIR:=$(shell mktemp -d)
 
 ifeq ($(ARCH),amd64)
-    BASEIMAGE?=k8s.gcr.io/build-image/debian-base:buster-v1.8.0
+    BASEIMAGE?=registry.k8s.io/build-image/debian-base:bookworm-v1.0.0
 endif
 ifeq ($(ARCH),arm)
-    BASEIMAGE?=k8s.gcr.io/build-image/debian-base-arm:buster-v1.8.0
+    BASEIMAGE?=registry.k8s.io/build-image/debian-base-arm:bookworm-v1.0.0
 endif
 ifeq ($(ARCH),arm64)
-    BASEIMAGE?=k8s.gcr.io/build-image/debian-base-arm64:buster-v1.8.0
+    BASEIMAGE?=registry.k8s.io/build-image/debian-base-arm64:bookworm-v1.0.0
 endif
 ifeq ($(ARCH),ppc64le)
-    BASEIMAGE?=k8s.gcr.io/build-image/debian-base-ppc64le:buster-v1.8.0
+    BASEIMAGE?=registry.k8s.io/build-image/debian-base-ppc64le:bookworm-v1.0.0
 endif
 ifeq ($(ARCH),s390x)
-    BASEIMAGE?=k8s.gcr.io/build-image/debian-base-s390x:buster-v1.8.0
+    BASEIMAGE?=registry.k8s.io/build-image/debian-base-s390x:bookworm-v1.0.0
 endif
 
 RUNNERIMAGE?=gcr.io/distroless/static:latest
