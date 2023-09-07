@@ -2876,21 +2876,10 @@ EOF
 
   create-kubeconfig "addon-manager" "${ADDON_MANAGER_TOKEN}"
 
-  if [[ "${KUBE_ADDON_MANAGER_CRP:-false}" == "true" ]]; then
-    echo "kube-addon-manager is configured to not be deployed through kube-up."
-    return
+  if [[ "${KUBE_ADDON_MANAGER_CRP:-false}" != "true" ]]; then
+    echo "kube-addon-manager is not configured (KUBE_ADDON_MANAGER_CRP=${KUBE_ADDON_MANAGER_CRP:-false})"
+    exit 1
   fi
-  # User and group should never contain characters that need to be quoted
-  # shellcheck disable=SC2086
-  prepare-log-file /var/log/kube-addon-manager.log ${KUBE_ADDON_MANAGER_RUNASUSER:-2002}
-
-  # Place addon manager pod manifest.
-  src_file="${src_dir}/kube-addon-manager.yaml"
-  sed -i -e "s@{{kubectl_prune_whitelist_override}}@${KUBECTL_PRUNE_WHITELIST_OVERRIDE:-}@g" "${src_file}"
-  sed -i -e "s@{{kubectl_extra_prune_whitelist}}@${ADDON_MANAGER_PRUNE_WHITELIST:-}@g" "${src_file}"
-  sed -i -e "s@{{runAsUser}}@${KUBE_ADDON_MANAGER_RUNASUSER:-2002}@g" "${src_file}"
-  sed -i -e "s@{{runAsGroup}}@${KUBE_ADDON_MANAGER_RUNASGROUP:-2002}@g" "${src_file}"
-  cp "${src_file}" /etc/kubernetes/manifests
 }
 
 function setup-konnectivity-agent-manifest {
