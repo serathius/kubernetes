@@ -2134,183 +2134,20 @@ function update-node-label() {
   done
 }
 
-# Starts kubernetes controller manager.
-# It prepares the log file, loads the docker image, calculates variables, sets them
-# in the manifest file, and then copies the manifest file to /etc/kubernetes/manifests.
-#
-# Assumed vars (which are calculated in function compute-master-manifest-variables)
-#   CLOUD_CONFIG_OPT
-#   CLOUD_CONFIG_VOLUME
-#   CLOUD_CONFIG_MOUNT
-#   DOCKER_REGISTRY
+# Ensures kubernetes controller manager is configured
 function start-kube-controller-manager {
-  if [[ -e "${KUBE_HOME}/bin/gke-internal-configure-helper.sh" ]]; then
-    if ! deploy-kube-controller-manager-via-kube-up; then
-      echo "kube-controller-manager is configured to not be deployed through kube-up."
-      return
-    fi
+  if deploy-kube-controller-manager-via-kube-up; then
+    echo "kube-controller-manager is not configured"
+    exit 1
   fi
-  echo "Start kubernetes controller-manager"
-  create-kubeconfig "kube-controller-manager" "${KUBE_CONTROLLER_MANAGER_TOKEN}"
-  prepare-log-file /var/log/kube-controller-manager.log "${KUBE_CONTROLLER_MANAGER_RUNASUSER:-0}"
-  # Calculate variables and assemble the command line.
-  local params=("${CONTROLLER_MANAGER_TEST_LOG_LEVEL:-"--v=2"}" "${CONTROLLER_MANAGER_TEST_ARGS:-}" "${CLOUD_CONFIG_OPT}")
-  local config_path='/etc/srv/kubernetes/kube-controller-manager/kubeconfig'
-  params+=("--use-service-account-credentials")
-  params+=("--cloud-provider=gce")
-  params+=("--kubeconfig=${config_path}" "--authentication-kubeconfig=${config_path}" "--authorization-kubeconfig=${config_path}")
-  params+=("--root-ca-file=${CA_CERT_BUNDLE_PATH}")
-  params+=("--service-account-private-key-file=${SERVICEACCOUNT_KEY_PATH}")
-  params+=("--volume-host-allow-local-loopback=false")
-  if [[ -n "${ENABLE_GARBAGE_COLLECTOR:-}" ]]; then
-    params+=("--enable-garbage-collector=${ENABLE_GARBAGE_COLLECTOR}")
-  fi
-  if [[ -n "${INSTANCE_PREFIX:-}" ]]; then
-    params+=("--cluster-name=${INSTANCE_PREFIX}")
-  fi
-  if [[ -n "${CLUSTER_IP_RANGE:-}" ]]; then
-    params+=("--cluster-cidr=${CLUSTER_IP_RANGE}")
-  fi
-  if [[ -n "${CA_KEY:-}" ]]; then
-    params+=("--cluster-signing-cert-file=${CA_CERT_PATH}")
-    params+=("--cluster-signing-key-file=${CA_KEY_PATH}")
-  fi
-  if [[ -n "${SERVICE_CLUSTER_IP_RANGE:-}" ]]; then
-    params+=("--service-cluster-ip-range=${SERVICE_CLUSTER_IP_RANGE}")
-  fi
-  if [[ -n "${CONCURRENT_SERVICE_SYNCS:-}" ]]; then
-    params+=("--concurrent-service-syncs=${CONCURRENT_SERVICE_SYNCS}")
-  fi
-  if [[ "${NETWORK_PROVIDER:-}" == "kubenet" ]]; then
-    params+=("--allocate-node-cidrs=true")
-  elif [[ -n "${ALLOCATE_NODE_CIDRS:-}" ]]; then
-    params+=("--allocate-node-cidrs=${ALLOCATE_NODE_CIDRS}")
-  fi
-  if [[ -n "${TERMINATED_POD_GC_THRESHOLD:-}" ]]; then
-    params+=("--terminated-pod-gc-threshold=${TERMINATED_POD_GC_THRESHOLD}")
-  fi
-  if [[ "${ENABLE_IP_ALIASES:-}" == 'true' ]]; then
-    params+=("--cidr-allocator-type=${NODE_IPAM_MODE}")
-    params+=("--configure-cloud-routes=false")
-  fi
-  if [[ -n "${FEATURE_GATES:-}" ]]; then
-    params+=("--feature-gates=${FEATURE_GATES}")
-  fi
-  if [[ -n "${VOLUME_PLUGIN_DIR:-}" ]]; then
-    params+=("--flex-volume-plugin-dir=${VOLUME_PLUGIN_DIR}")
-  fi
-  if [[ -n "${CLUSTER_SIGNING_DURATION:-}" ]]; then
-    params+=("--cluster-signing-duration=$CLUSTER_SIGNING_DURATION")
-  fi
-  if [[ -n "${PV_RECYCLER_OVERRIDE_TEMPLATE:-}" ]]; then
-    params+=("--pv-recycler-pod-template-filepath-nfs=$PV_RECYCLER_OVERRIDE_TEMPLATE")
-    params+=("--pv-recycler-pod-template-filepath-hostpath=$PV_RECYCLER_OVERRIDE_TEMPLATE")
-  fi
-  if [[ -n "${RUN_CONTROLLERS:-}" ]]; then
-    params+=("--controllers=${RUN_CONTROLLERS}")
-  fi
-
-  local kube_rc_docker_tag=$(cat /home/kubernetes/kube-docker-files/kube-controller-manager.docker_tag)
-  if [[ -n "${KUBE_APISERVER_VERSION:-}" ]]; then
-    # Docker tags cannot contain '+', make CI versions a valid docker tag.
-    kube_rc_docker_tag=${KUBE_APISERVER_VERSION/+/_}
-  fi
-  local container_env=""
-  if [[ -n "${ENABLE_CACHE_MUTATION_DETECTOR:-}" ]]; then
-    container_env="\"env\":[{\"name\": \"KUBE_CACHE_MUTATION_DETECTOR\", \"value\": \"${ENABLE_CACHE_MUTATION_DETECTOR}\"}],"
-  fi
-
-  local paramstring
-  paramstring="$(convert-manifest-params "${params[*]}")"
-  local -r src_file="${KUBE_HOME}/kube-manifests/kubernetes/gci-trusty/kube-controller-manager.manifest"
-  # Evaluate variables.
-  sed -i -e "s@{{pillar\['kube_docker_registry'\]}}@${DOCKER_REGISTRY}@g" "${src_file}"
-  sed -i -e "s@{{pillar\['kube-controller-manager_docker_tag'\]}}@${kube_rc_docker_tag}@g" "${src_file}"
-  sed -i -e "s@{{params}}@${paramstring}@g" "${src_file}"
-  sed -i -e "s@{{container_env}}@${container_env}@g" "${src_file}"
-  sed -i -e "s@{{cloud_config_mount}}@${CLOUD_CONFIG_MOUNT}@g" "${src_file}"
-  sed -i -e "s@{{cloud_config_volume}}@${CLOUD_CONFIG_VOLUME}@g" "${src_file}"
-  sed -i -e "s@{{additional_cloud_config_mount}}@@g" "${src_file}"
-  sed -i -e "s@{{additional_cloud_config_volume}}@@g" "${src_file}"
-  sed -i -e "s@{{pv_recycler_mount}}@${PV_RECYCLER_MOUNT}@g" "${src_file}"
-  sed -i -e "s@{{pv_recycler_volume}}@${PV_RECYCLER_VOLUME}@g" "${src_file}"
-  sed -i -e "s@{{flexvolume_hostpath_mount}}@${FLEXVOLUME_HOSTPATH_MOUNT}@g" "${src_file}"
-  sed -i -e "s@{{flexvolume_hostpath}}@${FLEXVOLUME_HOSTPATH_VOLUME}@g" "${src_file}"
-  sed -i -e "s@{{cpurequest}}@${KUBE_CONTROLLER_MANAGER_CPU_REQUEST}@g" "${src_file}"
-
-  if [[ -n "${KUBE_CONTROLLER_MANAGER_RUNASUSER:-}" && -n "${KUBE_CONTROLLER_MANAGER_RUNASGROUP:-}" ]]; then
-    sed -i -e "s@{{runAsUser}}@\"runAsUser\": ${KUBE_CONTROLLER_MANAGER_RUNASUSER},@g" "${src_file}"
-    sed -i -e "s@{{runAsGroup}}@\"runAsGroup\":${KUBE_CONTROLLER_MANAGER_RUNASGROUP},@g" "${src_file}"
-    sed -i -e "s@{{supplementalGroups}}@\"supplementalGroups\": [ ${KUBE_PKI_READERS_GROUP} ],@g" "${src_file}"
-  else
-    sed -i -e "s@{{runAsUser}}@@g" "${src_file}"
-    sed -i -e "s@{{runAsGroup}}@@g" "${src_file}"
-    sed -i -e "s@{{supplementalGroups}}@@g" "${src_file}"
-  fi
-
-  cp "${src_file}" /etc/kubernetes/manifests
 }
 
-# Starts kubernetes scheduler.
-# It prepares the log file, loads the docker image, calculates variables, sets them
-# in the manifest file, and then copies the manifest file to /etc/kubernetes/manifests.
-#
-# Assumed vars (which are calculated in compute-master-manifest-variables)
-#   DOCKER_REGISTRY
+# Ensures kubernetes scheduler is configured
 function start-kube-scheduler {
-  if [[ -e "${KUBE_HOME}/bin/gke-internal-configure-helper.sh" ]]; then
-    if ! deploy-kube-scheduler-via-kube-up; then
-      echo "kube-scheduler is configured to not be deployed through kube-up."
-      return
-    fi
+  if deploy-kube-scheduler-via-kube-up; then
+    echo "kube-scheduler is not configured"
+    exit 1
   fi
-  echo "Start kubernetes scheduler"
-  create-kubeconfig "kube-scheduler" "${KUBE_SCHEDULER_TOKEN}"
-  # User and group should never contain characters that need to be quoted
-  # shellcheck disable=SC2086
-  prepare-log-file /var/log/kube-scheduler.log ${KUBE_SCHEDULER_RUNASUSER:-2001}
-
-  # Calculate variables and set them in the manifest.
-  params=("${SCHEDULER_TEST_LOG_LEVEL:-"--v=2"}" "${SCHEDULER_TEST_ARGS:-}")
-  if [[ -n "${FEATURE_GATES:-}" ]]; then
-    params+=("--feature-gates=${FEATURE_GATES}")
-  fi
-
-  # Scheduler Component Config takes precedence over some flags.
-  if [[ -n "${KUBE_SCHEDULER_CONFIG:-}" ]]; then
-    create-kube-scheduler-config
-    params+=("--config=/etc/srv/kubernetes/kube-scheduler/config")
-  else
-    params+=("--kubeconfig=/etc/srv/kubernetes/kube-scheduler/kubeconfig")
-    if [[ -n "${SCHEDULER_POLICY_CONFIG:-}" ]]; then
-      create-kubescheduler-policy-config
-      params+=("--use-legacy-policy-config")
-      params+=("--policy-config-file=/etc/srv/kubernetes/kube-scheduler/policy-config")
-    fi
-  fi
-
-  local config_path
-  config_path='/etc/srv/kubernetes/kube-scheduler/kubeconfig'
-  params+=("--authentication-kubeconfig=${config_path}" "--authorization-kubeconfig=${config_path}")
-
-  local paramstring
-  paramstring="$(convert-manifest-params "${params[*]}")"
-  local kube_scheduler_docker_tag=$(cat "${KUBE_HOME}/kube-docker-files/kube-scheduler.docker_tag")
-  if [[ -n "${KUBE_APISERVER_VERSION:-}" ]]; then
-    # Docker tags cannot contain '+', make CI versions a valid docker tag.
-    kube_scheduler_docker_tag=${KUBE_APISERVER_VERSION/+/_}
-  fi
-
-  # Remove salt comments and replace variables with values.
-  local -r src_file="${KUBE_HOME}/kube-manifests/kubernetes/gci-trusty/kube-scheduler.manifest"
-
-  sed -i -e "s@{{params}}@${paramstring}@g" "${src_file}"
-  sed -i -e "s@{{pillar\['kube_docker_registry'\]}}@${DOCKER_REGISTRY}@g" "${src_file}"
-  sed -i -e "s@{{pillar\['kube-scheduler_docker_tag'\]}}@${kube_scheduler_docker_tag}@g" "${src_file}"
-  sed -i -e "s@{{cpurequest}}@${KUBE_SCHEDULER_CPU_REQUEST}@g" "${src_file}"
-  sed -i -e "s@{{runAsUser}}@${KUBE_SCHEDULER_RUNASUSER:-2001}@g" "${src_file}"
-  sed -i -e "s@{{runAsGroup}}@${KUBE_SCHEDULER_RUNASGROUP:-2001}@g" "${src_file}"
-  cp "${src_file}" /etc/kubernetes/manifests
 }
 
 # Starts cluster autoscaler.
