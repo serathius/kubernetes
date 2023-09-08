@@ -62,7 +62,7 @@ endif
 # This option is for running docker manifest command
 export DOCKER_CLI_EXPERIMENTAL := enabled
 # This go version is used to build migrate, backup and restore binaries.
-GOLANG_VERSION?=1.19.13
+GOLANG_VERSION?=1.20.8
 GOARM?=7
 TEMP_DIR:=$(shell mktemp -d)
 
