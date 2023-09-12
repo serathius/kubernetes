@@ -1008,6 +1008,7 @@ compile()
     -e KUBE_CGO_OVERRIDES="${__KUBE_CGO_OVERRIDES:-}" \
     -e GOFLAGS="${__GOFLAGS:-}" \
     -e GOEXPERIMENT="${__GOEXPERIMENT:-}" \
+    -e GOTOOLCHAIN="local" \
     -v "${KUBE_ROOT}":"${__KUBE_ROOT_MOUNT_PATH}" \
     -w "${__KUBE_ROOT_MOUNT_PATH}" \
     -u "$(id -u):$(id -g)" \
@@ -1037,6 +1038,7 @@ package()
     KUBE_GORUNNER_IMAGE="${__go_runner_image}" \
     KUBE_PROXY_BASE_IMAGE="${__kube_proxy_base_image}" \
     KUBE_BUILD_SETCAP_IMAGE="${__setcap_image}" \
+    GOTOOLCHAIN="local" \
     "${KUBE_ROOT}"/gke/build/package-tarballs.sh
 
   # For BoringCrypto, run associated hook for additional processing. This is
