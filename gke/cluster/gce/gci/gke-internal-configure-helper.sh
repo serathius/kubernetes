@@ -619,8 +619,8 @@ EOF
 
 function gke-setup-containerd-drop-in-systemd-config {
   local -r CONTAINERD_DROP_IN="/etc/systemd/system/containerd.service.d"
-  mkdir -p "${CONTAINERD_DROP_IN}"
   if [[ "${SET_MEMLOCK_LIMIT_UNLIMITED:-}" == "true" ]]; then
+    mkdir -p "${CONTAINERD_DROP_IN}"
     echo "Generating containerd system drop in config for memlock limit"
     local memlock_limit_path="${CONTAINERD_DROP_IN}/30-LimitMEMLOCK-infinity.conf"
     cat >> "${memlock_limit_path}" <<EOF
