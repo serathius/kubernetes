@@ -2265,8 +2265,8 @@ attributes:
   localPath: $(python3 -c "import sys, yaml; print(yaml.safe_load(open(sys.argv[1]))['staticPodPath'])" "${KUBE_HOME}/kubelet-config.yaml")
   processKind: split-pod-list
 - attributePath: $(get-metadata-value "instance/attributes/extra-addons-path")
-  localPath: ${KUBE_HOME}/kube-manifests/kubernetes/gci-trusty/gce-extras/
-  processKind: split-extras-list
+  localPath: ${KUBE_HOME}/kube-manifests/kubernetes/gci-trusty/gce-extras/extras.json
+  processKind: none
 EOF
 
   retry-forever 30 ${KUBE_HOME}/bin/hurl --hms_address $endpoint --attribute_config $attribute_config
