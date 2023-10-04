@@ -125,7 +125,9 @@ write_files:
 
       [Service]
       Type=oneshot
-      ExecStart=-/usr/sbin/logrotate /etc/logrotate.conf
+      # The relative path is being used as the path is different between image types - for example between Ubuntu and COS. See ExecSearchPath for allowed paths.
+      ExecSearchPath=/usr/bin:/usr/sbin
+      ExecStart=logrotate /etc/logrotate.conf
 
       [Install]
       WantedBy=kubernetes.target

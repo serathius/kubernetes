@@ -146,7 +146,8 @@ write_files:
 
       [Service]
       Type=oneshot
-      ExecStart=-/usr/sbin/logrotate /etc/logrotate.conf
+      ExecSearchPath=/usr/bin:/usr/sbin
+      ExecStart=logrotate /etc/logrotate.conf
 
       [Install]
       WantedBy=kubernetes.target
