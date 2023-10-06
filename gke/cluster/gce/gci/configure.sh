@@ -555,6 +555,8 @@ function install-npd-custom-plugins {
   local -r dir="${KUBE_HOME}/npd-custom-plugins"
   mkdir -p "${dir}"
   tar xzf "${KUBE_HOME}/${tar}" -C "${dir}" --overwrite
+  local -r kube_bin_dir="${KUBE_HOME}/bin"
+  cp -r "${dir}/bins"/* "${kube_bin_dir}"
   rm -f "${KUBE_HOME}/${tar}"
 
   record-preload-info "${tar}" "${hash}"

@@ -936,6 +936,7 @@ function gke-configure-npd-custom-plugins {
   if [[ -n "${CONTAINERD_DEPRECATION_CHECKER:-}" ]]; then
     GKE_NPD_CUSTOM_PLUGINS_CONFIG+=",${config_dir}/containerd-deprecation-config-auths.json"
     GKE_NPD_CUSTOM_PLUGINS_CONFIG+=",${config_dir}/containerd-deprecation-config-configs.json"
+    GKE_NPD_CUSTOM_PLUGINS_CONFIG+=",${config_dir}/containerd-deprecation-config-mirrors.json"
     GKE_NPD_CUSTOM_PLUGINS_CONFIG+=",${config_dir}/containerd-deprecation-cri-v1alpha2.json"
     GKE_NPD_CUSTOM_PLUGINS_CONFIG+=",${config_dir}/containerd-deprecation-others.json"
     GKE_NPD_CUSTOM_PLUGINS_CONFIG+=",${config_dir}/containerd-deprecation-schema-v1-image.json"
