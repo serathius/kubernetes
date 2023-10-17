@@ -1225,19 +1225,25 @@ providers:
 EOF
 }
 
-# See b/289436536 for context.
-function gke-configure-multinic-no-hostname {
-  echo "Stop accepting DHCP hostname from non-eth0 interfaces"
+# Configure secondary NICs in GKE.
+# UseHostname=false: See b/289436536 for context.
+# UseDNS=false and UseNTP=false: See b/306027764
+function gke-configure-multinic {
+  echo "Configuring secondary NICs"
   if is-ubuntu; then
-    echo "Only COS is accepting DHCP hostname, skipping"
+    echo "Only COS is using startup script to configure multi-nic, skipping"
     return
   fi
   default_net_conf="/usr/lib/systemd/network/99-default.network"
   new_config="/etc/systemd/network/90-non-eth0.network"
   if [[ -e "${default_net_conf}" ]]; then
+    if cat "${default_net_conf}" | grep 'Name\|UseHostname\|UseDNS\|UseNTP'; then
+      echo "Error: Name|UseHostname|UseDNS|UseNTP already configured in ${default_net_conf}"
+      exit 1
+    fi
     cp "${default_net_conf}" "${new_config}"
     sed -i 's/\[Match\]/\[Match\]\nName=!eth0/g' "${new_config}"
-    sed -i 's/\[DHCP\]/\[DHCP\]\nUseHostname=false/g' "${new_config}"
+    sed -i 's/\[DHCP\]/\[DHCP\]\nUseHostname=false\nUseDNS=false\nUseNTP=false/g' "${new_config}"
   else
     echo "Error: Default network config not found: ${default_net_conf}"
     exit 1

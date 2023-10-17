@@ -3365,7 +3365,7 @@ function main() {
       log-wrap 'GKECreateGPUConfig' gke-create-gpu-config
     fi
     if [[ -e "${KUBE_HOME}/bin/gke-internal-configure-helper.sh" ]]; then
-      log-wrap 'GKEConfigureMultiNICNoHostname' gke-configure-multinic-no-hostname
+      log-wrap 'GKEConfigureMultiNIC' gke-configure-multinic
     fi
 
     # This must be the last step as part of configure-helper.sh, we want to ensure
