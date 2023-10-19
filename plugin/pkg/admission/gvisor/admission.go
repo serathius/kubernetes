@@ -57,6 +57,10 @@ const (
 	// Internal annotations.
 	internalAnnotationPrefix = annotationPrefix + "internal."
 	seccompKey               = internalAnnotationPrefix + "seccomp."
+
+	// Accelerator annotations.
+	nvidiaAnnotation = internalAnnotationPrefix + "nvproxy"
+	tpuAnnotation    = internalAnnotationPrefix + "tpuproxy"
 )
 
 var (
@@ -69,6 +73,10 @@ var (
 	// disallowedCapabilities contains capabilities to be dropped if not
 	// explicitly added by users.
 	disallowedCapabilities = []core.Capability{"NET_RAW"}
+
+	// Accelerator resource request names.
+	gpuResourceName = core.ResourceName("nvidia.com/gpu")
+	tpuResourceName = core.ResourceName("google.com/tpu")
 )
 
 // Register registers a plugin
@@ -234,6 +242,7 @@ func mutateGVisorPod(pod *core.Pod) {
 	updatePodCapabilities(pod)
 	updateVolumePodAnnotations(pod)
 	updateSeccompAnnotations(pod)
+	updateAcceleratorAnnotations(pod)
 }
 
 // updatePodCapabilities updates capabilities for given containers
@@ -435,6 +444,35 @@ func seccompForContainer(cont *core.Container, podSeccomp core.SeccompProfileTyp
 	return podSeccomp
 }
 
+func updateAcceleratorAnnotations(pod *core.Pod) {
+	addAnnotations(pod, getAcceleratorAnnotations(pod))
+}
+
+func getAcceleratorAnnotations(pod *core.Pod) map[string]string {
+	rv := make(map[string]string)
+	pods.VisitContainersWithPath(&pod.Spec, field.NewPath("spec"), func(c *core.Container, _ *field.Path) bool {
+		if containerHasResourceRequestsAndLimits(c, gpuResourceName) {
+			rv[nvidiaAnnotation] = "true"
+		}
+
+		if containerHasResourceRequestsAndLimits(c, tpuResourceName) {
+			rv[tpuAnnotation] = "true"
+		}
+		return true
+	})
+	return rv
+}
+
+func containerHasResourceRequestsAndLimits(c *core.Container, name core.ResourceName) bool {
+	if res, ok := c.Resources.Limits[name]; ok && !res.IsZero() {
+		return true
+	}
+	if res, ok := c.Resources.Requests[name]; ok && !res.IsZero() {
+		return true
+	}
+	return false
+}
+
 // getPod is an utility function that casts the object to core.Pod and returns
 // an API error if it fails.
 func getPod(obj runtime.Object) (*core.Pod, error) {
@@ -519,8 +557,8 @@ func annotationDiff(old *core.Pod, new *core.Pod) (map[string]string, map[string
 }
 
 // validateGVisorPod validates whether the pod is eligible to run in gVisor.
-// 1) Pods with host path are not allowed.
-// 2) Pods with host namespace are not allowed.
+//  1. Pods with host path are not allowed.
+//  2. Pods with host namespace are not allowed.
 func validateGVisorPod(pod *core.Pod) error {
 	if pod.Spec.NodeSelector != nil {
 		if v, ok := pod.Spec.NodeSelector[gvisorNodeKey]; ok && v != gvisorNodeValue {
@@ -612,7 +650,12 @@ func checkAnnotations(pod *core.Pod, add, del map[string]string, all bool) error
 	if err := checkAnnotationsHelper(getVolumeAnnotations(pod), mountAnnotationPrefix, add, del, all); err != nil {
 		return err
 	}
-	return checkAnnotationsHelper(getSeccompAnnotations(pod), internalAnnotationPrefix, add, del, all)
+
+	internalAnnotations := getSeccompAnnotations(pod)
+	for k, v := range getAcceleratorAnnotations(pod) {
+		internalAnnotations[k] = v
+	}
+	return checkAnnotationsHelper(internalAnnotations, internalAnnotationPrefix, add, del, all)
 }
 
 func checkAnnotationsHelper(allowed map[string]string, prefix string, add, del map[string]string, all bool) error {

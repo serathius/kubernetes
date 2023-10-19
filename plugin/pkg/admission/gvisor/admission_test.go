@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apiserver/pkg/admission"
@@ -1959,6 +1960,16 @@ func TestValidate(t *testing.T) {
 	gvisorPodSeccompInvalidAnnotation := gvisorPodSeccomp.DeepCopy()
 	gvisorPodSeccompInvalidAnnotation.Annotations["dev.gvisor.internal.seccomp.cont"] = "another-value"
 
+	acceleratorPod := gvisorPod.DeepCopy()
+	acceleratorPod.Spec.Containers = append(acceleratorPod.Spec.Containers, core.Container{
+		Name: "gpu pod",
+		Resources: core.ResourceRequirements{
+			Limits: core.ResourceList{
+				gpuResourceName: resource.MustParse("1"),
+			},
+		},
+	})
+
 	updatePodTests := map[string]struct {
 		oldPod, newPod *core.Pod
 		expectErr      bool
@@ -1987,6 +1998,11 @@ func TestValidate(t *testing.T) {
 			oldPod:    gvisorPodSeccomp.DeepCopy(),
 			newPod:    gvisorPodSeccompInvalidAnnotation.DeepCopy(),
 			expectErr: true,
+		},
+		"gvisor w/ gpu from old server": {
+			oldPod:    acceleratorPod,
+			newPod:    acceleratorPod,
+			expectErr: false,
 		},
 	}
 	for name, test := range updatePodTests {
@@ -2443,6 +2459,108 @@ func TestValidatePodCreate(t *testing.T) {
 			},
 			expectErr: true,
 		},
+		"pod with GPU resource is allowed": {
+			pod: core.Pod{
+				Spec: core.PodSpec{
+					RuntimeClassName: toPtr(gvisorRuntimeClass),
+					Containers: []core.Container{
+						{
+							Name: "gpu-pod",
+							Resources: core.ResourceRequirements{
+								Limits: core.ResourceList{
+									gpuResourceName: resource.MustParse("1"),
+								},
+							},
+						},
+					},
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						nvidiaAnnotation: "true",
+					},
+				},
+			},
+		},
+		"pod with TPU resource is allowed": {
+			pod: core.Pod{
+				Spec: core.PodSpec{
+					RuntimeClassName: toPtr(gvisorRuntimeClass),
+					Containers: []core.Container{
+						{
+							Name: "tpu-pod",
+							Resources: core.ResourceRequirements{
+								Limits: core.ResourceList{
+									tpuResourceName: resource.MustParse("1"),
+								},
+							},
+						},
+					},
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						tpuAnnotation: "true",
+					},
+				},
+			},
+		},
+		"pod with accelerator and user set annotations is allowed": {
+			pod: core.Pod{
+				Spec: core.PodSpec{
+					RuntimeClassName: toPtr(gvisorRuntimeClass),
+					Containers: []core.Container{
+						{
+							Name: "tpu-pod",
+							Resources: core.ResourceRequirements{
+								Limits: core.ResourceList{
+									tpuResourceName: resource.MustParse("1"),
+								},
+							},
+						},
+					},
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						tpuAnnotation: "true",
+					},
+				},
+			},
+		},
+		"pod with user set accelerators is not allowed": {
+			pod: core.Pod{
+				Spec: core.PodSpec{
+					RuntimeClassName: toPtr(gvisorRuntimeClass),
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						tpuAnnotation: "true",
+					},
+				},
+			},
+			expectErr: true,
+		},
+		"pod with zero accelerator and annotations set is not allowed": {
+			pod: core.Pod{
+				Spec: core.PodSpec{
+					RuntimeClassName: toPtr(gvisorRuntimeClass),
+					Containers: []core.Container{
+						{
+							Name: "gpu-pod",
+							Resources: core.ResourceRequirements{
+								Limits: core.ResourceList{
+									tpuResourceName: resource.MustParse("0"),
+								},
+							},
+						},
+					},
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						tpuAnnotation: "true",
+					},
+				},
+			},
+			expectErr: true,
+		},
 	}
 
 	for name, test := range tests {
@@ -2490,9 +2608,37 @@ func TestValidatePodUpdate(t *testing.T) {
 	gvisorPodNewImage := gvisorPod.DeepCopy()
 	gvisorPodNewImage.Spec.Containers[0].Image = "my-image:v2"
 
+	acceleratorPodNoAnnotations := gvisorPod.DeepCopy()
+	acceleratorPodNoAnnotations.Spec.Containers = append(acceleratorPodNoAnnotations.Spec.Containers, core.Container{
+		Name: "gpu pod",
+		Resources: core.ResourceRequirements{
+			Limits: core.ResourceList{
+				gpuResourceName: resource.MustParse("1"),
+			},
+		},
+	})
+
+	acceleratorPod := acceleratorPodNoAnnotations.DeepCopy()
+	acceleratorPod.Annotations = map[string]string{
+		nvidiaAnnotation: "true",
+	}
+
+	zeroAcceleratorPod := acceleratorPod.DeepCopy()
+	zeroAcceleratorPod.Spec.Containers = []core.Container{
+		{
+			Name: "zero gpu pod",
+			Resources: core.ResourceRequirements{
+				Limits: core.ResourceList{
+					gpuResourceName: resource.MustParse("0"),
+				},
+			},
+		},
+	}
+
 	tests := map[string]struct {
-		oldPod, newPod *core.Pod
-		expectErr      bool
+		oldPod, newPod      *core.Pod
+		expectedAnnotations map[string]string
+		expectErr           bool
 	}{
 		"non-gvisor->non-gvisor": {
 			oldPod:    nativePod.DeepCopy(),
@@ -2519,6 +2665,20 @@ func TestValidatePodUpdate(t *testing.T) {
 			newPod:    gvisorPod.DeepCopy(),
 			expectErr: true,
 		},
+		"update pod with accelerator": {
+			oldPod:    acceleratorPod.DeepCopy(),
+			newPod:    acceleratorPod.DeepCopy(),
+			expectErr: false,
+		},
+		"user updates pod with accelerator annotations": {
+			oldPod:    gvisorPod.DeepCopy(),
+			newPod:    zeroAcceleratorPod.DeepCopy(),
+			expectErr: true,
+		},
+		"update from old server": {
+			oldPod: acceleratorPodNoAnnotations.DeepCopy(),
+			newPod: acceleratorPodNoAnnotations.DeepCopy(),
+		},
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -2526,9 +2686,9 @@ func TestValidatePodUpdate(t *testing.T) {
 			err := validatePod(attrs)
 			if test.expectErr {
 				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
+				return
 			}
+			assert.NoError(t, err)
 		})
 	}
 }
@@ -3256,6 +3416,179 @@ func TestFindNewContainers(t *testing.T) {
 
 			got := findNewContainers(old, new)
 			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func TestCreatePodWithAccelerators(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		in              *core.Pod
+		wantAnnotations map[string]string
+		wantErr         bool
+	}{
+		{
+			name: "create pod with GPU",
+			in: &core.Pod{
+				Spec: core.PodSpec{
+					RuntimeClassName: toPtr(gvisorRuntimeClass),
+					InitContainers: []core.Container{
+						{
+							Name: "no-gpu",
+						},
+						{
+							Name: "gpu",
+							Resources: core.ResourceRequirements{
+								Limits: core.ResourceList{
+									core.ResourceCPU:                   resource.MustParse("1"),
+									core.ResourceName(gpuResourceName): resource.MustParse("1"),
+								},
+							},
+						},
+					},
+				},
+			},
+			wantAnnotations: map[string]string{
+				nvidiaAnnotation: "true",
+			},
+		},
+		{
+			name: "user sets GPU annotation without request",
+			in: &core.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						nvidiaAnnotation: "true",
+					},
+				},
+				Spec: core.PodSpec{
+					RuntimeClassName: toPtr(gvisorRuntimeClass),
+					InitContainers: []core.Container{
+						{
+							Name: "no-gpu",
+						},
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "user sets annotations with zero request",
+			in: &core.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						nvidiaAnnotation: "true",
+					},
+				},
+				Spec: core.PodSpec{
+					RuntimeClassName: toPtr(gvisorRuntimeClass),
+					InitContainers: []core.Container{
+						{
+							Name: "no-gpu",
+						},
+						{
+							Name: "gpu",
+							Resources: core.ResourceRequirements{
+								Limits: core.ResourceList{
+									core.ResourceCPU:                   resource.MustParse("1"),
+									core.ResourceName(gpuResourceName): resource.MustParse("0"),
+								},
+							},
+						},
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "create pod with TPU",
+			in: &core.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						tpuAnnotation: "true",
+					},
+				},
+				Spec: core.PodSpec{
+					RuntimeClassName: toPtr(gvisorRuntimeClass),
+					InitContainers: []core.Container{
+						{
+							Name: "tpu",
+						},
+					},
+					Containers: []core.Container{
+						{
+							Name: "tpu",
+							Resources: core.ResourceRequirements{
+								Limits: core.ResourceList{
+									core.ResourceCPU:                   resource.MustParse("1"),
+									core.ResourceName(tpuResourceName): resource.MustParse("1"),
+								},
+							},
+						},
+					},
+				},
+			},
+			wantAnnotations: map[string]string{
+				tpuAnnotation: "true",
+			},
+		},
+		{
+			name: "create pod with zero TPU doesn't set annotations",
+			in: &core.Pod{
+				Spec: core.PodSpec{
+					RuntimeClassName: toPtr(gvisorRuntimeClass),
+					InitContainers: []core.Container{
+						{
+							Name: "tpu",
+						},
+					},
+					Containers: []core.Container{
+						{
+							Name: "tpu",
+							Resources: core.ResourceRequirements{
+								Limits: core.ResourceList{
+									core.ResourceCPU:                   resource.MustParse("1"),
+									core.ResourceName(tpuResourceName): resource.MustParse("0"),
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "TPU annotation set without request",
+			in: &core.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						tpuAnnotation: "true",
+					},
+				},
+				Spec: core.PodSpec{
+					RuntimeClassName: toPtr(gvisorRuntimeClass),
+					InitContainers: []core.Container{
+						{
+							Name: "no-gpu",
+						},
+					},
+				},
+			},
+			wantErr: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			attrs := makePodCreateAttrs(tc.in, "")
+			err := admitPodCreate(attrs)
+
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("Wanted error but did not get one.")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("failed pod: %v", err)
+			}
+			assert.Equal(t, tc.wantAnnotations, tc.in.GetAnnotations())
 		})
 	}
 }
