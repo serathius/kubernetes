@@ -964,6 +964,11 @@ function gke-setup-gcfs {
     client_version_flag="--client_version=\"${KUBELET_VERSION}\""
   fi
 
+  local secondary_boot_disk_mount_points_flag=""
+  if [[ -n "${SECONDARY_BOOT_DISKS:-}" ]]; then
+    secondary_boot_disk_mount_points_flag="--secondary-disk-mount-points=${SECONDARY_BOOT_DISKS}"
+  fi
+
   cat <<EOF >/etc/systemd/system/gcfsd.service
 # Systemd configuration for Google Container File System service
 [Unit]
@@ -1002,7 +1007,7 @@ Before=containerd.service
 StartLimitIntervalSec=0
 [Service]
 Environment=HOME=/root
-ExecStart=${KUBE_HOME}/bin/containerd-gcfs-grpc --log-level=info --config=/etc/containerd-gcfs-grpc/config.toml --enable-image-proxy-keychain-client
+ExecStart=${KUBE_HOME}/bin/containerd-gcfs-grpc --log-level=info --config=/etc/containerd-gcfs-grpc/config.toml --enable-image-proxy-keychain-client ${secondary_boot_disk_mount_points_flag}
 Restart=always
 RestartSec=1
 [Install]
