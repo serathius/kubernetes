@@ -2259,14 +2259,21 @@ function download-component-data {
   local -r endpoint=$(get-metadata-value "instance/attributes/gke-api-endpoint")
   local -r attribute_config="${KUBE_HOME}/hurl_attribute_config.yaml"
 
+  local -r extrasLocalPath="${KUBE_HOME}/kube-manifests/kubernetes/gci-trusty/gce-extras/extras.json"
+  local -r extrasProcessKind="none"
+  if [[ -n  "${HURL_PROVIDES_SPLIT_EXTRAS_LIST:-}" ]]; then
+    extrasLocalPath="${KUBE_HOME}/kube-manifests/kubernetes/gci-trusty/gce-extras/"
+    extrasProcessKind="split-extras-list"
+  fi
+
   cat > $attribute_config <<EOF
 attributes:
 - attributePath: $(get-metadata-value "instance/attributes/google-container-manifest-path")
   localPath: $(python3 -c "import sys, yaml; print(yaml.safe_load(open(sys.argv[1]))['staticPodPath'])" "${KUBE_HOME}/kubelet-config.yaml")
   processKind: split-pod-list
 - attributePath: $(get-metadata-value "instance/attributes/extra-addons-path")
-  localPath: ${KUBE_HOME}/kube-manifests/kubernetes/gci-trusty/gce-extras/extras.json
-  processKind: none
+  localPath: "${extrasLocalPath}"
+  processKind: "${extrasProcessKind}"
 EOF
 
   retry-forever 30 ${KUBE_HOME}/bin/hurl --hms_address $endpoint --attribute_config $attribute_config
