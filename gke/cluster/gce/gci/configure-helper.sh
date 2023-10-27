@@ -2259,8 +2259,8 @@ function download-component-data {
   local -r endpoint=$(get-metadata-value "instance/attributes/gke-api-endpoint")
   local -r attribute_config="${KUBE_HOME}/hurl_attribute_config.yaml"
 
-  local -r extrasLocalPath="${KUBE_HOME}/kube-manifests/kubernetes/gci-trusty/gce-extras/extras.json"
-  local -r extrasProcessKind="none"
+  local extrasLocalPath="${KUBE_HOME}/kube-manifests/kubernetes/gci-trusty/gce-extras/extras.json"
+  local extrasProcessKind="none"
   if [[ -n  "${HURL_PROVIDES_SPLIT_EXTRAS_LIST:-}" ]]; then
     extrasLocalPath="${KUBE_HOME}/kube-manifests/kubernetes/gci-trusty/gce-extras/"
     extrasProcessKind="split-extras-list"
