@@ -41,6 +41,8 @@ import (
 	utilflag "k8s.io/kubernetes/pkg/util/flag"
 
 	"k8s.io/kubernetes/pkg/kubelet/kuberuntime"
+
+	"k8s.io/kubernetes/pkg/kubelet/cadvisor"
 )
 
 const defaultRootDir = "/var/lib/kubelet"
@@ -310,6 +312,8 @@ func (f *KubeletFlags) AddFlags(mainfs *pflag.FlagSet) {
 	// GKE FLAGS
 	bindablePodSysctls := cliflag.ConfigurationMap(kuberuntime.PodSysctls)
 	fs.Var(&bindablePodSysctls, "pod-sysctls", "List of Linux kernel parameters (sysctls) that will be applied to the pods running on this node. Must be specified as key=value pairs separated by ','.")
+
+	fs.IntVar(&cadvisor.NodeCapacityCPUOverride, "node-capacity-cpu-cores-override", cadvisor.NodeCapacityCPUOverride, "If non-zero, will use provided value as node CPU capacity.")
 	// END GKE FLAGS
 
 	// EXPERIMENTAL FLAGS

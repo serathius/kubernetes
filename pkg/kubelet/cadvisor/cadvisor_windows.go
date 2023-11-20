@@ -68,7 +68,11 @@ func (cu *cadvisorClient) SubcontainerInfo(name string, req *cadvisorapi.Contain
 }
 
 func (cu *cadvisorClient) MachineInfo() (*cadvisorapi.MachineInfo, error) {
-	return cu.winStatsClient.WinMachineInfo()
+	machineInfo, err := cu.winStatsClient.WinMachineInfo()
+	if err == nil {
+		overrideNodeCapacity(machineInfo, NodeCapacityCPUOverride)
+	}
+	return machineInfo, err
 }
 
 func (cu *cadvisorClient) VersionInfo() (*cadvisorapi.VersionInfo, error) {

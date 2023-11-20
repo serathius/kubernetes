@@ -155,7 +155,11 @@ func (cc *cadvisorClient) SubcontainerInfo(name string, req *cadvisorapi.Contain
 }
 
 func (cc *cadvisorClient) MachineInfo() (*cadvisorapi.MachineInfo, error) {
-	return cc.GetMachineInfo()
+	machineInfo, err := cc.GetMachineInfo()
+	if err == nil {
+		overrideNodeCapacity(machineInfo, NodeCapacityCPUOverride)
+	}
+	return machineInfo, err
 }
 
 func (cc *cadvisorClient) ImagesFsInfo() (cadvisorapiv2.FsInfo, error) {
