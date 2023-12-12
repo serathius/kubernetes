@@ -38,6 +38,8 @@ CURL_FLAGS='--fail --silent --show-error --retry 5 --retry-delay 3 --connect-tim
 # This version needs to be the same as in gke/cluster/gce/gci/configure.sh
 GKE_CONTAINERD_INFRA_CONTAINER="pause:3.8@sha256:880e63f94b145e46f1b1082bb71b85e21f16b99b180b9996407d61240ceb9830"
 
+readonly KUBELET_MANIFESTS_PATH="/etc/kubernetes/manifests"
+
 function convert-manifest-params {
   # A helper function to convert the manifest args from a string to a list of
   # flag arguments.
@@ -249,9 +251,11 @@ function create-dirs {
   mkdir -p /etc/srv/sshproxy
   mkdir -p /etc/srv/kubernetes
   mkdir -p /var/lib/kubelet
-  mkdir -p /etc/kubernetes/manifests
+  mkdir -p ${KUBELET_MANIFESTS_PATH}
   if [[ "${KUBERNETES_MASTER:-}" == "false" ]]; then
     mkdir -p /var/lib/kube-proxy
+  else
+    mkdir -p /etc/kubernetes/downloaded-manifests
   fi
 }
 
@@ -1839,6 +1843,7 @@ function wait-till-etcd-ready {
 
     sleep 2
   done
+  echo "etcd was reported as healthy by gke-master-healthcheck"
 }
 
 # Replaces the variables in the konnectivity-server manifest file with the real values, and then
@@ -2159,10 +2164,16 @@ function download-component-data {
     extrasProcessKind="split-extras-list"
   fi
 
+  local localPath="${KUBELET_MANIFESTS_PATH}"
+  if [[ "${ORDERED_COMPONENTS_START:-false}" == "true" ]]; then
+    DELAYED_COMPONENTS_MANIFESTS_DIRECTORY="/etc/kubernetes/downloaded-manifests"
+    localPath="${DELAYED_COMPONENTS_MANIFESTS_DIRECTORY}"
+  fi
+
   cat > $attribute_config <<EOF
 attributes:
 - attributePath: $(get-metadata-value "instance/attributes/google-container-manifest-path")
-  localPath: $(python3 -c "import sys, yaml; print(yaml.safe_load(open(sys.argv[1]))['staticPodPath'])" "${KUBE_HOME}/kubelet-config.yaml")
+  localPath: "${localPath}"
   processKind: split-pod-list
 - attributePath: $(get-metadata-value "instance/attributes/extra-addons-path")
   localPath: "${extrasLocalPath}"
@@ -2172,6 +2183,26 @@ EOF
   retry-forever 30 ${KUBE_HOME}/bin/hurl --hms_address $endpoint --attribute_config $attribute_config
   # setup addons
   setup-addon-manifests "addons" "gce-extras"
+
+  if [[ "${ORDERED_COMPONENTS_START:-false}" == "true" ]]; then
+    echo "Ordered bootstrap: run level 0 - moving manifests from ${localPath} to ${KUBELET_MANIFESTS_PATH}:"
+
+    for file in ${localPath}/*; do
+      runLevel=$(python3 -c "
+import sys, yaml
+object = yaml.safe_load(open(sys.argv[1]))
+if 'metadata' in object:
+  if 'annotations' in object['metadata']:
+    annotations = object['metadata']['annotations']
+    runLevel = 'components.gke.io/run-level'
+    if runLevel in annotations:
+      print(annotations[runLevel])
+      " "${file}")
+      if [[ ${runLevel} == "0" ]]; then
+        mv --verbose "${file}" "${KUBELET_MANIFESTS_PATH}"
+      fi
+    done
+  fi
 }
 
 
@@ -2778,6 +2809,7 @@ function wait-till-apiserver-ready() {
   until kubectl get nodes; do
     sleep 5
   done
+  echo "kube-apiserver responded to kubectl get nodes'"
 }
 
 function ensure-master-bootstrap-kubectl-auth {
@@ -3216,12 +3248,27 @@ function main() {
     log-wrap 'ComputeMasterManifestVariables' compute-master-manifest-variables
     if [[ -z "${ETCD_SERVERS:-}" ]]; then
       log-wrap 'PrepareEtcdFiles' prepare-etcd-files
-      if [[ "${ENABLE_WAIT_TILL_ETCD_READY:-false}" == "true" ]]; then
-        log-wrap 'WaitTillEtcdReady' wait-till-etcd-ready
-      fi
+    fi
+    if [[ "${ORDERED_COMPONENTS_START:-false}" == "true" ]]; then
+      # This assumes that etcd is a level 0 component.
+      log-wrap 'WaitTillEtcdReady' wait-till-etcd-ready
     fi
     log-wrap 'SourceConfigureKubeApiserver' source ${KUBE_BIN}/configure-kubeapiserver.sh
+    if [[ "${ORDERED_COMPONENTS_START:-false}" == "true" ]]; then
+      echo "Ordered bootstrap: run level 1 - starting kube-apiserver"
+    fi
     log-wrap 'StartKubeApiserver' start-kube-apiserver
+    if [[ "${ORDERED_COMPONENTS_START:-false}" == "true" ]]; then
+      if [[ -n "${DELAYED_COMPONENTS_MANIFESTS_DIRECTORY:-}" ]]; then
+        echo "Ordered bootstrap: run level 2+ - moving remaining manifests from ${DELAYED_COMPONENTS_MANIFESTS_DIRECTORY}"
+        log-start 'MoveRunLevel2ComponentsManifests'
+        mv --verbose ${DELAYED_COMPONENTS_MANIFESTS_DIRECTORY}/* ${KUBELET_MANIFESTS_PATH}
+        log-end 'MoveRunLevel2ComponentsManifests'
+      else
+        echo "ORDERED_COMPONENTS_START is set to true but DELAYED_COMPONENTS_MANIFESTS_DIRECTORY is not defined"
+        exit 1
+      fi
+    fi
     if [[ "${RUN_KONNECTIVITY_PODS:-false}" == "true" ]]; then
       log-wrap 'StartKonnectivityServer' start-konnectivity-server
     fi
