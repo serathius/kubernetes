@@ -2905,10 +2905,8 @@ function install-bfq {
     return
   fi
 
-  local boot_disk_partition
-  boot_disk_partition=$(mount | grep "/mnt/stateful_partition" | awk '{print $1}')
   local boot_disk_device_name
-  boot_disk_device_name=$(lsblk -no PKNAME "${boot_disk_partition}")
+  boot_disk_device_name=$(basename "$(rootdev -s -d)")
 
   local boot_disk_scheduler="/sys/block/${boot_disk_device_name}/queue/scheduler"
   if [[ ! -e "${boot_disk_scheduler}" ]]; then
