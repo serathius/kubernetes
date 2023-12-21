@@ -30,8 +30,11 @@ DEFAULT_CNI_HASH_LINUX_ARM64='a8cfa6f88b2a8f19cabfd182c2fe26593bbed9228ef35e6010
 DEFAULT_NPD_VERSION='v0.8.13-57-gc3c5389'
 DEFAULT_NPD_HASH_AMD64='2cb0f1610adb5d8d3c077d8ce7a65fb4066f419e82c3ed4ce72a7c4b337bcef7ab9e53d006d97bea70acd980565e2df80466858e6b5291cb1d10587bf0fb9d6c'
 DEFAULT_NPD_HASH_ARM64='e049d37298cbcb3479b3fdc2927ca169fdbe7661dc5c6b1f7cd8f9fb66634eb1c12858155b40f32f86262ebca1171061ce92a520668ce898f89936c668214207'
-NPD_CUSTOM_PLUGINS_VERSION="v1.0.9"
-NPD_CUSTOM_PLUGINS_TAR_HASH="14136cd8c71d2a89fb5b6d7f648bab787d95e2b2b39ee960cf6e544259249ae7abc97599eae5ce173a11ea48333d1f59e55da4cb3c718281e253c46ff6883a36"
+
+NPD_CUSTOM_PLUGINS_VERSION="v1.0.12"
+NPD_CUSTOM_PLUGINS_TAR_AMD64_HASH="58223a9564220636b8f7916ef5a753e85463acd1dac13194b458b8a5cc01eeae5d78b56d2c17a8832e871cc7d7e1e491dadd965daa2743a54d3150d2ea545172"
+NPD_CUSTOM_PLUGINS_TAR_ARM64_HASH="b90fd9974a31d555ed661136405ce009ebc018c3ab35a39673b523b86c37831ca5d08352aa838e7ca90a42582ebeb328ad34d4100b1b1ab0e5bd6af16a869329"
+
 DEFAULT_CRICTL_VERSION='v1.28.0-gke.1'
 DEFAULT_CRICTL_AMD64_SHA512='46387d29d2d79efe0fc0b83df3de6f3d9b00d1477d9765cd8e9a5d30b234d6d9b5bfd408bf4f7741c75a7bc0163b362156475e941c6387476866f0e69bae6ce3'
 DEFAULT_CRICTL_ARM64_SHA512='bb6505766cd294905bad7c8af11133a8f712e1a6806cf39c6eadcfadb5fcd608efdbf8e2abdf21e5061b4ff3bc5778e76005da64f7d91f4b2e5c543ebd833b54'
@@ -526,8 +529,19 @@ function install-node-problem-detector {
 # Install node problem detector custom plugins.
 function install-npd-custom-plugins {
   local -r version="${NPD_CUSTOM_PLUGINS_VERSION}"
-  local -r hash="${NPD_CUSTOM_PLUGINS_TAR_HASH}"
-  local -r tar="npd-custom-plugins-${version}.tar.gz"
+  case "${HOST_PLATFORM}/${HOST_ARCH}" in
+    linux/amd64)
+      local -r hash="${NPD_CUSTOM_PLUGINS_TAR_AMD64_HASH}"
+      ;;
+    linux/arm64)
+      local -r hash="${NPD_CUSTOM_PLUGINS_TAR_ARM64_HASH}"
+      ;;
+    *)
+      echo "Unrecognized version and platform/arch combination:"
+      echo "$NPD_CUSTOM_PLUGINS_VERSION $HOST_PLATFORM/$HOST_ARCH"
+      exit 1
+  esac
+  local -r tar="npd-custom-plugins-${version}-${HOST_PLATFORM}-${HOST_ARCH}.tar.gz"
 
   if is-preloaded "${tar}" "${hash}"; then
     echo "${tar} is preloaded."
