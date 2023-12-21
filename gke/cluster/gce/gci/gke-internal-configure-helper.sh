@@ -933,7 +933,7 @@ function gke-configure-npd-custom-plugins {
 
   # the two json configs only includes gcfs-snapshotter and gcfsd service for now
   if [[ "${ENABLE_GCFS:-}" == "true" ]]; then
-    GKE_NPD_CUSTOM_PLUGINS_CONFIG+=",${config_dir}/systemd-monitor-health.json,${config_dir}/systemd-monitor-restart.json,${config_dir}/gcfs-snapshotter-missing-layer-monitor.json"
+    GKE_NPD_CUSTOM_PLUGINS_CONFIG+=",${config_dir}/systemd-monitor-health.json,${config_dir}/systemd-monitor-restart.json,${config_dir}/gcfs-snapshotter-missing-layer-monitor.json,${config_dir}/secondary-boot-disk-missing-layer.json"
   fi
 }
 
