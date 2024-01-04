@@ -670,6 +670,7 @@ oom_score = -999
   stream_server_address = "127.0.0.1"
   max_container_log_line_size = ${CONTAINERD_MAX_CONTAINER_LOG_LINE:-262144}
   sandbox_image = "${KUBE_DOCKER_REGISTRY}/${GKE_CONTAINERD_INFRA_CONTAINER}"
+  image_pull_progress_timeout = "5m"
 [plugins."io.containerd.grpc.v1.cri".cni]
   bin_dir = "${KUBE_HOME}/bin"
   conf_dir = "/etc/cni/net.d"
