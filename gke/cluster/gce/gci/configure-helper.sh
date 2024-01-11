@@ -1822,9 +1822,13 @@ function wait-till-etcd-ready {
   # 10 * (initial try + 5 retries) = 60 connection attemps.
   local max_attempts=10
   local attempts=0
+  local view="etcd"
+  if [[ "${MASTERHEALTHCHECK_USE_STORAGE_ENDPOINT:-false}" == "true" ]]; then
+    view="storage"
+  fi
 
   echo "Wait till etcd ready"
-  until curl ${CURL_FLAGS} "http://127.0.0.1:${MASTER_HEALTHCHECK_PORT}?view=etcd"; do
+  until curl ${CURL_FLAGS} "http://127.0.0.1:${MASTER_HEALTHCHECK_PORT}?view=${view}"; do
     echo "Attempt ${attempts}: etcd not healthy, retrying in 2 seconds"
     ((attempts+=1))
 
