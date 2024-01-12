@@ -1823,8 +1823,14 @@ function prepare-etcd-files {
 # Waits until gke-master-healthcheck reports etcd is healthy.
 function wait-till-etcd-ready {
   # CURL_FLAGS configures 5 retries, so this configures
-  # 10 * (initial try + 5 retries) = 60 connection attemps.
-  local max_attempts=10
+  # max_attempts * (initial try + 5 retries) connection attemps.
+  local max_attempts=${WAIT_TILL_ETCD_READY_MAX_ATTEMPTS:-10}
+  local int_re='^[1-9][0-9]{1,2}$'
+  if ! [[ "${max_attempts}" =~ ${int_re} ]] ; then
+    echo "WAIT_TILL_ETCD_READY_MAX_ATTEMPTS is not a positive integer: ${max_attempts}."
+    exit 1
+  fi
+
   local attempts=0
   local view="etcd"
   if [[ "${MASTERHEALTHCHECK_USE_STORAGE_ENDPOINT:-false}" == "true" ]]; then
