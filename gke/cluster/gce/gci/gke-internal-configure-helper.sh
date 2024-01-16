@@ -932,6 +932,15 @@ function gke-configure-npd-custom-plugins {
   # Configure sysctl monitor.
   GKE_NPD_CUSTOM_PLUGINS_CONFIG="${config_dir}/sysctl-monitor.json"
 
+  # Enable containerd 1.x deprecation checkers
+  if [[ -n "${CONTAINERD_DEPRECATION_CHECKER:-}" ]]; then
+    GKE_NPD_CUSTOM_PLUGINS_CONFIG+=",${config_dir}/containerd-deprecation-config-auths.json"
+    GKE_NPD_CUSTOM_PLUGINS_CONFIG+=",${config_dir}/containerd-deprecation-config-configs.json"
+    GKE_NPD_CUSTOM_PLUGINS_CONFIG+=",${config_dir}/containerd-deprecation-cri-v1alpha2.json"
+    GKE_NPD_CUSTOM_PLUGINS_CONFIG+=",${config_dir}/containerd-deprecation-others.json"
+    GKE_NPD_CUSTOM_PLUGINS_CONFIG+=",${config_dir}/containerd-deprecation-schema-v1-image.json"
+  fi
+
   # the two json configs only includes gcfs-snapshotter and gcfsd service for now
   if [[ "${ENABLE_GCFS:-}" == "true" ]]; then
     GKE_NPD_CUSTOM_PLUGINS_CONFIG+=",${config_dir}/systemd-monitor-health.json,${config_dir}/systemd-monitor-restart.json,${config_dir}/gcfs-snapshotter-missing-layer-monitor.json,${config_dir}/secondary-boot-disk-missing-layer.json"
