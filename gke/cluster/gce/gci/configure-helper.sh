@@ -320,7 +320,7 @@ function get-or-generate-uuid(){
   local myuuid
   if grep -q "${device}" "${ssdmap}"; then
     #create symlink based on saved uuid
-    myuuid=$(grep "${device}" "${ssdmap}" | cut -d ' ' -f 2)
+    myuuid=$(grep -w "${device}" "${ssdmap}" | cut -d ' ' -f 2)
   else
     # generate new uuid and add it to the map
     if ! myuuid=$(uuidgen); then
