@@ -2015,7 +2015,7 @@ push_gcs()
   fi
 
   for gcs_bucket in "${gcs_buckets[@]}"; do
-    push_gcs_with_checksum "${artifact_dir}" "${gcs_bucket}"
+    push_gcs_to_bucket "${artifact_dir}" "${gcs_bucket}"
 
     # List all files up in the bucket as a validity check. The trailing "**"
     # literal wildcard is gsutil syntax for a flat listing of all objects in
@@ -2024,121 +2024,25 @@ push_gcs()
   done
 }
 
-# Check the MD5 checksums of objects in the GCS bucket against what we
-# have locally. List those objects that either are not in the GCS bucket
-# or whose checksums don't match with what we have locally. In other
-# words, this shows you only those local objects that must get uploaded
-# into the bucket. For each object, the output format is "OBJ,HASH".
-get_unreconciled_artifacts()
-{
-  local artifact_dir="${1:-}"
-  local gcs_bucket="${2:-}"
-  local artifact_dir_toplevel
-  local version_dir
-  declare -a artifacts=()
-  local artifact
-  local checksum_str
-  local checksum_base64
-  declare -A remote_checksum
-
-  log.assertvar artifact_dir
-  log.assertvar gcs_bucket
-
-  artifact_dir_toplevel="$(dirname "${artifact_dir}")"
-  version_dir="$(basename "${artifact_dir}")"
-
-  for objhash in $(gsutil ls -L "${gcs_bucket}/${version_dir}/**" \
-    | grep '^gs\|^  Hash (md5)' \
-    | paste -d, - - \
-    | sed 's/:,  Hash (md5): \+/,/'); do
-    remote_checksum["${objhash%,*}"]="${objhash#*,}"
-  done
-
-  mapfile -t artifacts < <(cd "${artifact_dir_toplevel}" && find -L "${version_dir}" -type f | sort)
-
-  for artifact in ${artifacts[@]+"${artifacts[@]}"}; do
-    checksum_str=$(md5sum "${artifact_dir_toplevel}/${artifact}" | cut -d' ' -f1)
-    checksum_base64="$(hex_encode "${checksum_str}" | base64)"
-    if [[ -v remote_checksum["${gcs_bucket}/${artifact}"] && "${checksum_base64}" == "${remote_checksum[${gcs_bucket}/${artifact}]}" ]]; then
-      continue
-    fi
-    echo "${artifact},${checksum_base64}"
-  done
-}
-
 # Pushes up artifact_dir into gcs_bucket. The name of the artifact_dir itself
 # will be in the bucket. See
 # https://cloud.google.com/storage/docs/gsutil/addlhelp/HowSubdirectoriesWork.
-push_gcs_with_checksum()
+push_gcs_to_bucket()
 {
   local artifact_dir="${1:-}"
   local gcs_bucket="${2:-}"
-  declare -a unreconciled_artifacts=()
-  local artifact_dir_toplevel
   local version_dir
-  declare -a artifacts=()
-  local artifact
-  local checksum_base64
-  local artifacthash
 
   log.assertvar artifact_dir
   log.assertvar gcs_bucket
 
-  artifact_dir_toplevel="$(dirname "${artifact_dir}")"
   version_dir="$(basename "${artifact_dir}")"
 
-  mapfile -t unreconciled_artifacts < <(get_unreconciled_artifacts "${artifact_dir}" "${gcs_bucket}")
-
-  if (( "${#unreconciled_artifacts[@]}" == 0 )); then
-    log.debug "nothing new to push"
-    return
-  fi
-
-  for artifacthash in ${unreconciled_artifacts[@]+"${unreconciled_artifacts[@]}"}; do
-    # Calculate md5 checksum of each artifact. The checksum is used
-    # for each upload as per
-    # https://cloud.google.com/storage/docs/gsutil/commands/cp#checksum-validation.
-    # We use md5sum because it's faster than the Python
-    # implementation of "gsutil hash".
-    #
-    # NOTE: This for-loop is painfully slow, but it has all of
-    # the advantages of safety listed in the link above because
-    # it guarantees that GCS will never have
-    # bad-looking/corrupted objects.
-    artifact="${artifacthash%,*}"
-    checksum_base64="${artifacthash#*,}"
-    gsutil \
-      -q \
-      -h "Content-MD5:${checksum_base64}" \
-      cp \
-      "${artifact_dir_toplevel}"/"${artifact}" \
-      "${gcs_bucket}/${artifact}"
-    # Print '.' symbol to denote progress without spamming the
-    # log output.
-    echo -n .
-  done
-  echo
-}
-
-# Get each octet (in hex) in the input string and prepend a "\x" literal to it
-# into the output. It is assumed that the input string is a hex string and that
-# it has an even number of nibbles (that is, 8*n bits where n>0).
-#
-# Example:
-#  INPUT: "abcd"
-#   OUTPUT: "\xab\xcd" (not literally this string, but in raw bytes)
-hex_encode()
-{
-  local checksum_str="${1:-}"
-  local output=""
-  local i
-  log.assertvar checksum_str
-
-  for ((i=0; i<${#checksum_str}/2; ++i)); do
-    output+="\\x${checksum_str:$((i*2)):2}"
-  done
-
-  echo -en "${output}"
+  # -m: multi-threaded / parallel
+  # -n: dry-run
+  # -c: use checksums instead of size/mtime
+  # -r: recursive
+  gsutil -m rsync -c -r "${artifact_dir}" "${gcs_bucket}/${version_dir}"
 }
 
 # Finds Docker images in the local Docker daemon. The name_regex argument ($1)
