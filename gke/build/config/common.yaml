@@ -41,7 +41,7 @@ build-env:
       # The image should be the human-friendly full path that includes any
       # leading gcr.io or other such registry prefixes, if applicable.
       #
-      # If unset, the build uses 'golang:$version', where $version is read from .go-version
+      # If unset, the build uses 'google-go.pkg.dev/golang:$version', where $version is read from .go-version
       #
       # If you want to test building with older golang versions, you have to
       # override the OSS build script at hack/lib/golang.sh by modifying
@@ -54,7 +54,7 @@ build-env:
       #
       # Set the <VALUE> to something low like `go1.13.0' to allow
       # experimentation with a wide range of go compilers.
-      # golang-image: golang:1.19.4
+      # golang-image: "google-go.pkg.dev/golang:1.21.7"
   # This is a separate image that is used for the package-tarballs.sh step,
   # which requires Docker.
   docker-image:
