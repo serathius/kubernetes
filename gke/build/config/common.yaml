@@ -54,7 +54,7 @@ build-env:
       #
       # Set the <VALUE> to something low like `go1.13.0' to allow
       # experimentation with a wide range of go compilers.
-      # golang-image: "google-go.pkg.dev/golang:1.21.7"
+      # golang-image: "google-go.pkg.dev/golang:1.21.7@sha256:f5895842c9552e90bdf872ee0daed7458b54e02b08bc39b0a29756da8bebb4f2"
   # This is a separate image that is used for the package-tarballs.sh step,
   # which requires Docker.
   docker-image:
@@ -74,11 +74,11 @@ build-env:
     # For source, see: http://google3/cloud/kubernetes/distro/images/base/BUILD
     # For instructions on updating `go-runner` and creating a new
     # `gke-distroless/go-runner` release, see: http://go/gke-security-compliance#updating-gke-distrolessgo-runner
-    go-runner: "gke.gcr.io/gke-distroless/go-runner:gke_distroless_20240107.00_p0@sha256:0788ce9fc538ef1786e4159f8d790667f44c77dbc0fab0f305d10b819a270533"
+    go-runner: "gke.gcr.io/gke-distroless/go-runner:gke_distroless_20240207.00_p0@sha256:709a8898abbea8aa143bf63dff07b6191182dd647fcc311e080cb476a95002d6"
     # The kube-proxy base image to use.
     kube-proxy-base: "gke.gcr.io/distroless-iptables:v0.4.4-gke.1@sha256:21aa780b743e2802816288ad2adbbca09f3c623840ffdd02b5f974b34e0bba10"
     # The setcap image to use.
-    setcap: "gcr.io/gke-release/gke-distroless/setcap:gke_distroless_20240107.00_p0@sha256:2f47758ef5b41e30c6cc186cb01c0ab9154a807a7ef0e4128a7d40c739fa72bd"
+    setcap: "gcr.io/gke-release/gke-distroless/setcap:gke_distroless_20240207.00_p0@sha256:16a7bc89c9614d6144a9bc83728453d02b8ef4021d7ddabe7f9b1936df845bda"
 
 compile:
   # This is the VERSION field that is supplied at Golang compilation time. This
