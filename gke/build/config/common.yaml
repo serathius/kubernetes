@@ -76,7 +76,7 @@ build-env:
     # `gke-distroless/go-runner` release, see: http://go/gke-security-compliance#updating-gke-distrolessgo-runner
     go-runner: "gke.gcr.io/gke-distroless/go-runner:gke_distroless_20240207.00_p0@sha256:709a8898abbea8aa143bf63dff07b6191182dd647fcc311e080cb476a95002d6"
     # The kube-proxy base image to use.
-    kube-proxy-base: "gke.gcr.io/distroless-iptables:v0.4.4-gke.1@sha256:21aa780b743e2802816288ad2adbbca09f3c623840ffdd02b5f974b34e0bba10"
+    kube-proxy-base: "gke.gcr.io/distroless-iptables:v0.4.5-gke.0@sha256:9b147caaad0904e14ff243546d171006baf4813900e2b1f40ccc463ca75b0554"
     # The setcap image to use.
     setcap: "gcr.io/gke-release/gke-distroless/setcap:gke_distroless_20240207.00_p0@sha256:16a7bc89c9614d6144a9bc83728453d02b8ef4021d7ddabe7f9b1936df845bda"
 
