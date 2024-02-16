@@ -1008,7 +1008,7 @@ Before=containerd.service
 StartLimitIntervalSec=0
 [Service]
 Environment=HOME=/root
-ExecStart=${KUBE_HOME}/bin/containerd-gcfs-grpc --log-level=info --config=/etc/containerd-gcfs-grpc/config.toml --enable-image-proxy-keychain-client ${secondary_boot_disk_mount_points_flag}
+ExecStart=${KUBE_HOME}/bin/containerd-gcfs-grpc --log-level=info --config=/etc/containerd-gcfs-grpc/config.toml --enable-image-proxy-keychain-client ${secondary_boot_disk_mount_points_flag} --skip-duplicate-layers
 Restart=always
 RestartSec=1
 [Install]
