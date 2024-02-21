@@ -873,7 +873,7 @@ function setup-gke-addon-registry {
 #     in function start-node-problem-detector, otherwise.
 function gke-configure-node-problem-detector {
   local flags="${NODE_PROBLEM_DETECTOR_CUSTOM_FLAGS:-}"
-  if [[ ! -z "${flags}" ]]; then
+  if [[ -n "${flags}" ]]; then
     return
   fi
 
@@ -901,13 +901,18 @@ function gke-configure-node-problem-detector {
     local node_registration_checker_config=",${KUBE_HOME}/npd-custom-plugins/configs/node-registration-checker-monitor.json"
   fi
 
+  # Configure private CA plugin
+  if [[ -n "${CONTAINERD_PRIVATE_CA_GSM_CERT:-}" ]]; then
+    local -r private_ca_monitor_config=",${KUBE_HOME}/npd-custom-plugins/configs/private-ca-installation-monitor.json"
+  fi
+
   local -r local_ssd_config="${KUBE_HOME}/npd-custom-plugins/configs/local-ssd-monitor.json"
   local -r node_startup_monitor="${KUBE_HOME}/npd-custom-plugins/configs/node-startup-monitor.json"
   local -r oom_monitor="${KUBE_HOME}/npd-custom-plugins/configs/oom-monitor.json"
 
   flags="${NPD_TEST_LOG_LEVEL:-"--v=2"} ${NPD_TEST_ARGS:-}"
   flags+=" --logtostderr"
-  flags+=" --config.system-log-monitor=${km_config},${dm_config},${sm_config},${local_ssd_config},${node_startup_monitor},${oom_monitor}${node_registration_checker_config:-}"
+  flags+=" --config.system-log-monitor=${km_config},${dm_config},${sm_config},${local_ssd_config},${node_startup_monitor},${oom_monitor}${node_registration_checker_config:-}${private_ca_monitor_config:-}"
   flags+=" --config.system-stats-monitor=${system_stats_monitor}"
   flags+=" --config.custom-plugin-monitor=${custom_plugin_monitors}"
   flags+=" --exporter.stackdriver=${sd_exporter_config}"
