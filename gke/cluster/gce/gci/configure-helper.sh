@@ -3362,7 +3362,8 @@ function main() {
      [ -n "${MAX_SHARED_CLIENTS_PER_GPU:-}" ] || [ -n "${GPU_SHARING_STRATEGY:-}" ]; then
       log-wrap 'GKECreateGPUConfig' gke-create-gpu-config
     fi
-    if [[ -e "${KUBE_HOME}/bin/gke-internal-configure-helper.sh" ]]; then
+    if [[ -e "${KUBE_HOME}/bin/gke-internal-configure-helper.sh" ]] &&
+     [[ "${ADDITIONAL_NODE_NETWORKS:-false}" == "true" ]]; then
       log-wrap 'GKEConfigureMultiNIC' gke-configure-multinic
     fi
 
