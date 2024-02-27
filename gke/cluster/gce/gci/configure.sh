@@ -726,13 +726,20 @@ function install-kube-manifests {
 # Installs hurl to ${KUBE_HOME}/bin/hurl if not already installed.
 function install-hurl {
   cd "${KUBE_HOME}"
-  if [[ -f "${KUBE_HOME}/bin/hurl" ]]; then
+
+  local -r hurl_bin="hurl"
+  local -r hurl_gcs_att="instance/attributes/hurl-gcs-url"
+  local -r hurl_gcs_url=${HURL_GCS_URL:-$(get-metadata-value "${hurl_gcs_att}")}
+
+  # extracting verison from url, example:
+  # $ echo "https://storage.googleapis.com/gke-master-startup/hurl/gke_master_hurl_20230824.00_p0/hurl" | sed -n 's/.*gke_master_hurl_\(.*\)\/hurl/\1/p'
+  # 20230824.00_p0
+  local -r hurl_version=$(echo "${hurl_gcs_url}" | sed -n 's/.*gke_master_hurl_\(.*\)\/hurl/\1/p')
+
+  if is-preloaded "${hurl_bin}" "${hurl_version}"; then
     echo "install-hurl: hurl already installed"
     return
   fi
-
-  local -r hurl_gcs_att="instance/attributes/hurl-gcs-url"
-  local -r hurl_gcs_url=${HURL_GCS_URL:-$(get-metadata-value "${hurl_gcs_att}")}
 
   if [[ -z "${hurl_gcs_url}" ]]; then
     # URL not present in GCE Instance Metadata
@@ -741,13 +748,13 @@ function install-hurl {
   fi
 
   # Download hurl binary from a GCS bucket.
-  local -r hurl_bin="hurl"
   echo "install-hurl: Installing hurl from ${hurl_gcs_url} ... "
   download-or-bust "" "${hurl_gcs_url}"
   if [[ -f "${KUBE_HOME}/${hurl_bin}" ]]; then
     chmod a+x ${KUBE_HOME}/${hurl_bin}
     mv "${KUBE_HOME}/${hurl_bin}" "${KUBE_BIN}/${hurl_bin}"
     echo "install-hurl: hurl installed to ${KUBE_BIN}/${hurl_bin}"
+    record-preload-info "${hurl_bin}" "${hurl_version}"
     return
   fi
 }
@@ -1294,6 +1301,10 @@ function preload {
   cd "${KUBE_HOME}"
   if [[ "${ENABLE_AUTH_PROVIDER_GCP:-""}" == "true" ]]; then
     log-wrap 'InstallExternalCredentialProvider' install-auth-provider-gcp
+  fi
+
+  if [[ "${KUBERNETES_MASTER:-}" == "true" ]]; then
+    log-wrap 'InstallHurl' install-hurl
   fi
 
   if [[ "${KUBERNETES_MASTER:-}" != "true" && -n "${GVISOR_INSTALLER_IMAGE_HASH:-}" ]]; then
