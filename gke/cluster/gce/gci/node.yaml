@@ -151,13 +151,13 @@ write_files:
       options sunrpc max_resvport=986
 
 runcmd:
- - systemctl daemon-reload
- - systemctl enable kube-bootstrap-logs-forwarder.service
- - systemctl enable kube-node-installation.service
- - systemctl enable kube-node-configuration.service
- - systemctl enable kube-container-runtime-monitor.service
- - systemctl enable kubelet-monitor.service
- - systemctl enable kube-logrotate.timer
- - systemctl enable kube-logrotate.service
- - systemctl enable kubernetes.target
- - systemctl start kubernetes.target
+  - systemctl enable
+      kube-bootstrap-logs-forwarder.service
+      kube-node-installation.service
+      kube-node-configuration.service
+      kube-container-runtime-monitor.service
+      kubelet-monitor.service
+      kube-logrotate.timer
+      kube-logrotate.service
+      kubernetes.target
+  - systemctl start kubernetes.target
