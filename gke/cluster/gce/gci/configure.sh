@@ -127,7 +127,7 @@ function download-kube-env {
   (
     umask 077
     local kube_env_path="/tmp/kube-env.yaml"
-    if [[ "$(is-master)" == "true" && $(use-hurl) = "true" ]]; then
+    if [[ "${KUBERNETES_MASTER:-}" == "true" && $(use-hurl) = "true" ]]; then
       local kube_env_path="${KUBE_HOME}/kube-env.yaml"
       download-kube-env-hurl "${kube_env_path}"
     else
@@ -149,7 +149,7 @@ for k, v in items:
 ''' < "${kube_env_path}" > "${KUBE_HOME}/kube-env")"
 
     # Leave kube-env if we are a master
-    if [[ "$(is-master)" != "true" ]]; then
+    if [[ "${KUBERNETES_MASTER:-}" != "true" ]]; then
       rm -f "${kube_env_path}"
     fi
   )
@@ -238,16 +238,6 @@ function valid-storage-scope {
     -H "Metadata-Flavor: Google" \
     "${GCE_METADATA_INTERNAL}/service-accounts/default/scopes" \
   | grep -E "auth/devstorage|auth/cloud-platform"
-}
-
-# Determine if this node is a master using metadata
-function is-master {
-  local -r is_master_val=${KUBERNETES_MASTER:-$(get-metadata-value "instance/attributes/is-master-node")}
-  local result="false"
-  if [[ ${is_master_val:-} == "true" ]]; then
-    result="true"
-  fi
-  echo $result
 }
 
 # A function that returns "true" if hurl should be used, "false" otherwise.
@@ -1336,7 +1326,7 @@ log-wrap 'SetBrokenMotd' set-broken-motd
 KUBE_HOME="/home/kubernetes"
 KUBE_BIN="${KUBE_HOME}/bin"
 
-if [[ "$(is-master)" == "true" ]]; then
+if [[ "${KUBERNETES_MASTER:-}" == "true" ]]; then
   log-wrap 'InstallHurl' install-hurl
 fi
 

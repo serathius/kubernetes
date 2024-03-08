@@ -34,6 +34,7 @@ write_files:
       After=network-online.target
 
       [Service]
+      Environment=KUBERNETES_MASTER=false
       Type=oneshot
       RemainAfterExit=yes
       ExecStartPre=/bin/mkdir -p /home/kubernetes/bin
