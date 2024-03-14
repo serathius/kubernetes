@@ -46,7 +46,6 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/component-base/tracing"
 
-	"k8s.io/klog/v2"
 	"k8s.io/utils/clock"
 )
 
@@ -521,9 +520,6 @@ func (c *Cacher) Watch(ctx context.Context, key string, opts storage.ListOptions
 	// and disable sendingInitialEvents when the feature wasn't enabled
 	if !utilfeature.DefaultFeatureGate.Enabled(features.WatchList) && opts.SendInitialEvents != nil {
 		opts.SendInitialEvents = nil
-	}
-	if opts.SendInitialEvents == nil && opts.ResourceVersion == "" {
-		return c.storage.Watch(ctx, key, opts)
 	}
 	requestedWatchRV, err := c.versioner.ParseResourceVersion(opts.ResourceVersion)
 	if err != nil {
