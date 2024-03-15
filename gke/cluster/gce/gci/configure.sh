@@ -452,21 +452,11 @@ function assemble-docker-flags {
 }
 EOF
 
-  # Ensure TasksMax is sufficient for docker.
-  # (https://github.com/kubernetes/kubernetes/issues/51977)
-  echo "Extend the docker.service configuration to set a higher pids limit"
-  mkdir -p /etc/systemd/system/docker.service.d
-  cat <<EOF >/etc/systemd/system/docker.service.d/01tasksmax.conf
-[Service]
-TasksMax=infinity
-EOF
-
   # Do not move to the daemon.json file for backward compatibility.
   # Command line and config file options cannot be both defined and custoemr customization may break.
   # insecure-registry setting was inherited from the past, see b/203231428. Keeping for backward compatibility.
   echo "DOCKER_OPTS=\"--registry-mirror=https://mirror.gcr.io --insecure-registry 10.0.0.0/8\"" > /etc/default/docker
 
-  systemctl daemon-reload
   echo "Docker command line and configuration are updated. Restart docker to pick it up"
   systemctl restart docker
 }
