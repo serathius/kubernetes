@@ -81,6 +81,9 @@ CURL_FLAGS='--fail --silent --show-error --retry 5 --retry-delay 3 --connect-tim
 # This version needs to be the same as in gke/cluster/gce/gci/configure-helper.sh
 GKE_CONTAINERD_INFRA_CONTAINER="pause:3.8@sha256:880e63f94b145e46f1b1082bb71b85e21f16b99b180b9996407d61240ceb9830"
 
+# Set max reboot retry 3 plus the inital boot count
+MAX_BOOT_COUNT="${MAX_BOOT_COUNT:-4}"
+
 function set-broken-motd {
   cat > /etc/motd <<EOF
 Broken (or in progress) Kubernetes node setup! Check the cluster initialization status
@@ -859,6 +862,49 @@ function configure-cgroup-mode {
   fi
 }
 
+# To improve the shieded VM reliability b/327650100
+function check-tpm-file {
+  if [[ -z "${TPM_BOOTSTRAP_KEY:-}" ]]; then
+    echo "TPM_BOOTSTRAP_KEY is empty, thus vTPM is disabled, skip tpm file check"
+    return 0
+  else
+    echo "TPM_BOOTSTRAP_KEY is not empty, thus vTPM is enabled, checking tpm file"
+    if [[ -e "/dev/tpm0" ]]; then
+      echo "/dev/tpm0 exists."
+      return 0
+    else
+      echo "/dev/tpm0 doesn't exist."
+      return 1
+    fi
+  fi
+}
+
+function detect-reboot-needed {
+  # Exit if it is on the master
+  if [[ "${KUBERNETES_MASTER:-}" == "true" ]]; then
+    return
+  fi
+
+  if [[ "${ENABLE_BEST_EFFORT_NODE_REBOOT:-}" == "true" ]]; then
+    if check-tpm-file; then
+      echo "TPM is present; continuing bootstrap..."
+      return
+    fi
+
+    echo "TPM file check doesn't pass!"
+    if ! REBOOT_HISTORY=$(journalctl --list-boots --quiet | wc -l); then
+      echo "skip reboot attempt due to the journalctl error"
+      return
+    fi
+    if [[ $(($REBOOT_HISTORY)) -gt ${MAX_BOOT_COUNT} ]]; then
+      echo "best effort reboot attempt ${REBOOT_HISTORY} exceed ${MAX_BOOT_COUNT}! stop rebooting!"
+    else
+      echo "best effort reboot attempt ${REBOOT_HISTORY}! rebooting..."
+      reboot
+    fi
+  fi
+}
+
 # A helper function for loading a docker image. It keeps trying up to 5 times.
 #
 # $1: Full path of the docker image
@@ -1340,6 +1386,8 @@ if [[ "${CONFIGURE_PGA}" == "true" ]]; then
 fi
 
 log-wrap 'ConfigureCgroupMode' configure-cgroup-mode
+
+log-wrap 'BestEffortRebootDetection' detect-reboot-needed
 
 log-wrap 'DownloadKubeletConfig' download-kubelet-config "${KUBE_HOME}/kubelet-config.yaml"
 
