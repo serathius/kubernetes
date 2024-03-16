@@ -2424,9 +2424,6 @@ func TestWatchStreamSeparation(t *testing.T) {
 			if tc.useWatchCacheContextMetadata {
 				contextMetadata = cacher.watchCache.waitingUntilFresh.contextMetadata
 			}
-			// Wait before sending watch progress request to avoid https://github.com/etcd-io/etcd/issues/17507
-			// TODO(https://github.com/etcd-io/etcd/issues/17507): Remove sleep when etcd is upgraded to version with fix.
-			time.Sleep(time.Second)
 			err = cacher.storage.RequestWatchProgress(metadata.NewOutgoingContext(context.Background(), contextMetadata))
 			if err != nil {
 				t.Fatal(err)
