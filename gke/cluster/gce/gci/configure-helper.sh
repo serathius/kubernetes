@@ -582,7 +582,7 @@ function ensure-local-ssds-ephemeral-storage() {
   # Move the container runtime's directory to the new location to preserve
   # preloaded images.
   if [ ! -d "${ephemeral_mountpoint}/${container_runtime_name}" ]; then
-    cp -r "/var/lib/${container_runtime_name}" "${ephemeral_mountpoint}/${container_runtime_name}"
+    cp -a "/var/lib/${container_runtime_name}" "${ephemeral_mountpoint}/${container_runtime_name}"
   fi
   safe-bind-mount "${ephemeral_mountpoint}/${container_runtime_name}" "/var/lib/${container_runtime_name}"
   systemctl start "$container_runtime_name"
