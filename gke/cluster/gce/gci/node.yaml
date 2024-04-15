@@ -12,18 +12,55 @@ write_files:
     content: |
       [Unit]
       Description=Forwards Kubernetes bootstrap logs to serial port.
-      Before=kube-node-installation.service
+      Before=setup-kubernetes-dir.service
 
       [Service]
       User=kube-bootstrap-logs-forwarder
       Group=systemd-journal
       SupplementaryGroups=serial
-      ExecStart=journalctl --no-tail --no-pager --follow --utc --output short-iso --unit kube-node-installation --unit kube-node-configuration --unit kubelet
+      ExecStart=journalctl --no-tail --no-pager --follow --utc --output short-iso --unit setup-kubernetes-dir --unit placeholders-presuspend-setup --unit kube-node-installation --unit kube-node-configuration --unit kubelet
       StandardOutput=tty
       TTYPath=/dev/ttyS2
 
       [Install]
       WantedBy=kubernetes.target
+
+  - path: /etc/systemd/system/setup-kubernetes-dir.service
+    permissions: 0644
+    owner: root
+    content: |
+      [Unit]
+      Description=Sets up required directories and mounts.
+      After=network-online.target
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      ExecStart=/bin/mkdir -p /home/kubernetes/bin
+      ExecStart=/bin/mount --bind /home/kubernetes/bin /home/kubernetes/bin
+      ExecStart=/bin/mount -o remount,exec /home/kubernetes/bin
+
+      [Install]
+      WantedBy=kubernetes.target
+
+  - path: /etc/systemd/system/placeholders-presuspend-setup.service
+    permissions: 0644
+    owner: root
+    content: |
+      [Unit]
+      Description=Perform required presuspend logic for Placeholders VM, skip for Non-Placeholders VMs.
+      After=setup-kubernetes-dir.service
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      ExecCondition=/usr/bin/curl --fail --retry 5 --retry-delay 3 --silent --show-error -H "X-Google-Metadata-Request: True" -o /home/kubernetes/bin/placeholders-presuspend.sh http://metadata.google.internal/computeMetadata/v1/instance/attributes/placeholders-presuspend-sh
+      ExecStartPre=/bin/chmod 544 /home/kubernetes/bin/placeholders-presuspend.sh
+      ExecStart=/home/kubernetes/bin/placeholders-presuspend.sh
+
+      [Install]
+      WantedBy=kubernetes.target
+
 
   - path: /etc/systemd/system/kube-node-installation.service
     permissions: '0644'
@@ -31,15 +68,12 @@ write_files:
     content: |
       [Unit]
       Description=Download and install k8s binaries and configurations
-      After=network-online.target
+      After=placeholders-presuspend-setup.service
 
       [Service]
       Environment=KUBERNETES_MASTER=false
       Type=oneshot
       RemainAfterExit=yes
-      ExecStartPre=/bin/mkdir -p /home/kubernetes/bin
-      ExecStartPre=/bin/mount --bind /home/kubernetes/bin /home/kubernetes/bin
-      ExecStartPre=/bin/mount -o remount,exec /home/kubernetes/bin
       ExecStartPre=/usr/bin/curl --fail --retry 5 --retry-delay 3 --silent --show-error -H "X-Google-Metadata-Request: True" -o /home/kubernetes/bin/configure.sh http://metadata.google.internal/computeMetadata/v1/instance/attributes/configure-sh
       ExecStartPre=/bin/chmod 544 /home/kubernetes/bin/configure.sh
       ExecStart=/home/kubernetes/bin/configure.sh
@@ -153,6 +187,8 @@ write_files:
 runcmd:
   - systemctl enable
       kube-bootstrap-logs-forwarder.service
+      setup-kubernetes-dir.service
+      placeholders-presuspend-setup.service
       kube-node-installation.service
       kube-node-configuration.service
       kube-container-runtime-monitor.service

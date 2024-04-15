@@ -1344,6 +1344,7 @@ validate_extras()
   assert_path_exists "${artifacts_root}/extra/gce/master.yaml"
   assert_path_exists "${artifacts_root}/extra/gce/node.yaml"
   assert_path_exists "${artifacts_root}/extra/gce/shutdown.sh"
+  assert_path_exists "${artifacts_root}/extra/gce/placeholders-presuspend.sh"
   assert_path_exists "${artifacts_root}/extra/gce/windows/common.psm1"
   assert_path_exists "${artifacts_root}/extra/gce/windows/configure.ps1"
   assert_path_exists "${artifacts_root}/extra/gce/windows/install-ssh.psm1"
@@ -1800,6 +1801,7 @@ arrange_for_gcs()
     "${gci_path}"/node.yaml \
     "${gci_path}"/master.yaml \
     "${gci_path}"/configure.sh \
+    "${gci_path}"/placeholders-presuspend.sh \
     "${gci_path}"/shutdown.sh \
     "${__for_gcs}/${KUBE_GIT_VERSION}"/extra/gce
 
