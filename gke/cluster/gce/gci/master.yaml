@@ -11,6 +11,18 @@ users:
   system: true
 
 write_files:
+  - path: /etc/systemd/system/google-osconfig-agent.service.d/gke.conf
+    permissions: '0644'
+    owner: root
+    # Configure OS Config agent. Activation is controlled by VM metadata.
+    content: |
+      [Service]
+      CPUAccounting=true
+      MemoryAccounting=true
+      CPUQuota=5%
+      MemoryHigh=50M
+      MemoryMax=100M
+
   - path: /etc/systemd/system/kube-bootstrap-logs-forwarder.service
     permissions: '0644'
     owner: root

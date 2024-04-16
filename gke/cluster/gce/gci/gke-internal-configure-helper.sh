@@ -299,8 +299,6 @@ function gke-internal-master-start {
     echo "export KUBECONFIG=/etc/srv/kubernetes/local-admin/kubeconfig" > /etc/profile.d/kubeconfig.sh
   fi
 
-  configure-osconfig-agent
-
   echo "Internal GKE configuration done"
 }
 
@@ -1120,22 +1118,6 @@ function deploy-kube-controller-manager-via-kube-up {
 
 function generate-token-for-mastertest {
   [[ "${MASTERTEST_TOKEN_ENABLED:-false}" == "true" ]]
-}
-
-# Configure OS Config agent. Activation is controlled by VM metadata.
-function configure-osconfig-agent {
-  mkdir -p /etc/systemd/system/google-osconfig-agent.service.d
-  cat <<EOF >/etc/systemd/system/google-osconfig-agent.service.d/gke.conf
-[Service]
-CPUAccounting=true
-MemoryAccounting=true
-CPUQuota=5%
-MemoryHigh=50M
-MemoryMax=100M
-EOF
-
-  systemctl daemon-reload
-  systemctl restart google-osconfig-agent
 }
 
 function install-node-registration-checker {
