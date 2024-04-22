@@ -247,6 +247,7 @@ function valid-storage-scope {
 #
 # $1 is the sha512/sha1 hash of the URL. Can be "" if the sha512/sha1 hash is unknown.
 # $2+ are the URLs to download.
+# env var FORCE_USE_CREDENTIAL indicates whether to force using credential.
 function download-or-bust {
   if [[ "${ARTIFACT_DOWNLOAD_RESTRICTED:-}" == "true" ]]; then
     echo "Cannot download: $* as downloading is restricted, exiting"
@@ -263,7 +264,7 @@ function download-or-bust {
       # if the url belongs to GCS API we should use oauth2_token in the headers if the VM service account has storage scopes
       local curl_headers=""
 
-      if [[ "$url" =~ ^${STORAGE_ENDPOINT}/.* ]] ; then
+      if [[ "$url" =~ ^${STORAGE_ENDPOINT}/.* ]] || [[ "${FORCE_USE_CREDENTIAL:-false}" == "true" ]] ; then
         local canUseCredentials=0
 
         echo "Getting the scope of service account configured for VM."
@@ -750,7 +751,7 @@ function install-hurl {
 
   # Download hurl binary from a GCS bucket.
   echo "install-hurl: Installing hurl from ${hurl_gcs_url} ... "
-  download-or-bust "${hurl_hash}" "${hurl_gcs_url}"
+  FORCE_USE_CREDENTIAL=true download-or-bust "${hurl_hash}" "${hurl_gcs_url}"
   if [[ -f "${KUBE_HOME}/${hurl_bin}" ]]; then
     chmod a+x ${KUBE_HOME}/${hurl_bin}
     mv "${KUBE_HOME}/${hurl_bin}" "${KUBE_BIN}/${hurl_bin}"
