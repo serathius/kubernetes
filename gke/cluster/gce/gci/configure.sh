@@ -130,7 +130,7 @@ function download-kube-env {
   (
     umask 077
     local kube_env_path="/tmp/kube-env.yaml"
-    if [[ "${KUBERNETES_MASTER:-}" == "true" && $(use-hurl) = "true" ]]; then
+    if [[ "${KUBERNETES_MASTER:-}" == "true" ]]; then
       local kube_env_path="${KUBE_HOME}/kube-env.yaml"
       download-kube-env-hurl "${kube_env_path}"
     else
@@ -241,17 +241,6 @@ function valid-storage-scope {
     -H "Metadata-Flavor: Google" \
     "${GCE_METADATA_INTERNAL}/service-accounts/default/scopes" \
   | grep -E "auth/devstorage|auth/cloud-platform"
-}
-
-# A function that returns "true" if hurl should be used, "false" otherwise.
-function use-hurl {
-  local -r enable_hms_read=${ENABLE_HMS_READ:-$(get-metadata-value "instance/attributes/enable_hms_read")}
-  local result="false"
-
-  if [[ -f "${KUBE_HOME}/bin/hurl" && "${enable_hms_read}" == "true" ]]; then
-    result="true"
-  fi
-  echo $result
 }
 
 # Retry a download until we get it. Takes a hash and a set of URLs.

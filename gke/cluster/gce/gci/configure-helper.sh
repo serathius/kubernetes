@@ -2091,55 +2091,9 @@ function setup-addon-manifests {
   fi
 }
 
-# A function that downloads extra addons from a URL and puts them in the GCI
-# manifests directory.
-function download-extra-addons {
-  local -r out_dir="${KUBE_HOME}/kube-manifests/kubernetes/gci-trusty/gce-extras"
-  local -r file="${out_dir}/extras.json"
-
-  mkdir -p "${out_dir}"
-
-  local -r compressed=$(get-metadata-value "instance/attributes/extra-addons-compressed")
-  # Decompress metadata from 'extra-addons-compressed' if it's not empty.
-  if [[ -n "${compressed}" ]]
-  then
-    echo -e "Decompressing extra addons..."
-    echo "${compressed}" | base64 -d | gzip -d > "${file}"
-    return
-  fi
-
-  # shellcheck disable=SC2206
-  local curl_cmd=(
-    "curl"
-    ${CURL_FLAGS}
-  )
-  if [[ -n "${EXTRA_ADDONS_HEADER:-}" ]]; then
-    curl_cmd+=("-H" "${EXTRA_ADDONS_HEADER}")
-  fi
-  curl_cmd+=("-o" "${file}")
-  curl_cmd+=("${EXTRA_ADDONS_URL}")
-
-  "${curl_cmd[@]}"
-}
-
-# A function that returns "true" if hurl should be used, "false" otherwise.
-function use-hurl {
-  local -r enable_hms_read=$(get-metadata-value "instance/attributes/enable_hms_read")
-  local result="false"
-
-  if [[ -f "${KUBE_HOME}/bin/hurl" && "${enable_hms_read}" == "true" ]]; then
-    result="true"
-  fi
-  echo $result
-}
-
 # A function to download CRP components stored in google-container-manifest
 # and extra-addons master metadata attributes.
 function download-component-data {
-  if [[ $(use-hurl) == "false" ]]; then
-    return
-  fi
-
   echo "download-component-data: using hurl to download components in google-container-manifests and extra-addons"
 
   local -r endpoint=$(get-metadata-value "instance/attributes/gke-api-endpoint")
@@ -2621,10 +2575,6 @@ EOF
     setup-addon-manifests "addons" "metadata-proxy/gce"
     local -r metadata_proxy_yaml="${dst_dir}/metadata-proxy/gce/metadata-proxy.yaml"
     update-daemon-set-prometheus-to-sd-parameters ${metadata_proxy_yaml}
-  fi
-  if [[ -n "${EXTRA_ADDONS_URL:-}" && $(use-hurl) == "false" ]]; then
-    download-extra-addons
-    setup-addon-manifests "addons" "gce-extras"
   fi
 
   create-kubeconfig "addon-manager" "${ADDON_MANAGER_TOKEN}"
