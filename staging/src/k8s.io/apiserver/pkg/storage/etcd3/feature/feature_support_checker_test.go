@@ -220,6 +220,20 @@ func TestSupportsRequestWatchProgress(t *testing.T) {
 					expectedResult: false}},
 		},
 		{
+			testName: "Disabled - empty version would disable the supported cluster and can not be re-enabled again",
+			rounds: []testCase{
+				{endpointsVersion: []mockEndpointVersion{
+					{Version: "3.6.0", Endpoint: "localhost:2390"}},
+					expectedResult: true,
+				},
+				{endpointsVersion: []mockEndpointVersion{
+					{Version: "", Endpoint: "localhost:2392"}},
+					expectedResult: false},
+				{endpointsVersion: []mockEndpointVersion{
+					{Version: "3.5.13", Endpoint: "localhost:2393"}},
+					expectedResult: false}},
+		},
+		{
 			testName: "Enabled - error on first client, enabled success on second client",
 			rounds: []testCase{
 				{endpointsVersion: []mockEndpointVersion{
