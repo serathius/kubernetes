@@ -249,14 +249,9 @@ function start-kube-apiserver {
     params+=" --admission-control-config-file=/etc/srv/kubernetes/admission_controller_config.yaml"
   fi
 
-  # If GKE exec auth support is requested for webhooks, then
   # gke-exec-auth-plugin needs to be mounted into the kube-apiserver container.
-  local webhook_exec_auth_plugin_mount=""
-  local webhook_exec_auth_plugin_volume=""
-  if [[ -n "${WEBHOOK_GKE_EXEC_AUTH:-}" ]]; then
-    webhook_exec_auth_plugin_mount='{"name": "gkeauth", "mountPath": "/usr/bin/gke-exec-auth-plugin", "readOnly": true},'
-    webhook_exec_auth_plugin_volume='{"name": "gkeauth", "hostPath": {"path": "/home/kubernetes/bin/gke-exec-auth-plugin", "type": "File"}},'
-  fi
+  local webhook_exec_auth_plugin_mount='{"name": "gkeauth", "mountPath": "/usr/bin/gke-exec-auth-plugin", "readOnly": true},'
+  local webhook_exec_auth_plugin_volume='{"name": "gkeauth", "hostPath": {"path": "/home/kubernetes/bin/gke-exec-auth-plugin", "type": "File"}},'
 
   if [[ -n "${KUBE_APISERVER_REQUEST_TIMEOUT:-}" ]]; then
     params+=" --min-request-timeout=${KUBE_APISERVER_REQUEST_TIMEOUT}"

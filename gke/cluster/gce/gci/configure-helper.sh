@@ -792,6 +792,13 @@ function create-master-pki {
   fi
 }
 
+function ensure-exec-auth-config {
+  if [[ -z "${EXEC_AUTH_PLUGIN_URL:-}" ]]; then
+    1>&2 echo "GKE exec auth support required, but EXEC_AUTH_PLUGIN_URL was not specified.  This configuration depends on gke-exec-auth-plugin for authenticating."
+    exit 1
+  fi
+}
+
 # After the first boot and on upgrade, these files exist on the master-pd
 # and should never be touched again (except perhaps an additional service
 # account, see NB below.) One exception is if METADATA_CLOBBERS_CONFIG is
@@ -965,6 +972,7 @@ EOF
   fi
 
   if [[ -n "${GCP_AUTHN_URL:-}" ]]; then
+    ensure-exec-auth-config
     cat <<EOF >/etc/gcp_authn.config
 clusters:
   - name: gcp-authentication-server
@@ -973,8 +981,11 @@ clusters:
 users:
   - name: kube-apiserver
     user:
-      auth-provider:
-        name: gcp
+      exec:
+        apiVersion: "client.authentication.k8s.io/v1beta1"
+        command: /usr/bin/gke-exec-auth-plugin
+        args:
+        - --mode=vm-token
 current-context: webhook
 contexts:
 - context:
@@ -985,6 +996,7 @@ EOF
   fi
 
   if [[ -n "${GCP_AUTHZ_URL:-}" ]]; then
+    ensure-exec-auth-config
     cat <<EOF >/etc/gcp_authz.config
 clusters:
   - name: gcp-authorization-server
@@ -993,8 +1005,11 @@ clusters:
 users:
   - name: kube-apiserver
     user:
-      auth-provider:
-        name: gcp
+      exec:
+        apiVersion: "client.authentication.k8s.io/v1beta1"
+        command: /usr/bin/gke-exec-auth-plugin
+        args:
+        - --mode=vm-token
 current-context: webhook
 contexts:
 - context:
@@ -1114,6 +1129,7 @@ EOF
 
       # ImagePolicyWebhook does not use gke-exec-auth-plugin for authenticating
       # to the webhook endpoint.  Emit its special kubeconfig.
+      ensure-exec-auth-config
       cat <<EOF >/etc/srv/kubernetes/gcp_image_review.kubeconfig
 clusters:
   - name: gcp-image-review-server
@@ -1122,8 +1138,11 @@ clusters:
 users:
   - name: kube-apiserver
     user:
-      auth-provider:
-        name: gcp
+      exec:
+        apiVersion: "client.authentication.k8s.io/v1beta1"
+        command: /usr/bin/gke-exec-auth-plugin
+        args:
+        - --mode=vm-token
 current-context: webhook
 contexts:
 - context:
@@ -1337,6 +1356,7 @@ function create-master-audit-webhook-config {
 
   if [[ -n "${GCP_AUDIT_URL:-}" ]]; then
     # The webhook config file is a kubeconfig file describing the webhook endpoint.
+    ensure-exec-auth-config
     cat <<EOF >"${path}"
 clusters:
   - name: gcp-audit-server
@@ -1345,8 +1365,11 @@ clusters:
 users:
   - name: kube-apiserver
     user:
-      auth-provider:
-        name: gcp
+      exec:
+        apiVersion: "client.authentication.k8s.io/v1beta1"
+        command: /usr/bin/gke-exec-auth-plugin
+        args:
+        - --mode=vm-token
 current-context: webhook
 contexts:
 - context:
