@@ -888,6 +888,10 @@ function detect-reboot-needed {
     if [[ $(($REBOOT_HISTORY)) -gt ${MAX_BOOT_COUNT} ]]; then
       echo "best effort reboot attempt ${REBOOT_HISTORY} exceed ${MAX_BOOT_COUNT}! stop rebooting!"
     else
+      # write to a persistent file after reboot for NPD reporting event
+      # used in npd-custom-plugins/configs/node-reboot-monitor.json
+      mkdir -p /var/lib/gke
+      echo '1' >> /var/lib/gke/best_effort_reboot_marker
       echo "best effort reboot attempt ${REBOOT_HISTORY}! rebooting..."
       reboot
     fi
