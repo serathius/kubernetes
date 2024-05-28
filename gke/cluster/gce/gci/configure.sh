@@ -712,13 +712,17 @@ function install-hurl {
   local -r hurl_bin="hurl"
   local -r hurl_gcs_att="instance/attributes/hurl-gcs-url"
   local -r hurl_gcs_url=${HURL_GCS_URL:-$(get-metadata-value "${hurl_gcs_att}")}
+  local -r hurl_hash=${HURL_HASH:-$(get-metadata-value "instance/attributes/hurl-bin-hash")}
 
-  # extracting verison from url, example:
+  ### Fallback to old logic in case hurl_hash is not set
+  # extracting version from url, example:
   # $ echo "https://storage.googleapis.com/gke-master-startup/hurl/gke_master_hurl_20230824.00_p0/hurl" | sed -n 's/.*gke_master_hurl_\(.*\)\/hurl/\1/p'
   # 20230824.00_p0
   local -r hurl_version=$(echo "${hurl_gcs_url}" | sed -n 's/.*gke_master_hurl_\(.*\)\/hurl/\1/p')
 
-  if is-preloaded "${hurl_bin}" "${hurl_version}"; then
+  local -r hurl_preload_digest=${hurl_hash:-$hurl_version}
+
+  if is-preloaded "${hurl_bin}" "${hurl_preload_digest}"; then
     echo "install-hurl: hurl already installed"
     return
   fi
@@ -731,12 +735,12 @@ function install-hurl {
 
   # Download hurl binary from a GCS bucket.
   echo "install-hurl: Installing hurl from ${hurl_gcs_url} ... "
-  download-or-bust "" "${hurl_gcs_url}"
+  download-or-bust "${hurl_hash}" "${hurl_gcs_url}"
   if [[ -f "${KUBE_HOME}/${hurl_bin}" ]]; then
     chmod a+x ${KUBE_HOME}/${hurl_bin}
     mv "${KUBE_HOME}/${hurl_bin}" "${KUBE_BIN}/${hurl_bin}"
     echo "install-hurl: hurl installed to ${KUBE_BIN}/${hurl_bin}"
-    record-preload-info "${hurl_bin}" "${hurl_version}"
+    record-preload-info "${hurl_bin}" "${hurl_preload_digest}"
     return
   fi
 }
