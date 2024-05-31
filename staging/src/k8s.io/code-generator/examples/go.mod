@@ -56,3 +56,5 @@ replace (
 	k8s.io/apimachinery => ../../apimachinery
 	k8s.io/client-go => ../../client-go
 )
+
+replace go.etcd.io/etcd/client/v3 => github.com/serathius/etcd/client/v3 v3.0.0-20240605123809-0062029b76da

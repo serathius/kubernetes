@@ -162,8 +162,8 @@ type watchGrpcStream struct {
 	// ctx controls internal remote.Watch requests
 	ctx context.Context
 	// ctxKey is the key used when looking up this stream's context
-	ctxKey string
-	cancel context.CancelFunc
+	streamKey string
+	cancel    context.CancelFunc
 
 	// substreams holds all active watchers on this grpc stream
 	substreams map[int64]*watcherStream
@@ -249,6 +249,10 @@ func NewWatcher(c *Client) Watcher {
 }
 
 func NewWatchFromWatchClient(wc pb.WatchClient, c *Client) Watcher {
+	return newWatchFromWatchClient(wc, c)
+}
+
+func newWatchFromWatchClient(wc pb.WatchClient, c *Client) *watcher {
 	w := &watcher{
 		remote:  wc,
 		streams: make(map[string]*watchGrpcStream),
@@ -271,14 +275,14 @@ func (vc *valCtx) Deadline() (time.Time, bool) { return zeroTime, false }
 func (vc *valCtx) Done() <-chan struct{}       { return valCtxCh }
 func (vc *valCtx) Err() error                  { return nil }
 
-func (w *watcher) newWatcherGrpcStream(inctx context.Context) *watchGrpcStream {
+func (w *watcher) newWatcherGrpcStream(inctx context.Context, streamKey string) *watchGrpcStream {
 	ctx, cancel := context.WithCancel(&valCtx{inctx})
 	wgs := &watchGrpcStream{
 		owner:      w,
 		remote:     w.remote,
 		callOpts:   w.callOpts,
 		ctx:        ctx,
-		ctxKey:     streamKeyFromCtx(inctx),
+		streamKey:  streamKey,
 		cancel:     cancel,
 		substreams: make(map[int64]*watcherStream),
 		respc:      make(chan *pb.WatchResponse),
@@ -296,7 +300,6 @@ func (w *watcher) newWatcherGrpcStream(inctx context.Context) *watchGrpcStream {
 // Watch posts a watch request to run() and waits for a new watcher channel
 func (w *watcher) Watch(ctx context.Context, key string, opts ...OpOption) WatchChan {
 	ow := opWatch(key, opts...)
-
 	var filters []pb.WatchCreateRequest_FilterType
 	if ow.filterPut {
 		filters = append(filters, pb.WatchCreateRequest_NOPUT)
@@ -304,6 +307,7 @@ func (w *watcher) Watch(ctx context.Context, key string, opts ...OpOption) Watch
 	if ow.filterDelete {
 		filters = append(filters, pb.WatchCreateRequest_NODELETE)
 	}
+	streamKey := streamKeyFromCtx(ctx)
 
 	wr := &watchRequest{
 		ctx:            ctx,
@@ -317,10 +321,11 @@ func (w *watcher) Watch(ctx context.Context, key string, opts ...OpOption) Watch
 		prevKV:         ow.prevKV,
 		retc:           make(chan chan WatchResponse, 1),
 	}
+	return w.watch(ctx, streamKey, wr)
+}
 
+func (w *watcher) watch(ctx context.Context, streamKey string, wr *watchRequest) WatchChan {
 	ok := false
-	ctxKey := streamKeyFromCtx(ctx)
-
 	var closeCh chan WatchResponse
 	for {
 		// find or allocate appropriate grpc watch stream
@@ -332,10 +337,10 @@ func (w *watcher) Watch(ctx context.Context, key string, opts ...OpOption) Watch
 			close(ch)
 			return ch
 		}
-		wgs := w.streams[ctxKey]
+		wgs := w.streams[streamKey]
 		if wgs == nil {
-			wgs = w.newWatcherGrpcStream(ctx)
-			w.streams[ctxKey] = wgs
+			wgs = w.newWatcherGrpcStream(ctx, streamKey)
+			w.streams[streamKey] = wgs
 		}
 		donec := wgs.donec
 		reqc := wgs.reqc
@@ -404,16 +409,19 @@ func (w *watcher) Close() (err error) {
 // RequestProgress requests a progress notify response be sent in all watch channels.
 func (w *watcher) RequestProgress(ctx context.Context) (err error) {
 	ctxKey := streamKeyFromCtx(ctx)
+	return w.requestProgress(ctx, ctxKey)
+}
 
+func (w *watcher) requestProgress(ctx context.Context, streamKey string) (err error) {
 	w.mu.Lock()
 	if w.streams == nil {
 		w.mu.Unlock()
 		return fmt.Errorf("no stream found for context")
 	}
-	wgs := w.streams[ctxKey]
+	wgs := w.streams[streamKey]
 	if wgs == nil {
-		wgs = w.newWatcherGrpcStream(ctx)
-		w.streams[ctxKey] = wgs
+		wgs = w.newWatcherGrpcStream(ctx, streamKey)
+		w.streams[streamKey] = wgs
 	}
 	donec := wgs.donec
 	reqc := wgs.reqc
@@ -450,7 +458,7 @@ func (w *watcher) closeStream(wgs *watchGrpcStream) {
 	close(wgs.donec)
 	wgs.cancel()
 	if w.streams != nil {
-		delete(w.streams, wgs.ctxKey)
+		delete(w.streams, wgs.streamKey)
 	}
 	w.mu.Unlock()
 }
