@@ -36,11 +36,10 @@ const (
 	progressRequestPeriod = 100 * time.Millisecond
 )
 
-func newConditionalProgressRequester(requestWatchProgress WatchProgressRequester, clock TickerFactory, contextMetadata metadata.MD) *conditionalProgressRequester {
+func newConditionalProgressRequester(requestWatchProgress WatchProgressRequester, clock TickerFactory) *conditionalProgressRequester {
 	pr := &conditionalProgressRequester{
 		clock:                clock,
 		requestWatchProgress: requestWatchProgress,
-		contextMetadata:      contextMetadata,
 	}
 	pr.cond = sync.NewCond(&pr.mux)
 	return pr

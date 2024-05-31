@@ -294,7 +294,7 @@ func TestWatchChanSync(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			kvWrapper := newEtcdClientKVWrapper(store.client.KV)
+			kvWrapper := newEtcdClientKVWrapper(store.client.Kubernetes)
 			kvWrapper.getReactors = append(kvWrapper.getReactors, func() {
 				barThird := &example.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "third", Name: "bar"}}
 				podKey := fmt.Sprintf("/pods/%s/%s", barThird.Namespace, barThird.Name)
@@ -306,7 +306,7 @@ func TestWatchChanSync(t *testing.T) {
 				}
 			})
 
-			store.client.KV = kvWrapper
+			store.client.Kubernetes = kvWrapper
 
 			w := store.watcher.createWatchChan(
 				origCtx,
@@ -335,7 +335,7 @@ func TestWatchChanSync(t *testing.T) {
 			}
 
 			if kvWrapper.getCallCounter != testCase.expectGetCount {
-				t.Errorf("Unexpected called times of client.KV.Get() : %v, expected: %v", kvWrapper.getCallCounter, testCase.expectGetCount)
+				t.Errorf("Unexpected called times of client.Kubernetes.Get() : %v, expected: %v", kvWrapper.getCallCounter, testCase.expectGetCount)
 			}
 		})
 	}
@@ -343,25 +343,25 @@ func TestWatchChanSync(t *testing.T) {
 
 // NOTE: it's not thread-safe
 type etcdClientKVWrapper struct {
-	clientv3.KV
+	clientv3.Kubernetes
 	// keeps track of the number of times Get method is called
 	getCallCounter int
 	// getReactors is called after the etcd KV's get function is executed.
 	getReactors []func()
 }
 
-func newEtcdClientKVWrapper(kv clientv3.KV) *etcdClientKVWrapper {
+func newEtcdClientKVWrapper(client clientv3.Kubernetes) *etcdClientKVWrapper {
 	return &etcdClientKVWrapper{
-		KV:             kv,
+		Kubernetes:     client,
 		getCallCounter: 0,
 	}
 }
 
-func (ecw *etcdClientKVWrapper) Get(ctx context.Context, key string, opts ...clientv3.OpOption) (*clientv3.GetResponse, error) {
-	resp, err := ecw.KV.Get(ctx, key, opts...)
+func (ecw *etcdClientKVWrapper) List(ctx context.Context, key string, opts clientv3.ListOptions) (clientv3.KubernetesListResponse, error) {
+	resp, err := ecw.Kubernetes.List(ctx, key, opts)
 	ecw.getCallCounter++
 	if err != nil {
-		return nil, err
+		return resp, err
 	}
 
 	if len(ecw.getReactors) > 0 {
