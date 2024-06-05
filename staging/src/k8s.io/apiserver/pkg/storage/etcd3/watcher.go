@@ -68,7 +68,9 @@ func TestOnlySetFatalOnDecodeError(b bool) {
 }
 
 type watcher struct {
+	streamKey string
 	client    *clientv3.Client
+
 	codec               runtime.Codec
 	newFunc             func() runtime.Object
 	objectType          string
@@ -268,7 +270,7 @@ func (wc *watchChan) ResultChan() <-chan watch.Event {
 }
 
 func (wc *watchChan) RequestWatchProgress() error {
-	return wc.watcher.client.RequestProgress(wc.ctx)
+	return wc.watcher.client.Kubernetes.RequestProgress(wc.ctx, clientv3.RequestProgressOptions{StreamKey: wc.watcher.streamKey})
 }
 
 // sync tries to retrieve existing data and send them to process.
@@ -383,6 +385,7 @@ func (wc *watchChan) startWatching(watchClosedCh chan struct{}, initialEventsEnd
 		}())
 	}
 	wch := wc.watcher.client.Kubernetes.Watch(wc.ctx, wc.key, clientv3.WatchOptions{
+		StreamKey: wc.watcher.streamKey,
 		Revision:  wc.initialRev + 1,
 		Prefix:    wc.recursive,
 	})

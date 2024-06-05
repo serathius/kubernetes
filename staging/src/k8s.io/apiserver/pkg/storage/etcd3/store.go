@@ -85,9 +85,7 @@ type store struct {
 }
 
 func (s *store) RequestWatchProgress(ctx context.Context) error {
-	// Use watchContext to match ctx metadata provided when creating the watch.
-	// In best case scenario we would use the same context that watch was created, but there is no way access it from watchCache.
-	return s.client.RequestProgress(s.watchContext(ctx))
+	return s.client.Kubernetes.RequestProgress(ctx, clientv3.RequestProgressOptions{StreamKey: s.watcher.streamKey})
 }
 
 type objState struct {
@@ -115,6 +113,8 @@ func newStore(c *clientv3.Client, codec runtime.Codec, newFunc, newListFunc func
 	}
 
 	w := &watcher{
+		// Ensure one watch stream per resource.
+		streamKey:     groupResource.String(),
 		client:        c,
 		codec:         codec,
 		newFunc:       newFunc,
@@ -842,18 +842,7 @@ func (s *store) Watch(ctx context.Context, key string, opts storage.ListOptions)
 	if err != nil {
 		return nil, err
 	}
-	return s.watcher.Watch(s.watchContext(ctx), preparedKey, int64(rev), opts)
-}
-
-func (s *store) watchContext(ctx context.Context) context.Context {
-	// The etcd server waits until it cannot find a leader for 3 election
-	// timeouts to cancel existing streams. 3 is currently a hard coded
-	// constant. The election timeout defaults to 1000ms. If the cluster is
-	// healthy, when the leader is stopped, the leadership transfer should be
-	// smooth. (leader transfers its leadership before stopping). If leader is
-	// hard killed, other servers will take an election timeout to realize
-	// leader lost and start campaign.
-	return clientv3.WithRequireLeader(ctx)
+	return s.watcher.Watch(ctx, preparedKey, int64(rev), opts)
 }
 
 func (s *store) getCurrentState(ctx context.Context, key string, v reflect.Value, ignoreNotFound bool) func() (*objState, error) {
