@@ -1139,10 +1139,13 @@ function configure-pga-if-needed() {
     status=0
     local pga_ip
     pga_ip=`curl ${PGA_ENDPOINT} -w '%{remote_ip}' --connect-timeout 10 -s -o /dev/null` || status="$?"
+    registry_domain="$(echo "${KUBE_DOCKER_REGISTRY}" | cut -d '/' -f 1)"
     if [[ "${status}" == "0" ]]; then
       echo "Configure /etc/hosts to use private google access"
       echo "$pga_ip ${STORAGE_ENDPOINT#https://}" >> /etc/hosts
-      echo "$pga_ip ${KUBE_DOCKER_REGISTRY}" >> /etc/hosts
+      echo "$pga_ip ${registry_domain}" >> /etc/hosts
+      # continue pga support for domain gke.gcr.io
+      echo "$pga_ip gke.gcr.io" >> /etc/hosts
     fi
   fi
 }
