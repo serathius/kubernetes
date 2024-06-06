@@ -248,6 +248,11 @@ function valid-storage-scope {
 # $1 is the sha512/sha1 hash of the URL. Can be "" if the sha512/sha1 hash is unknown.
 # $2+ are the URLs to download.
 function download-or-bust {
+  if [[ "${ARTIFACT_DOWNLOAD_RESTRICTED:-}" == "true" ]]; then
+    echo "Cannot download: $* as downloading is restricted, exiting"
+    exit 1
+  fi
+
   local -r hash="$1"
   shift 1
 
@@ -306,7 +311,17 @@ function record-preload-info {
 function is-preloaded {
   local -r key=$1
   local -r value=$2
-  grep -qs "${key},${value}" "${KUBE_HOME}/preload_info"
+
+  if ! grep -qs "${key},${value}" "${KUBE_HOME}/preload_info"; then
+    if [[ "${ARTIFACT_DOWNLOAD_RESTRICTED:-}" == "true" ]]; then
+      echo "No preload record found for ${key} and ${value} and downloading is restricted, exiting"
+      exit 1
+    fi
+    if [[ "${KUBERNETES_MASTER:-}" == "true" ]]; then
+      echo "No preload record found for ${key} and ${value}"
+    fi
+    return 1
+  fi
 }
 
 function is-ubuntu {
@@ -1371,6 +1386,17 @@ KUBE_HOME="/home/kubernetes"
 KUBE_BIN="${KUBE_HOME}/bin"
 
 if [[ "${KUBERNETES_MASTER:-}" == "true" ]]; then
+  if [[ "${IS_PRELOADER:-}" != "true" ]] &&\
+     grep -qs "PRELOADED," "${KUBE_HOME}/preload_info" &&\
+     [[ $(get-metadata-value "instance/attributes/fail-on-artifact-mismatch" "false") == "true" ]]; then
+       # Disallow artifact downloads when:
+       # - running on master VMs
+       # - && not in preloader (running in bootstrap)
+       # - && VM image is preloaded
+       # - && failure on artifact mismatch feature is enabled
+       ARTIFACT_DOWNLOAD_RESTRICTED="true"
+  fi
+
   log-wrap 'InstallHurl' install-hurl
 fi
 
