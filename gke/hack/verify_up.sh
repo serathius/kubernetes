@@ -27,18 +27,18 @@ ready=false
 for attempt in $(seq 1 $attempts)
 do
     error_code=0
-    wait_output=$(kubectl wait --for=condition=Ready pods --all -n kube-system --timeout=0 2>&1) || error_code=$?
+    wait_output=$(kubectl wait --for=condition=Ready pods --all -n kube-system --timeout=0 2>&1 && kubectl wait --for=condition=Available deployments --all -n kube-system --timeout=0 2>&1) || error_code=$?
     if [ "${error_code}" -eq 0 ]; then
-        echo "$(date -Iseconds): PASS: all kube-system pods ready"
+        echo "$(date -Iseconds): PASS: all kube-system pods and deployments ready"
         echo "${wait_output}"
         ready=true
         break
     elif [ "${attempt}" -eq "${attempts}" ]; then
-        echo "$(date -Iseconds): FAIL: not all kube-system pods ready after ${attempts} attempts"
+        echo "$(date -Iseconds): FAIL: not all kube-system pods and deployments ready after ${attempts} attempts"
         echo "${wait_output}"
         break
     else
-        echo "$(date -Iseconds): waiting for kube-system pods to be ready (attempt ${attempt})..."
+        echo "$(date -Iseconds): waiting for kube-system pods and deployments to be ready (attempt ${attempt})..."
         sleep "${delay}"
     fi
 done
