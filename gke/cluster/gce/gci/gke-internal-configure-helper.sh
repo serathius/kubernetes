@@ -947,6 +947,11 @@ function gke-configure-npd-custom-plugins {
   if [[ "${ENABLE_GCFS:-}" == "true" ]]; then
     GKE_NPD_CUSTOM_PLUGINS_CONFIG+=",${config_dir}/systemd-monitor-health.json,${config_dir}/systemd-monitor-restart.json,${config_dir}/gcfs-snapshotter-missing-layer-monitor.json,${config_dir}/secondary-boot-disk-missing-layer.json"
   fi
+
+  # Configure detect reboot monitor
+  if [[ "${ENABLE_BEST_EFFORT_NODE_REBOOT:-}" == "true" ]]; then
+    GKE_NPD_CUSTOM_PLUGINS_CONFIG+=",${config_dir}/node-reboot-monitor.json"
+  fi
 }
 
 # Set up GCFS daemons.
