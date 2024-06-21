@@ -986,7 +986,6 @@ function retag-docker-image {
   fi
 }
 
-
 # Retags kube-system docker images with passed in kube-apiserver/kubelet versions.
 function retag-docker-images {
   echo "Start retagging kube-system docker images"
@@ -1011,11 +1010,29 @@ function retag-docker-images {
   fi
 }
 
-
 function ensure-container-runtime {
   if [[ "${CONTAINER_RUNTIME}" == "docker" ]]; then
     echo "Dockershim is not supported. Container runtime must be set to containerd"
     exit 2
+  fi
+}
+
+function pin-docker-image {
+  local -r img_prefix=$1
+  echo "Pinning: ${img_prefix}"
+  for img in $(ctr -n=k8s.io images list -q | grep "/${img_prefix}"); do
+    cmd="ctr -n k8s.io images label ${img} io.cri-containerd.pinned=pinned"
+    ${cmd}
+  done
+}
+
+function pin-docker-images {
+  if [[ "${KUBERNETES_MASTER:-}" == "true" ]]; then
+    pin-docker-image "kube-apiserver"
+    pin-docker-image "kube-controller-manager"
+    pin-docker-image "kube-scheduler"
+  else
+    pin-docker-image "kube-proxy"
   fi
 }
 
@@ -1064,6 +1081,9 @@ function install-kube-binary-config {
     rm -rf "${KUBE_HOME}"/LICENSES
     mv "${KUBE_HOME}/kubernetes/LICENSES" "${KUBE_HOME}"
     mv "${KUBE_HOME}/kubernetes/kubernetes-src.tar.gz" "${KUBE_HOME}"
+
+    # Pin docker images to avoid GC
+    pin-docker-images
 
     record-preload-info "${server_binary_tar}" "${server_binary_tar_hash}"
   fi
