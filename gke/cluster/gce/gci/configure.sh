@@ -761,6 +761,24 @@ function install-hurl {
   fi
 }
 
+function install-k8s-pki {
+    local -r k8s_pki_url="${STORAGE_ENDPOINT}/${K8S_PKI_GCS_PATH}"
+    local -r k8s_pki_hash="${K8S_PKI_HASH}"
+
+    if is-preloaded "k8s_pki" "${k8s_pki_hash}"; then
+      echo "k8s_pki is preloaded"
+      return
+    fi
+
+    echo "Downloading k8s_pki binary"
+    download-or-bust "${k8s_pki_hash}" "${k8s_pki_url}"
+    mv "${KUBE_HOME}/k8s_pki" "${KUBE_BIN}/k8s_pki"
+    chmod a+x "${KUBE_BIN}/k8s_pki"
+
+    echo "Record k8s_pki preload info"
+    record-preload-info "k8s_pki" "${k8s_pki_hash}"
+}
+
 function install-gcfsd {
   echo "Downloading Riptide FUSE client"
   if is-preloaded "gcfsd" "${RIPTIDE_FUSE_VERSION}"; then
@@ -1377,6 +1395,10 @@ function preload {
 
   if [[ "${KUBERNETES_MASTER:-}" == "true" ]]; then
     log-wrap 'InstallHurl' install-hurl
+  fi
+
+  if [[ "${KUBERNETES_MASTER:-}" == "true" && -n "${K8S_PKI_GCS_PATH:-}" ]]; then
+    log-wrap "InstallK8sPki" install-k8s-pki
   fi
 
   if [[ "${KUBERNETES_MASTER:-}" != "true" && -n "${GVISOR_INSTALLER_IMAGE_HASH:-}" ]]; then

@@ -3144,6 +3144,10 @@ function main() {
     log-wrap 'MountMasterPD' mount-master-pd
     log-wrap 'CreateNodePKI' create-node-pki
     log-wrap 'CreateMasterPKI' create-master-pki
+    if [[ "${ENABLE_KCP_DYNAMIC_CERTIFICATE_DELIVERY:-}" == "true" && -n "${K8S_PKI_GCS_PATH:-}" ]]; then
+      echo "Running k8s_pki to configure pki"
+      ${KUBE_HOME}/bin/k8s_pki once --gke_token_url ${TOKEN_URL} --gke_token_body ${TOKEN_BODY_UNQUOTED}
+    fi
     log-wrap 'CreateMasterAuth' create-master-auth
     # must be called before 'start-kube-addons'
     log-wrap 'DownloadComponentData' download-component-data
