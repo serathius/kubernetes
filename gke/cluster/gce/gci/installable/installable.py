@@ -135,7 +135,7 @@ class Ctr:
       capture_output=True,
     )
 
-  def delete(url: str):
+  def delete(self, url: str):
     cmd = f'ctr -n k8s.io images delete {url}'
     subprocess.run(
       args=cmd,
@@ -146,6 +146,7 @@ class Ctr:
     )
 
 ctr = Ctr()
+
 
 class Installable:
   """Installable is the parent class for all installables."""
@@ -206,6 +207,7 @@ class Container(Installable):
 
     stdout = str(out.stdout.strip())
     if self.get_url() not in stdout:
+      err = out.stdout.strip()
       raise ValueError(f'Failed to find container "{self.get_name()}" on disk: "{stdout}"')
 
   def install(self):
@@ -216,8 +218,8 @@ class Container(Installable):
 
     ctr_args = shlex.join(self.get_ctr_args())
     container_args = shlex.join(self.get_container_args())
-    ctr.run(name=self.get_name(), url=self.get_url(),
-                 ctr_args=ctr_args, container_args=container_args)
+    ctr.run(name=self.get_name(), url=self.get_url(), ctr_args=ctr_args,
+            container_args=container_args)
 
   def _should_run(self) -> Dict[str, Any]:
     """Check if we should run this container."""
@@ -244,12 +246,68 @@ class Container(Installable):
     return run['containerArgs'] if run and 'containerArgs' in run else []
 
 
+class AppPkgHandler:
+  '''AppPkgHandler wraps methods that need to be faked for AppPkg unit tests.'''
+
+  def download(self, retry: int, url: str) -> bytes:
+    creds = get_gce_credentials()
+    retries = urllib3.util.Retry(
+      total=retry,
+      backoff_factor=1.0,
+    )
+    timeout = urllib3.util.Timeout(connect=20.0, read=10.0)
+    with urllib3.PoolManager(
+      retries=retries,
+      timeout=timeout,
+    ) as http:
+      resp = http.request('GET', url,
+                              headers={'Authorization': f'Bearer {creds}'})
+      if resp.status != 200:
+        raise IOError(f'Failed to download AppPkg: status: {resp.status} reason: {resp.reason}')
+      return resp.data
+
+  def checksum(self, file_path: str, algo: str, digest: str):
+    """get_checksum computes the checksum for validating downloaded AppPkgs."""
+    func = getattr(hashlib, algo.lower())
+    if func is None:
+      raise ValueError('Unknown digest algo: %s' % algo)
+    # we can choose different algos here as hashlib supports several.
+    got_digest = ''
+    with open(file_path, mode='rb') as f:
+      got_digest = func(f.read()).hexdigest()
+      if got_digest != digest:
+        raise ValueError(f'mismatch digest: got: {got_digest} want: {digest}')
+
+  def unwrap(self, file_path: str, dir_path: str, prefix: str, file_map: Any):
+    """unwrap uses tar to unwrap the archive."""
+    tar_cmd = f'tar -xzf {file_path} -C {dir_path}'
+    subprocess.run(
+      args=tar_cmd,
+      shell=True,
+      check=True,
+      capture_output=True,
+    )
+    for f in file_map:
+      source = f['source']
+      dest = f['dest']
+      mode = f['mode']
+      source = os.path.join(dir_path, source)
+      dest = os.path.join(prefix, dest)
+      os.makedirs(os.path.dirname(dest), exist_ok=True)
+      shutil.copyfile(source, dest)
+      os.chmod(dest, int(mode, 8))
+
+handler = AppPkgHandler()
+
 class AppPkg(Installable):
   """Class to handle the apppkg kind.
 
   AppPkgs are files that are downloaded from some storage location, usually a GCS bucket.
   AppPkgs have been the primary type of legacy component on GKE: e.g. cni plugin, crictl, etc.
   """
+
+  # Default retry to use for downloading AppPkgs from GCS buckets.
+  retry = 6
 
   def __init__(self, installable: Any, args: argparse.Namespace):
     super().__init__(installable, args)
@@ -279,30 +337,14 @@ class AppPkg(Installable):
     if not self.should_download:
       LOGGER.info(f'Skip downloading on AppPgk "{self.get_name()}" as it should be preloaded')
       return
-    creds = get_gce_credentials()
-    retry = self.retry if hasattr(self, 'retry') else 6
-    retries = urllib3.util.Retry(
-      total=retry,
-      backoff_factor=1.0,
-    )
-    timeout = urllib3.util.Timeout(connect=20.0, read=10.0)
-    with urllib3.PoolManager(
-      retries=retries,
-      timeout=timeout,
-    ) as http:
-      resp = http.request('GET', self.get_url(),
-                              headers={'Authorization': f'Bearer {creds}'})
-      if resp.status != 200:
-        raise IOError(f'Failed to download AppPkg: status: {resp.status} reason: {resp.reason}')
-      with open(self.file, '+wb') as f:
-        f.write(resp.data)
-      checksum = self.get_checksum(self.file, self.content['digestAlgo'])
-      if checksum != self._get_digest():
 
-        raise ValueError(
-          f'Hash validation failed for AppPkg "{self.get_name()}": url: {self.get_url()} '
-          f'got: {checksum} want: {self._get_digest()}'
-        )
+    data = handler.download(retry=self.retry, url=self.get_url())
+    with open(self.file, '+wb') as f:
+      f.write(data)
+    try:
+      handler.checksum(file_path=self.file, algo=self.content['digestAlgo'], digest=self._get_digest())
+    except ValueError as e:
+      raise ValueError(f'Error validating package {self.get_name()}: {e=}')
     self._record_preload_info()
 
   def check_preloaded(self):
@@ -330,17 +372,8 @@ class AppPkg(Installable):
 
     fileMap = self.content.get('fileMap', [])
     if fileMap:
-      self._unwrap()
-    prefix = self.content.get('installPrefix', '')
-    for f in fileMap:
-      source = f['source']
-      dest = f['dest']
-      mode = f['mode']
-      source = os.path.join(self.dir, source)
-      dest = os.path.join(prefix, dest)
-      os.makedirs(os.path.dirname(dest), exist_ok=True)
-      shutil.copyfile(source, dest)
-      os.chmod(dest, int(mode, 8))
+      prefix = self.content.get('installPrefix', '')
+      handler.unwrap(file_path=self.file, dir_path=self.dir, prefix=prefix, file_map=fileMap)
 
   def _record_preload_info(self):
     """records the preload info similar to the 'record-preload-info' function in configure.sh"""
@@ -355,25 +388,7 @@ class AppPkg(Installable):
     """Returns the digest for this apppkg."""
     return self.content['digest']
 
-  @classmethod
-  def get_checksum(_, file_path: str, algo: str) -> str:
-    """get_checksum computes the checksum for validating downloaded AppPkgs."""
-    func = getattr(hashlib, algo.lower())
-    if func is None:
-      raise ValueError('Unknown digest algo: %s' % algo)
-    # we can choose different algos here as hashlib supports several.
-    with open(file_path, mode='rb') as f:
-      return func(f.read()).hexdigest()
 
-  def _unwrap(self):
-    """unwrap uses tar to unwrap the archive."""
-    tar_cmd = f'tar -xzf {self.file} -C {self.dir}'
-    subprocess.run(
-      args=tar_cmd,
-      shell=True,
-      check=True,
-      capture_output=True,
-    )
 
 def parse_installable(args: argparse.Namespace) -> Installable:
   """parse_installable parses the given json installable returns the correct class based on kind"""

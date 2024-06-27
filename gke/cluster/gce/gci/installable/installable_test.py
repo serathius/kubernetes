@@ -23,6 +23,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from typing import Any
 import unittest
 import urllib3
 
@@ -63,14 +64,14 @@ container_content = """{
   }
 }"""
 
-garbage_url = 'garbage_url'
+garbage = 'this_is_garbage'
 
 class FakeCtr(installable.Ctr):
   """FakeCtr fakes calls to the ctr executable."""
   images = {}
 
   def download(self, url: str) -> subprocess.CompletedProcess:
-    if garbage_url in url:
+    if garbage in url:
       return subprocess.CalledProcessError(cmd="", returncode=255, stderr="This was a failed download.")
     self.images[url] = True
     return subprocess.CompletedProcess(args="", returncode=0)
@@ -93,6 +94,7 @@ class FakeCtr(installable.Ctr):
       return subprocess.CalledProcessError(cmd="", returncode=1, stderr="no image found")
     self.images.pop(url)
 
+
 class ContainerTests(unittest.TestCase):
   """ContainerTests are tests for the "container" kind."""
 
@@ -106,16 +108,16 @@ class ContainerTests(unittest.TestCase):
   def test_download(self):
     """Tests the download function of the container."""
     args = make_namespace(content=container_content, download=True)
-    ctr = installable.parse_installable(args)
-    self._cleanup_container(ctr)
-    ctr.download()
-    ctr.check_preloaded()
-    self._cleanup_container(ctr)
+    container = installable.parse_installable(args)
+    installable.ctr.delete(container.get_url())
+    container.download()
+    container.check_preloaded()
+    installable.ctr.delete(container.get_url())
 
   def test_bad_url(self):
     """Tests that downloads fail given a bad URL."""
     content = json.loads(container_content)
-    content['remoteURL'] = garbage_url
+    content['remoteURL'] = garbage
     args = make_namespace(content=json.dumps(content), download=True)
     with self.assertRaisesRegex(ValueError, 'Failed to download container'):
       inst = installable.parse_installable(args)
@@ -124,38 +126,38 @@ class ContainerTests(unittest.TestCase):
   def test_install_with_preload(self):
     """Tests the base case for containers where we download the container and then run it with the given args."""
     args = make_namespace(content=container_content, download=True)
-    ctr = installable.parse_installable(args)
-    self._cleanup_container(ctr)
+    container = installable.parse_installable(args)
+    installable.ctr.delete(container.get_url())
     with self.assertRaises(ValueError):
-      ctr.check_preloaded()
+      container.check_preloaded()
     with self.assertLogs(logger=installable.LOGGER, level=logging.INFO) as logs:
       installable.do_install(args)
     self.assertEqual(logs.output, ['INFO:installable:Processing installable: "my-container": url: '
     '"gcr.io/gke-release-staging/busybox@sha256:d8d3bc2c183ed2f9f10e7258f84971202325ee6011ba137112e01e30f206de67"'])
-    self._cleanup_container(ctr)
+    installable.ctr.delete(container.get_url())
 
   def test_install_without_preload(self):
     """Tests the case where run the container without downloading it."""
     args = make_namespace(content=container_content, download=True)
-    ctr = installable.parse_installable(args)
+    container = installable.parse_installable(args)
     faker = None
     # To setup, we need to download the container.
-    ctr.download()
-    ctr.check_preloaded()
+    container.download()
+    container.check_preloaded()
     args = make_namespace(content=container_content, download=False)
     with self.assertLogs(logger=installable.LOGGER, level=logging.INFO) as logs:
       installable.do_install(args)
     self.assertEqual(logs.output, ['INFO:installable:Processing installable: "my-container": url: '
    '"gcr.io/gke-release-staging/busybox@sha256:d8d3bc2c183ed2f9f10e7258f84971202325ee6011ba137112e01e30f206de67"',
    'INFO:installable:Skip downloading on Container "my-container" as it should be preloaded'])
-    ctr.check_preloaded()
-    self._cleanup_container(ctr)
+    container.check_preloaded()
+    installable.ctr.delete(container.get_url())
 
   def test_install_container_without_preload_error(self):
     """Tests the case where we try to run a container that is not present."""
     args = make_namespace(content=container_content, download=False)
-    ctr = installable.parse_installable(args)
-    self._cleanup_container(ctr)
+    container = installable.parse_installable(args)
+    installable.ctr.delete(container.get_url())
     with self.assertRaises(ValueError):
       with self.assertLogs(logger=installable.LOGGER, level=logging.INFO) as logs:
         installable.do_install(args)
@@ -163,11 +165,7 @@ class ContainerTests(unittest.TestCase):
    '"gcr.io/gke-release-staging/busybox@sha256:d8d3bc2c183ed2f9f10e7258f84971202325ee6011ba137112e01e30f206de67"',
    'INFO:installable:Skip downloading on Container "my-container" as it should be preloaded'])
     with self.assertRaisesRegex(ValueError, 'Failed to find container'):
-      ctr.check_preloaded()
-    self._cleanup_container(ctr)
-
-  def _cleanup_container(self, container: installable.Container) -> bool:
-    """Utility method to delete a container image."""
+      container.check_preloaded()
     installable.ctr.delete(container.get_url())
 
 apppkg_content = """{
@@ -205,6 +203,28 @@ crictl_apppkg_content = """{
   "digestAlgo":"SHA512"
 }"""
 
+class FakeAppPkgHandler(installable.AppPkgHandler):
+  '''FakeAppPkgHanlder fakes installable.AppPkgHandler methods.'''
+
+  def download(self, retry: int, url: str) -> bytes:
+    if url == garbage:
+      raise urllib3.exceptions.MaxRetryError(url=url, pool=None, reason='Name or service not known')
+    return b'some bytes to write'
+
+  def checksum(self, file_path: str, algo: str, digest: str):
+    if digest == garbage:
+      raise ValueError(f'mismatch digest: got: {garbage} want: "some valid digest"')
+
+  def unwrap(self, file_path: str, dir_path: str, prefix: str, file_map: Any):
+    for f in file_map:
+      dest = f['dest']
+      dest = os.path.join(prefix, dest)
+      os.makedirs(os.path.dirname(dest), exist_ok=True)
+      mode = f['mode']
+      with open(dest, 'w+') as f:
+        f.write('some content')
+      os.chmod(dest, int(mode, 8))
+
 
 class AppPkgTests(unittest.TestCase):
 
@@ -214,7 +234,6 @@ class AppPkgTests(unittest.TestCase):
     "is-preloaded" functions in configure.sh."""
     with tempfile.NamedTemporaryFile(delete=False) as f:
       cls.preload_file = f.name
-
 
   @classmethod
   def tearDownClass(cls):
@@ -232,7 +251,7 @@ class AppPkgTests(unittest.TestCase):
   def test_bad_url(self):
     """Checks that a bad URL fails to download."""
     content = json.loads(apppkg_content)
-    content['remoteURL'] = 'garbage_url'
+    content['remoteURL'] = garbage
     args = make_namespace(content=json.dumps(content), download=True, preload_file=self.preload_file)
     with self.assertRaisesRegex(urllib3.exceptions.MaxRetryError, 'Name or service not known'):
       with installable.parse_installable(args) as inst:
@@ -251,7 +270,7 @@ class AppPkgTests(unittest.TestCase):
       self.assertTrue(os.path.exists(inst.file))
       algo = inst.content['digestAlgo']
       digest = inst.content['digest']
-      self.assertEqual(inst.get_checksum(inst.file, algo), digest)
+      installable.handler.checksum(file_path=inst.file, algo=algo, digest=digest)
     self.assertFalse(os.path.exists(inst.file))
     self.assertFalse(os.path.exists(inst.dir))
 
@@ -304,7 +323,7 @@ class AppPkgTests(unittest.TestCase):
       self.assertFalse(credentials_in_log(log))
     self.assertTrue(os.path.exists(out_file))
     with installable.parse_installable(args) as inst:
-      self.assertEqual(inst.get_checksum(out_file, spec['digestAlgo']), spec['digest'])
+      installable.handler.checksum(file_path=out_file, algo=spec['digestAlgo'], digest=spec['digest'])
     os.remove(out_file)
 
   def test_download_install_unwrap(self):
@@ -321,6 +340,11 @@ class AppPkgTests(unittest.TestCase):
       for file in spec['fileMap']:
         dest_path = os.path.join(d, file['dest'])
         self.assertTrue(os.path.exists(dest_path))
+        mode = int(file['mode'], 8)
+        st = os.stat(dest_path)
+        got_mode = st.st_mode & 0o777
+        self.assertEqual(oct(mode), oct(got_mode))
+
 
   def test_crictl_case(self):
     """Tests downloading a different apppkg: crictl."""
@@ -335,7 +359,7 @@ class AppPkgTests(unittest.TestCase):
     installable.do_install(args)
     self.assertTrue(os.path.exists(out_file))
     with installable.parse_installable(args) as inst:
-      self.assertEqual(inst.get_checksum(out_file, spec['digestAlgo']), spec['digest'])
+      installable.handler.checksum(file_path=out_file, algo=spec['digestAlgo'], digest=spec['digest'])
     os.remove(out_file)
 
   def _set_preload_file(self, info: dict):
@@ -392,11 +416,15 @@ if __name__ == '__main__':
   parser = argparse.ArgumentParser()
   parser.add_argument('--fake', default=False)
   options, args = parser.parse_known_args()
-  installable.ctr = FakeCtr()
+  if options.fake:
+    installable.ctr = FakeCtr()
+    def fake_get_creds() -> str:
+      return "fake creds"
+    installable.get_gce_credentials = fake_get_creds
+    installable.handler = FakeAppPkgHandler()
 
   unit_argv = sys.argv[:1] + args
   unittest.main(argv=unit_argv)
-
 
   # The tests above create a lot of temporary directories. Ensure they are cleaned up.
   for dir in os.listdir(tempfile.gettempdir()):
