@@ -21,11 +21,13 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/rand"
 	"reflect"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -617,6 +619,243 @@ func RunTestPreconditionalDeleteWithOnlySuggestionPass(ctx context.Context, t *t
 		t.Errorf("Unexpected error on reading object: %v", err)
 	}
 	expectNoDiff(t, "incorrect pod:", updatedPod, out)
+}
+
+func RunBenchmarkStoreListCreate(ctx context.Context, b *testing.B, store storage.Interface, match metav1.ResourceVersionMatch) {
+	objectCount := atomic.Uint64{}
+	pods := []*example.Pod{}
+	for i := 0; i < b.N; i++ {
+		name := randomString(100)
+		pods = append(pods, &example.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: name}})
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		pod := pods[i]
+		podOut := &example.Pod{}
+		err := store.Create(ctx, computePodKey(pod), pod, podOut, 0)
+		if err != nil {
+			panic(fmt.Sprintf("Unexpected error %s", err))
+		}
+		listOut := &example.PodList{}
+		err = store.GetList(ctx, "/pods", storage.ListOptions{
+			Recursive:            true,
+			ResourceVersion:      podOut.ResourceVersion,
+			ResourceVersionMatch: match,
+			Predicate: storage.SelectionPredicate{
+				Label: labels.Everything(),
+				Field: fields.Everything(),
+				Limit: 1,
+			},
+		}, listOut)
+		if err != nil {
+			panic(fmt.Sprintf("Unexpected error %s", err))
+		}
+		objectCount.Add(uint64(len(listOut.Items)))
+	}
+	b.ReportMetric(float64(objectCount.Load())/float64(b.N), "objects/op")
+}
+
+func RunBenchmarkStoreList(ctx context.Context, b *testing.B, store storage.Interface) {
+	namespaceCount := 100
+	podPerNamespaceCount := 100
+	var paginateLimit int64 = 100
+	nodeCount := 100
+	namespacedNames, nodeNames := prepareBenchchmarkData(ctx, store, namespaceCount, podPerNamespaceCount, nodeCount)
+	b.ResetTimer()
+	maxRevision := 1 + namespaceCount*podPerNamespaceCount
+	cases := []struct {
+		name  string
+		match metav1.ResourceVersionMatch
+	}{
+		{
+			name:  "RV=Empty",
+			match: "",
+		},
+		{
+			name:  "RV=NotOlderThan",
+			match: metav1.ResourceVersionMatchNotOlderThan,
+		},
+		{
+			name:  "RV=MatchExact",
+			match: metav1.ResourceVersionMatchExact,
+		},
+	}
+
+	for _, c := range cases {
+		b.Run(c.name, func(b *testing.B) {
+			runBenchmarkStoreList(ctx, b, store, 0, maxRevision, c.match, false, nodeNames)
+		})
+	}
+	b.Run("Paginate", func(b *testing.B) {
+		for _, c := range cases {
+			b.Run(c.name, func(b *testing.B) {
+				runBenchmarkStoreList(ctx, b, store, paginateLimit, maxRevision, c.match, false, nodeNames)
+			})
+		}
+	})
+	b.Run("NodeScoped", func(b *testing.B) {
+		for _, c := range cases {
+			b.Run(c.name, func(b *testing.B) {
+				runBenchmarkStoreList(ctx, b, store, 0, maxRevision, c.match, true, nodeNames)
+			})
+		}
+		b.Run("Paginate", func(b *testing.B) {
+			for _, c := range cases {
+				b.Run(c.name, func(b *testing.B) {
+					runBenchmarkStoreList(ctx, b, store, paginateLimit, maxRevision, c.match, true, nodeNames)
+				})
+			}
+		})
+	})
+	b.Run("Namespace", func(b *testing.B) {
+		for _, c := range cases {
+			b.Run(c.name, func(b *testing.B) {
+				runBenchmarkStoreListNamespace(ctx, b, store, maxRevision, c.match, namespacedNames)
+			})
+		}
+	})
+}
+
+func runBenchmarkStoreListNamespace(ctx context.Context, b *testing.B, store storage.Interface, maxRV int, match metav1.ResourceVersionMatch, namespaceNames []string) {
+	wg := sync.WaitGroup{}
+	objectCount := atomic.Uint64{}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		wg.Add(1)
+		resourceVersion := ""
+		switch match {
+		case metav1.ResourceVersionMatchExact:
+			resourceVersion = fmt.Sprintf("%d", maxRV-99+i%100)
+		case metav1.ResourceVersionMatchNotOlderThan:
+			resourceVersion = "0"
+		}
+		go func(resourceVersion string) {
+			defer wg.Done()
+			for j := 0; j < len(namespaceNames); j++ {
+				listOut := &example.PodList{}
+				err := store.GetList(ctx, "/pods/"+namespaceNames[j], storage.ListOptions{
+					Recursive:            true,
+					ResourceVersion:      resourceVersion,
+					ResourceVersionMatch: match,
+					Predicate:            storage.Everything,
+				}, listOut)
+				if err != nil {
+					panic(fmt.Sprintf("Unexpected error %s", err))
+				}
+				objectCount.Add(uint64(len(listOut.Items)))
+			}
+		}(resourceVersion)
+	}
+	wg.Wait()
+	b.ReportMetric(float64(objectCount.Load())/float64(b.N), "objects/op")
+}
+
+func runBenchmarkStoreList(ctx context.Context, b *testing.B, store storage.Interface, limit int64, maxRV int, match metav1.ResourceVersionMatch, perNode bool, nodeNames []string) {
+	wg := sync.WaitGroup{}
+	objectCount := atomic.Uint64{}
+	pageCount := atomic.Uint64{}
+	for i := 0; i < b.N; i++ {
+		wg.Add(1)
+		resourceVersion := ""
+		switch match {
+		case metav1.ResourceVersionMatchExact:
+			resourceVersion = fmt.Sprintf("%d", maxRV-99+i%100)
+		case metav1.ResourceVersionMatchNotOlderThan:
+			resourceVersion = "0"
+		}
+		go func(resourceVersion string) {
+			defer wg.Done()
+			if perNode {
+				for _, nodeName := range nodeNames {
+					paginate(ctx, store, &objectCount, &pageCount, limit, resourceVersion, match, fields.SelectorFromSet(fields.Set{"spec.nodeName": nodeName}), func(obj runtime.Object) (labels.Set, fields.Set, error) {
+						pod := obj.(*example.Pod)
+						return nil, fields.Set{
+							"spec.nodeName": pod.Spec.NodeName,
+						}, nil
+					})
+				}
+			} else {
+				paginate(ctx, store, &objectCount, &pageCount, limit, resourceVersion, match, fields.Everything(), nil)
+			}
+		}(resourceVersion)
+	}
+	wg.Wait()
+	b.ReportMetric(float64(objectCount.Load())/float64(b.N), "objects/op")
+	b.ReportMetric(float64(pageCount.Load())/float64(b.N), "pages/op")
+}
+
+func paginate(ctx context.Context, store storage.Interface, objectCount, pageCount *atomic.Uint64, limit int64, resourceVersion string, match metav1.ResourceVersionMatch, fields fields.Selector, attr storage.AttrFunc) {
+	listOut := &example.PodList{}
+	err := store.GetList(ctx, "/pods", storage.ListOptions{
+		Recursive:            true,
+		ResourceVersion:      resourceVersion,
+		ResourceVersionMatch: match,
+		Predicate: storage.SelectionPredicate{
+			Field:    fields,
+			GetAttrs: attr,
+			Label:    labels.Everything(),
+			Limit:    limit,
+		},
+	}, listOut)
+	if err != nil {
+		panic(fmt.Sprintf("Unexpected error %s", err))
+	}
+	pageCount.Add(1)
+	objectCount.Add(uint64(len(listOut.Items)))
+	continueToken := listOut.Continue
+	for continueToken != "" {
+		listOut := &example.PodList{}
+		err := store.GetList(ctx, "/pods", storage.ListOptions{
+			Recursive: true,
+			Predicate: storage.SelectionPredicate{
+				Field:    fields,
+				GetAttrs: attr,
+				Label:    labels.Everything(),
+				Continue: continueToken,
+				Limit:    limit,
+			},
+		}, listOut)
+		if err != nil {
+			panic(fmt.Sprintf("Unexpected error %s", err))
+		}
+		continueToken = listOut.Continue
+		pageCount.Add(1)
+		objectCount.Add(uint64(len(listOut.Items)))
+	}
+}
+
+func prepareBenchchmarkData(ctx context.Context, store storage.Interface, namespaceCount, podPerNamespaceCount, nodeCount int) (namespaceNames, nodeNames []string) {
+	nodeNames = make([]string, nodeCount)
+	for i := 0; i < nodeCount; i++ {
+		nodeNames[i] = randomString(100)
+	}
+	namespaceNames = make([]string, nodeCount)
+	out := &example.Pod{}
+	for i := 0; i < namespaceCount; i++ {
+		namespace := randomString(100)
+		namespaceNames[i] = namespace
+		for j := 0; j < podPerNamespaceCount; j++ {
+			name := randomString(100)
+			pod := &example.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name}, Spec: example.PodSpec{NodeName: nodeNames[rand.Intn(nodeCount)]}}
+			err := store.Create(ctx, computePodKey(pod), pod, out, 0)
+			if err != nil {
+				panic(fmt.Sprintf("Unexpected error %s", err))
+			}
+		}
+	}
+	return namespaceNames, nodeNames
+}
+
+const (
+	chars = "abcdefghijklmnopqrstuvwxyz0123456789"
+)
+
+func randomString(l uint) string {
+	s := make([]byte, l)
+	for i := 0; i < int(l); i++ {
+		s[i] = chars[rand.Intn(len(chars))]
+	}
+	return string(s)
 }
 
 func RunTestList(ctx context.Context, t *testing.T, store storage.Interface, compaction Compaction, ignoreWatchCacheTests bool) {
