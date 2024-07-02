@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-logr/logr"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
@@ -38,6 +39,7 @@ import (
 	storagetesting "k8s.io/apiserver/pkg/storage/testing"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	featuregatetesting "k8s.io/component-base/featuregate/testing"
+	"k8s.io/klog/v2"
 	"k8s.io/utils/clock"
 )
 
@@ -426,7 +428,7 @@ func testSetup(t *testing.T, opts ...setupOption) (context.Context, *Cacher, tea
 	return ctx, cacher, tearDown
 }
 
-func testSetupWithEtcdServer(t *testing.T, opts ...setupOption) (context.Context, *Cacher, *etcd3testing.EtcdTestServer, tearDownFunc) {
+func testSetupWithEtcdServer(t testing.TB, opts ...setupOption) (context.Context, *Cacher, *etcd3testing.EtcdTestServer, tearDownFunc) {
 	setupOpts := setupOptions{}
 	opts = append([]setupOption{withDefaults}, opts...)
 	for _, opt := range opts {
@@ -513,5 +515,83 @@ func (c *createWrapper) Create(ctx context.Context, key string, obj, out runtime
 			return false, nil
 		}
 		return true, nil
+	})
+}
+
+func BenchmarkStoreListCreate(b *testing.B) {
+	klog.SetLogger(logr.Discard())
+	b.Run("RV=NotOlderThan", func(b *testing.B) {
+		ctx, cacher, _, terminate := testSetupWithEtcdServer(b)
+		b.Cleanup(terminate)
+		storagetesting.RunBenchmarkStoreListCreate(ctx, b, cacher, metav1.ResourceVersionMatchNotOlderThan)
+	})
+	b.Run("RV=ExactMatch", func(b *testing.B) {
+		ctx, cacher, _, terminate := testSetupWithEtcdServer(b)
+		b.Cleanup(terminate)
+		storagetesting.RunBenchmarkStoreListCreate(ctx, b, cacher, metav1.ResourceVersionMatchExact)
+	})
+}
+
+func BenchmarkStoreList(b *testing.B) {
+	klog.SetLogger(logr.Discard())
+	ctx, cacher, _, terminate := testSetupWithEtcdServer(b)
+	b.Cleanup(terminate)
+	namespaceCount := 100
+	podPerNamespaceCount := 100
+	var paginateLimit int64 = 100
+	nodeCount := 100
+	namespacedNames, nodeNames := storagetesting.PrepareBenchchmarkData(ctx, cacher, namespaceCount, podPerNamespaceCount, nodeCount)
+	b.ResetTimer()
+	maxRevision := 1 + namespaceCount*podPerNamespaceCount
+	cases := []struct {
+		name  string
+		match metav1.ResourceVersionMatch
+	}{
+		{
+			name:  "RV=Empty",
+			match: "",
+		},
+		{
+			name:  "RV=NotOlderThan",
+			match: metav1.ResourceVersionMatchNotOlderThan,
+		},
+		{
+			name:  "RV=MatchExact",
+			match: metav1.ResourceVersionMatchExact,
+		},
+	}
+
+	for _, c := range cases {
+		b.Run(c.name, func(b *testing.B) {
+			storagetesting.RunBenchmarkStoreList(ctx, b, cacher, 0, maxRevision, c.match, false, nodeNames)
+		})
+	}
+	b.Run("Paginate", func(b *testing.B) {
+		for _, c := range cases {
+			b.Run(c.name, func(b *testing.B) {
+				storagetesting.RunBenchmarkStoreList(ctx, b, cacher, paginateLimit, maxRevision, c.match, false, nodeNames)
+			})
+		}
+	})
+	b.Run("NodeScoped", func(b *testing.B) {
+		for _, c := range cases {
+			b.Run(c.name, func(b *testing.B) {
+				storagetesting.RunBenchmarkStoreList(ctx, b, cacher, 0, maxRevision, c.match, true, nodeNames)
+			})
+		}
+		b.Run("Paginate", func(b *testing.B) {
+			for _, c := range cases {
+				b.Run(c.name, func(b *testing.B) {
+					storagetesting.RunBenchmarkStoreList(ctx, b, cacher, paginateLimit, maxRevision, c.match, true, nodeNames)
+				})
+			}
+		})
+	})
+	b.Run("Namespace", func(b *testing.B) {
+		for _, c := range cases {
+			b.Run(c.name, func(b *testing.B) {
+				storagetesting.RunBenchmarkStoreListNamespace(ctx, b, cacher, maxRevision, c.match, namespacedNames)
+			})
+		}
 	})
 }

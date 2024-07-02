@@ -900,3 +900,75 @@ func BenchmarkStore_GetList(b *testing.B) {
 		})
 	}
 }
+
+func BenchmarkStoreListCreate(b *testing.B) {
+	_, store, _ := testSetup(b)
+	storagetesting.RunBenchmarkStoreListCreate(context.Background(), b, store)
+}
+
+func BenchmarkStoreList(b *testing.B) {
+	ctx := context.Background()
+	_, store, _ := testSetup(b)
+	namespaceCount := 100
+	podPerNamespaceCount := 100
+	var paginateLimit int64 = 100
+	nodeCount := 100
+	namespacedNames, nodeNames := storagetesting.PrepareBenchchmarkData(ctx, store, namespaceCount, podPerNamespaceCount, nodeCount)
+	b.ResetTimer()
+
+	cases := []struct {
+		name            string
+		ResourceVersion string
+		match           metav1.ResourceVersionMatch
+	}{
+		{
+			name:            "RV=Empty",
+			match:           "",
+			ResourceVersion: "",
+		},
+		{
+			name:            "RV=Exact",
+			match:           metav1.ResourceVersionMatchExact,
+			ResourceVersion: fmt.Sprintf("%d", 1+namespaceCount*podPerNamespaceCount),
+		},
+		{
+			name:            "RV=NotOlderThanZero",
+			match:           metav1.ResourceVersionMatchNotOlderThan,
+			ResourceVersion: "0",
+		},
+	}
+
+	for _, c := range cases {
+		b.Run(c.name, func(b *testing.B) {
+			storagetesting.RunBenchmarkStoreList(ctx, b, store, 0, c.ResourceVersion, c.match, false, nodeNames)
+		})
+	}
+	b.Run("Paginate", func(b *testing.B) {
+		for _, c := range cases {
+			b.Run(c.name, func(b *testing.B) {
+				storagetesting.RunBenchmarkStoreList(ctx, b, store, paginateLimit, c.ResourceVersion, c.match, false, nodeNames)
+			})
+		}
+	})
+	b.Run("NodeScoped", func(b *testing.B) {
+		for _, c := range cases {
+			b.Run(c.name, func(b *testing.B) {
+				storagetesting.RunBenchmarkStoreList(ctx, b, store, 0, c.ResourceVersion, c.match, true, nodeNames)
+			})
+		}
+		b.Run("Paginate", func(b *testing.B) {
+			for _, c := range cases {
+				b.Run(c.name, func(b *testing.B) {
+					storagetesting.RunBenchmarkStoreList(ctx, b, store, paginateLimit, c.ResourceVersion, c.match, true, nodeNames)
+				})
+			}
+		})
+	})
+	b.Run("Namespace", func(b *testing.B) {
+		for _, c := range cases {
+			b.Run(c.name, func(b *testing.B) {
+				storagetesting.RunBenchmarkStoreListNamespace(ctx, b, store, c.ResourceVersion, c.match, namespacedNames)
+			})
+		}
+	})
+}
