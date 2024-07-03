@@ -134,7 +134,11 @@ func (c *CacheProxy) Get(ctx context.Context, key string, opts storage.GetOption
 }
 
 func (c *CacheProxy) GetList(ctx context.Context, key string, opts storage.ListOptions, listObj runtime.Object) error {
-	if shouldDelegateList(opts) {
+	shouldDelegate, err := c.cacher.shouldDelegateList(opts)
+	if err != nil {
+		return err
+	}
+	if shouldDelegate {
 		return c.storage.GetList(ctx, key, opts, listObj)
 	}
 
