@@ -17,6 +17,7 @@ limitations under the License.
 package cacher
 
 import (
+	"container/heap"
 	"fmt"
 	"strings"
 	"sync"
@@ -36,6 +37,18 @@ type threadedStoreIndexer struct {
 	lock    sync.RWMutex
 	store   btreeStore
 	indexer indexer
+}
+
+func (si *threadedStoreIndexer) Count(prefix, continueKey string) (count int) {
+	si.lock.RLock()
+	defer si.lock.RUnlock()
+	return si.store.Count(prefix, continueKey)
+}
+
+func (si *threadedStoreIndexer) Clone() orderedStore {
+	si.lock.RLock()
+	defer si.lock.RUnlock()
+	return si.store.Clone()
 }
 
 func (si *threadedStoreIndexer) Add(obj interface{}) error {
@@ -296,6 +309,12 @@ func (s *btreeStore) Count(prefix, continueKey string) (count int) {
 	return count
 }
 
+func (s *btreeStore) Clone() orderedStore {
+	return &btreeStore{
+		tree: s.tree.Clone(),
+	}
+}
+
 func newIndexer(indexers cache.Indexers) indexer {
 	return indexer{
 		indices:  map[string]map[string]map[string]*storeElement{},
@@ -405,4 +424,79 @@ func (i *indexer) delete(key, value string, index map[string]map[string]*storeEl
 	if len(set) == 0 {
 		delete(index, value)
 	}
+}
+
+// continueCache caches roots of trees that were created as
+// clones to serve LIST requests. When a continue request is
+// meant to be served for a certain LIST request, we retrieve
+// the tree that served the LIST request and serve the continue
+// request from there.
+//
+// A tree is removed from this cache when the RV at which it was
+// created is removed from the watchCache.
+type continueCache struct {
+	sync.RWMutex
+	revisions minIntHeap
+	cache     map[uint64]orderedStore
+}
+
+func newContinueCache() *continueCache {
+	return &continueCache{
+		cache: make(map[uint64]orderedStore)}
+}
+
+func (c *continueCache) Get(rv uint64) (orderedStore, bool) {
+	c.RLock()
+	defer c.RUnlock()
+	indexer, ok := c.cache[rv]
+	return indexer, ok
+}
+
+func (c *continueCache) Set(rv uint64, indexer orderedStore) {
+	c.Lock()
+	defer c.Unlock()
+	if _, ok := c.cache[rv]; !ok {
+		heap.Push(&c.revisions, rv)
+	}
+	c.cache[rv] = indexer.Clone()
+}
+
+func (c *continueCache) Cleanup(rv uint64) {
+	c.Lock()
+	defer c.Unlock()
+	for len(c.revisions) > 0 && rv >= c.revisions[0] {
+		delRV := c.revisions[0]
+		if _, ok := c.cache[delRV]; ok {
+			delete(c.cache, delRV)
+		}
+		heap.Pop(&c.revisions)
+	}
+}
+
+type minIntHeap []uint64
+
+func (h minIntHeap) Len() int {
+	return len(h)
+}
+
+func (h minIntHeap) Less(i, j int) bool {
+	return h[i] < h[j]
+}
+
+func (h minIntHeap) Swap(i, j int) {
+	h[i], h[j] = h[j], h[i]
+}
+
+func (h *minIntHeap) Push(val interface{}) {
+	*h = append(*h, val.(uint64))
+}
+
+func (h *minIntHeap) Pop() interface{} {
+	old := *h
+
+	size := len(old)
+	val := old[size-1]
+	*h = old[:size-1]
+
+	return val
 }

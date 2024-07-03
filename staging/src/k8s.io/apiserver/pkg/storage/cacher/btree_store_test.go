@@ -224,3 +224,30 @@ func testStoreIndexers() cache.Indexers {
 	indexers["by_val"] = testStoreIndexFunc
 	return indexers
 }
+
+func TestContinueCacheCleanup(t *testing.T) {
+	cache := newContinueCache()
+	cache.Set(20, fakeOrderedLister{})
+	cache.Set(30, fakeOrderedLister{})
+	cache.Set(40, fakeOrderedLister{})
+	assert.Len(t, cache.cache, 3)
+	assert.Len(t, cache.revisions, 3)
+	cache.Cleanup(20)
+	assert.Len(t, cache.cache, 2)
+	assert.Len(t, cache.revisions, 2)
+	cache.Set(20, fakeOrderedLister{})
+	cache.Set(20, fakeOrderedLister{})
+	assert.Len(t, cache.cache, 3)
+	assert.Len(t, cache.revisions, 3)
+	cache.Cleanup(40)
+	assert.Len(t, cache.cache, 0)
+	assert.Len(t, cache.revisions, 0)
+}
+
+type fakeOrderedLister struct{}
+
+func (f fakeOrderedLister) Clone() orderedStore { return f }
+func (f fakeOrderedLister) ListPrefix(prefixKey, continueKey string, limit int) ([]interface{}, bool) {
+	return nil, false
+}
+func (f fakeOrderedLister) Count(prefixKey, continueKey string) int { return 0 }
