@@ -1159,6 +1159,24 @@ EOF
 }
 
 function configure-auth-provider-gcp {
+  registry_domain="$(echo "${KUBE_DOCKER_REGISTRY}" | cut -d '/' -f 1)"
+  if [[ "${registry_domain}" != *gcr.io ]] && [[ "${registry_domain}" != *pkg.dev ]]; then
+      # Keep in sync with --image-credential-provider-config in cloud/kubernetes/distro/legacy/kube_env.go
+      cat > "/etc/srv/kubernetes/cri_auth_config.yaml" << EOF
+kind: CredentialProviderConfig
+apiVersion: kubelet.config.k8s.io/v1
+providers:
+  - name: auth-provider-gcp
+    apiVersion: credentialprovider.kubelet.k8s.io/v1
+    matchImages:
+    - "${registry_domain}"
+    args:
+    - get-credentials
+    - --v=3
+    defaultCacheDuration: 1m
+EOF
+      return
+  fi
   # Keep in sync with --image-credential-provider-config in cloud/kubernetes/distro/legacy/kube_env.go
   cat > "/etc/srv/kubernetes/cri_auth_config.yaml" << EOF
 kind: CredentialProviderConfig
