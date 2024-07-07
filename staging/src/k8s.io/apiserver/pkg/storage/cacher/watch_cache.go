@@ -214,6 +214,7 @@ type watchCache struct {
 	waitingUntilFresh *conditionalProgressRequester
 
 	continueCache *continueCache
+	counter       int
 }
 
 func newWatchCache(
@@ -347,8 +348,15 @@ func (w *watchCache) processEvent(event watch.Event, resourceVersion uint64, upd
 		w.updateCache(wcEvent)
 		w.resourceVersion = resourceVersion
 		defer w.cond.Broadcast()
-
-		return updateFunc(elem)
+		err := updateFunc(elem)
+		if err != nil {
+			return err
+		}
+		w.counter++
+		if w.counter%100 == 0 {
+			w.continueCache.Set(w.resourceVersion, w.store.Clone())
+		}
+		return nil
 	}(); err != nil {
 		return err
 	}
@@ -537,9 +545,8 @@ func (w *watchCache) WaitUntilFreshAndList(ctx context.Context, resourceVersion 
 	isLegacyResourceVersionMatchExact := opts.ResourceVersionMatch == "" && opts.Predicate.Limit > 0 && nonEmptyResourceVersion
 	switch {
 	case opts.ResourceVersionMatch == metav1.ResourceVersionMatchExact || isLegacyResourceVersionMatchExact:
-		store, ok := w.continueCache.Get(resourceVersion)
-		if !ok {
-			err = errors.NewResourceExpired(fmt.Sprintf("too old resource version: %d", resourceVersion))
+		store, err := w.exactMatchStorage(resourceVersion)
+		if err != nil {
 			return ListItems{}, 0, "", err
 		}
 		return paginatedRead(store, key, "", opts), resourceVersion, "", nil
@@ -553,9 +560,8 @@ func (w *watchCache) WaitUntilFreshAndList(ctx context.Context, resourceVersion 
 		if nonEmptyResourceVersion {
 			return ListItems{}, 0, "", errors.NewBadRequest("specifying resource version is not allowed when using continue")
 		}
-		store, ok := w.continueCache.Get(uint64(continueRV))
-		if !ok {
-			err = errors.NewResourceExpired(fmt.Sprintf("too old resource version: %d", continueRV))
+		store, err := w.exactMatchStorage(uint64(continueRV))
+		if err != nil {
 			return ListItems{}, 0, "", err
 		}
 		return paginatedRead(store, key, continueKey, opts), uint64(continueRV), "", nil
@@ -565,6 +571,49 @@ func (w *watchCache) WaitUntilFreshAndList(ctx context.Context, resourceVersion 
 		}
 		return paginatedRead(w.store, key, "", opts), w.resourceVersion, "", nil
 	}
+}
+
+func (w *watchCache) exactMatchStorage(resourceVersion uint64) (btreeIndexer, error) {
+	store, foundRV, ok := w.continueCache.FindEqualOrLower(resourceVersion)
+	if !ok {
+		err := errors.NewResourceExpired(fmt.Sprintf("too old resource version: %d", resourceVersion))
+		return nil, err
+	}
+	if resourceVersion == foundRV {
+		return store, nil
+	}
+	storeClone := store.Clone()
+	var err error
+	// TODO: skip if number of events > 100
+	// TODO: Use binary search
+	for i := w.startIndex; i%len(w.cache) < w.endIndex; i++ {
+		if w.cache[i].ResourceVersion > foundRV {
+			elem := &storeElement{
+				Key:    w.cache[i].Key,
+				Object: w.cache[i].Object,
+			}
+			elem.Labels, elem.Fields, err = w.getAttrsFunc(w.cache[i].Object)
+			if err != nil {
+				return nil, err
+			}
+			switch w.cache[i].Type {
+			case watch.Added:
+				err = storeClone.Add(elem)
+			case watch.Modified:
+				err = storeClone.Update(elem)
+			case watch.Deleted:
+				err = storeClone.Delete(elem)
+			default:
+			}
+			if err != nil {
+				return nil, err
+			}
+		}
+		if w.cache[i].ResourceVersion > resourceVersion {
+			break
+		}
+	}
+	return storeClone, nil
 }
 
 func paginatedRead(store btreeIndexer, key, continueKey string, opts storage.ListOptions) ListItems {

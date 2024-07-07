@@ -207,23 +207,27 @@ func TestGetListCacheBypass(t *testing.T) {
 
 		{opts: storage.ListOptions{ResourceVersion: "0", Predicate: storage.SelectionPredicate{Limit: 500}}, expectBypass: false},
 
-		{opts: storage.ListOptions{ResourceVersion: "", Predicate: storage.SelectionPredicate{Continue: continueOnRev3}}, cachedRevisions: []uint64{2}, expectBypass: true},
-		{opts: storage.ListOptions{ResourceVersion: "0", Predicate: storage.SelectionPredicate{Continue: continueOnRev3}}, cachedRevisions: []uint64{2}, expectBypass: true},
+		{opts: storage.ListOptions{ResourceVersion: "", Predicate: storage.SelectionPredicate{Continue: continueOnRev3}}, cachedRevisions: []uint64{2}, expectBypass: false},
+		{opts: storage.ListOptions{ResourceVersion: "0", Predicate: storage.SelectionPredicate{Continue: continueOnRev3}}, cachedRevisions: []uint64{2}, expectBypass: false},
 
 		{opts: storage.ListOptions{ResourceVersion: "", Predicate: storage.SelectionPredicate{Continue: continueOnRev3}}, cachedRevisions: []uint64{3}, expectBypass: false},
 		{opts: storage.ListOptions{ResourceVersion: "0", Predicate: storage.SelectionPredicate{Continue: continueOnRev3}}, cachedRevisions: []uint64{3}, expectBypass: false},
 
-		{opts: storage.ListOptions{ResourceVersion: "", Predicate: storage.SelectionPredicate{Continue: continueOnRev3, Limit: 500}}, cachedRevisions: []uint64{2}, expectBypass: true},
-		{opts: storage.ListOptions{ResourceVersion: "0", Predicate: storage.SelectionPredicate{Continue: continueOnRev3, Limit: 500}}, cachedRevisions: []uint64{2}, expectBypass: true},
+		{opts: storage.ListOptions{ResourceVersion: "", Predicate: storage.SelectionPredicate{Continue: continueOnRev3, Limit: 500}}, cachedRevisions: []uint64{2}, expectBypass: false},
+		{opts: storage.ListOptions{ResourceVersion: "0", Predicate: storage.SelectionPredicate{Continue: continueOnRev3, Limit: 500}}, cachedRevisions: []uint64{2}, expectBypass: false},
 
 		{opts: storage.ListOptions{ResourceVersion: "", Predicate: storage.SelectionPredicate{Continue: continueOnRev3, Limit: 500}}, cachedRevisions: []uint64{3}, expectBypass: false},
 		{opts: storage.ListOptions{ResourceVersion: "0", Predicate: storage.SelectionPredicate{Continue: continueOnRev3, Limit: 500}}, cachedRevisions: []uint64{3}, expectBypass: false},
 
 		// Legacy exact match
 		{opts: storage.ListOptions{ResourceVersion: "2", Predicate: storage.SelectionPredicate{Limit: 500}}, expectBypass: true},
-		{opts: storage.ListOptions{ResourceVersion: "", ResourceVersionMatch: metav1.ResourceVersionMatchExact}, expectBypass: true},
-		{opts: storage.ListOptions{ResourceVersion: "0", ResourceVersionMatch: metav1.ResourceVersionMatchExact}, expectBypass: true},
-		{opts: storage.ListOptions{ResourceVersion: "1", ResourceVersionMatch: metav1.ResourceVersionMatchExact}, expectBypass: true},
+		{opts: storage.ListOptions{ResourceVersion: "2", Predicate: storage.SelectionPredicate{Limit: 500}}, cachedRevisions: []uint64{2}, expectBypass: false},
+		{opts: storage.ListOptions{ResourceVersion: "2", Predicate: storage.SelectionPredicate{Limit: 500}}, cachedRevisions: []uint64{3}, expectBypass: true},
+		{opts: storage.ListOptions{ResourceVersion: "3", Predicate: storage.SelectionPredicate{Limit: 500}}, cachedRevisions: []uint64{2}, expectBypass: false},
+		{opts: storage.ListOptions{ResourceVersion: "2", ResourceVersionMatch: metav1.ResourceVersionMatchExact}, expectBypass: true},
+		{opts: storage.ListOptions{ResourceVersion: "2", ResourceVersionMatch: metav1.ResourceVersionMatchExact}, cachedRevisions: []uint64{2}, expectBypass: false},
+		{opts: storage.ListOptions{ResourceVersion: "2", ResourceVersionMatch: metav1.ResourceVersionMatchExact}, cachedRevisions: []uint64{3}, expectBypass: true},
+		{opts: storage.ListOptions{ResourceVersion: "3", ResourceVersionMatch: metav1.ResourceVersionMatchExact}, cachedRevisions: []uint64{2}, expectBypass: false},
 	}
 
 	t.Run("ConsistentListFromStorage", func(t *testing.T) {
