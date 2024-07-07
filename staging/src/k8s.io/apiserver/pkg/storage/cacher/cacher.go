@@ -762,8 +762,19 @@ func (c *Cacher) shouldDelegateList(opts storage.ListOptions) (bool, error) {
 	isLegacyResourceVersionMatchExact := opts.ResourceVersionMatch == "" && opts.Predicate.Limit > 0 && nonEmptyResourceVersion
 	// see https://kubernetes.io/docs/reference/using-api/api-concepts/#semantics-for-get-and-list
 	switch {
+	case nonEmptyResourceVersion && len(opts.Predicate.Continue) > 0:
+		_, _, err := storage.DecodeContinue(opts.Predicate.Continue, c.resourcePrefix)
+		if err != nil {
+			return false, err
+		}
+		return false, errors.NewBadRequest("specifying resource version is not allowed when using continue")
 	case opts.ResourceVersionMatch == metav1.ResourceVersionMatchExact || isLegacyResourceVersionMatchExact:
-		return true, nil
+		rv, err := c.versioner.ParseResourceVersion(opts.ResourceVersion)
+		if err != nil {
+			return false, err
+		}
+		_, _, isCached := c.watchCache.continueCache.FindEqualOrLower(rv)
+		return !isCached, nil
 	case opts.ResourceVersionMatch != "" && opts.ResourceVersionMatch != metav1.ResourceVersionMatchNotOlderThan:
 		return false, fmt.Errorf("unsupported")
 	case len(opts.Predicate.Continue) > 0:
@@ -771,10 +782,8 @@ func (c *Cacher) shouldDelegateList(opts storage.ListOptions) (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		if nonEmptyResourceVersion {
-			return false, errors.NewBadRequest("specifying resource version is not allowed when using continue")
-		}
-		_, isCached := c.watchCache.continueCache.Get(uint64(rv))
+		_, _, isCached := c.watchCache.continueCache.FindEqualOrLower(uint64(rv))
+
 		return !isCached, nil
 	case opts.ResourceVersion == "":
 		consistentListFromCacheEnabled := utilfeature.DefaultFeatureGate.Enabled(features.ConsistentListFromCache)

@@ -231,22 +231,48 @@ func TestContinueCacheCleanup(t *testing.T) {
 	cache.Set(30, fakeOrderedLister{})
 	cache.Set(40, fakeOrderedLister{})
 	assert.Len(t, cache.cache, 3)
-	assert.Len(t, cache.revisions, 3)
+	assert.Equal(t, 3, cache.revisions.Len())
+	_, _, ok := cache.FindEqualOrLower(19)
+	assert.False(t, ok)
+	_, rv, ok := cache.FindEqualOrLower(20)
+	assert.True(t, ok)
+	assert.Equal(t, 20, int(rv))
+	_, rv, ok = cache.FindEqualOrLower(21)
+	assert.True(t, ok)
+	assert.Equal(t, 20, int(rv))
+	_, rv, ok = cache.FindEqualOrLower(32)
+	assert.True(t, ok)
+	assert.Equal(t, 30, int(rv))
+	_, rv, ok = cache.FindEqualOrLower(43)
+	assert.True(t, ok)
+	assert.Equal(t, 40, int(rv))
+
 	cache.Cleanup(20)
 	assert.Len(t, cache.cache, 2)
-	assert.Len(t, cache.revisions, 2)
+	assert.Equal(t, 2, cache.revisions.Len())
+	_, _, ok = cache.FindEqualOrLower(21)
+	assert.False(t, ok)
+
 	cache.Set(20, fakeOrderedLister{})
 	cache.Set(20, fakeOrderedLister{})
 	assert.Len(t, cache.cache, 3)
-	assert.Len(t, cache.revisions, 3)
+	assert.Equal(t, 3, cache.revisions.Len())
+	_, rv, ok = cache.FindEqualOrLower(21)
+	assert.True(t, ok)
+	assert.Equal(t, 20, int(rv))
 	cache.Cleanup(40)
 	assert.Len(t, cache.cache, 0)
-	assert.Len(t, cache.revisions, 0)
+	assert.Equal(t, 0, cache.revisions.Len())
+	_, _, ok = cache.FindEqualOrLower(43)
+	assert.False(t, ok)
 }
 
 type fakeOrderedLister struct{}
 
-func (f fakeOrderedLister) Clone() orderedStore { return f }
+func (f fakeOrderedLister) Add(obj interface{}) error    { return nil }
+func (f fakeOrderedLister) Update(obj interface{}) error { return nil }
+func (f fakeOrderedLister) Delete(obj interface{}) error { return nil }
+func (f fakeOrderedLister) Clone() orderedStore          { return f }
 func (f fakeOrderedLister) ListPrefix(prefixKey, continueKey string, limit int) ([]interface{}, bool) {
 	return nil, false
 }

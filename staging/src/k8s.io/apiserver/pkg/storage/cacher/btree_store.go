@@ -17,7 +17,6 @@ limitations under the License.
 package cacher
 
 import (
-	"container/heap"
 	"fmt"
 	"strings"
 	"sync"
@@ -436,67 +435,62 @@ func (i *indexer) delete(key, value string, index map[string]map[string]*storeEl
 // created is removed from the watchCache.
 type continueCache struct {
 	sync.RWMutex
-	revisions minIntHeap
+	revisions *btree.BTree
 	cache     map[uint64]orderedStore
 }
 
 func newContinueCache() *continueCache {
 	return &continueCache{
-		cache: make(map[uint64]orderedStore)}
+		revisions: btree.New(32),
+		cache:     make(map[uint64]orderedStore)}
 }
 
-func (c *continueCache) Get(rv uint64) (orderedStore, bool) {
+func (c *continueCache) FindEqualOrLower(rv uint64) (indexer orderedStore, foundRV uint64, ok bool) {
 	c.RLock()
 	defer c.RUnlock()
-	indexer, ok := c.cache[rv]
-	return indexer, ok
+
+	indexer, ok = c.cache[rv]
+	if ok {
+		return indexer, rv, ok
+	}
+
+	c.revisions.DescendLessOrEqual(rev(rv), func(i btree.Item) bool {
+		foundRV = uint64(i.(rev))
+		ok = true
+		return false
+	})
+	if ok {
+		indexer, ok = c.cache[foundRV]
+	}
+	return indexer, foundRV, ok
 }
 
 func (c *continueCache) Set(rv uint64, indexer orderedStore) {
 	c.Lock()
 	defer c.Unlock()
 	if _, ok := c.cache[rv]; !ok {
-		heap.Push(&c.revisions, rv)
+		c.revisions.ReplaceOrInsert(rev(rv))
+		c.cache[rv] = indexer.Clone()
 	}
-	c.cache[rv] = indexer.Clone()
 }
 
 func (c *continueCache) Cleanup(rv uint64) {
 	c.Lock()
 	defer c.Unlock()
-	for len(c.revisions) > 0 && rv >= c.revisions[0] {
-		delRV := c.revisions[0]
-		if _, ok := c.cache[delRV]; ok {
-			delete(c.cache, delRV)
+	for c.revisions.Len() > 0 {
+		minRV := uint64(c.revisions.Min().(rev))
+		if rv < minRV {
+			break
 		}
-		heap.Pop(&c.revisions)
+		if _, ok := c.cache[minRV]; ok {
+			delete(c.cache, minRV)
+		}
+		c.revisions.DeleteMin()
 	}
 }
 
-type minIntHeap []uint64
+type rev uint64
 
-func (h minIntHeap) Len() int {
-	return len(h)
-}
-
-func (h minIntHeap) Less(i, j int) bool {
-	return h[i] < h[j]
-}
-
-func (h minIntHeap) Swap(i, j int) {
-	h[i], h[j] = h[j], h[i]
-}
-
-func (h *minIntHeap) Push(val interface{}) {
-	*h = append(*h, val.(uint64))
-}
-
-func (h *minIntHeap) Pop() interface{} {
-	old := *h
-
-	size := len(old)
-	val := old[size-1]
-	*h = old[:size-1]
-
-	return val
+func (r1 rev) Less(r2 btree.Item) bool {
+	return r1 < r2.(rev)
 }
