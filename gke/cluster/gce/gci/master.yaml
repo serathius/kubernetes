@@ -178,6 +178,12 @@ write_files:
       [Install]
       WantedBy=multi-user.target
 
+  - path: /etc/ssh/sshd_config.d/99999999kcp.conf
+    permissions: '0644'
+    owner: root
+    content: |
+      LogLevel VERBOSE
+
 # The indent level (1 space) of the following list of runcmd entries must not change or external writers will break.
 runcmd:
  - systemctl enable kube-bootstrap-logs-forwarder.service
