@@ -625,9 +625,18 @@ EOF
 
 function preload-pause-image {
   local -r pause_image="${KUBE_DOCKER_REGISTRY}/${GKE_CONTAINERD_INFRA_CONTAINER}"
-  if is-preloaded "pause" "${pause_image}"; then
-    echo "pause image is preloaded"
-    return
+  local pause_sha="${GKE_CONTAINERD_INFRA_CONTAINER#*@}"
+  if [ -z "$pause_sha" ]; then
+    echo "found no digest in GKE_CONTAINERD_INFRA_CONTAINER"
+  else
+    for img in $(ctr -n=k8s.io images list -q | grep "${pause_sha}"); do
+      echo "pause image ${img} of the same version is preloaded, retagging"
+      if [[ "${pause_image}" != "${img}" ]]; then
+        ctr -n=k8s.io image tag --force ${img} ${pause_image}
+        pin-docker-image "pause"
+      fi
+      return
+    done
   fi
 
   # preloading pause image. It will be used in preloader and will be
@@ -635,13 +644,12 @@ function preload-pause-image {
   local access_token="";
 
   if access_token=$(get-credentials); then
-    "${KUBE_BIN}/crictl" pull --creds "oauth2accesstoken:${access_token}" "${pause_image}"
+    ctr -n=k8s.io image pull --user="oauth2accesstoken:${access_token}" "${pause_image}"
   else
     echo "No access token. Pulling without it."
-    "${KUBE_BIN}/crictl" pull "${pause_image}"
+    ctr -n=k8s.io image pull "${pause_image}"
   fi
-
-  record-preload-info "pause" "${pause_image}"
+  pin-docker-image "pause"
 }
 
 function install-exec-auth-plugin {
