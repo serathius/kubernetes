@@ -4,6 +4,7 @@ users:
   - name: kube-bootstrap-logs-forwarder
     gecos: User the kube-bootstrap-logs-forwarder.service runs as.
     system: true
+    shell: /sbin/nologin
 
 write_files:
   - path: /etc/systemd/system/kube-bootstrap-logs-forwarder.service

@@ -5,10 +5,12 @@ users:
     homedir: /var/etcd
     lock_passwd: true
     ssh_redirect_user: true
+    shell: /sbin/nologin
 
   - name: kube-bootstrap-logs-forwarder
     gecos: User the kube-bootstrap-logs-forwarder.service runs as.
     system: true
+    shell: /sbin/nologin
 
 # The indent level (2 spaces) of the following write_files entries must not change or external writers will break.
 write_files:
