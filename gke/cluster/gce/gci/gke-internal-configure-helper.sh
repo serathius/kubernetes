@@ -716,10 +716,19 @@ EOF
 
   if [[ "${ENABLE_GCFS:-}" == "true" ]]; then
     gke-setup-gcfs
+    local snapshotter="gcfs"
+
+    # ENABLE_RIPTIDE_IMAGE_PRELOADING is a flag specifically used for the preloading bootstrap service
+    # in preloader_script_v2.sh. When this flag is enabled preloading will occur normally, hence why
+    # the default overlayfs snapshotter is used, but during the preloading process unpacking for both
+    # gcfs and overlayfs will occur.
+    if [[ "${ENABLE_RIPTIDE_IMAGE_PRELOADING:-false}" == "true" ]]; then
+      snapshotter="overlayfs"
+    fi
     cat >> "${config_path}" <<EOF
 [plugins."io.containerd.grpc.v1.cri".containerd]
   default_runtime_name = "runc"
-  snapshotter = "gcfs"
+  snapshotter = "${snapshotter}"
   disable_snapshot_annotations = false
   discard_unpacked_layers = true
 [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
@@ -814,8 +823,10 @@ EOF
     modprobe xemu
   fi
 
-  # Mount /home/containerd as readonly to avoid security issues.
-  mount --bind -o ro,exec "${CONTAINERD_HOME}" "${CONTAINERD_HOME}"
+  if [[ "${ENABLE_RIPTIDE_IMAGE_PRELOADING:-false}" == "false" ]]; then
+    # Mount /home/containerd as readonly to avoid security issues.
+    mount --bind -o ro,exec "${CONTAINERD_HOME}" "${CONTAINERD_HOME}"
+  fi
 
   echo "Restart containerd to load the config change"
   systemctl daemon-reload
@@ -963,11 +974,11 @@ function gke-setup-gcfs {
 
   local each_cache_size
   local gcfs_cache_size_flag
-  if [[ -z "${GCFSD_CACHE_SIZE_MIB}" ]]; then
+  if [[ -z "${GCFSD_CACHE_SIZE_MIB:-}" ]]; then
     gcfs_cache_size_flag=""
   else
     # GCFSD maintains two caches, each being allocated half of GCFSD_CACHE_SIZE_MIB
-    each_cache_size=$((${GCFSD_CACHE_SIZE_MIB} / 2))
+    each_cache_size=$((${GCFSD_CACHE_SIZE_MIB:-} / 2))
     gcfs_cache_size_flag="--max_content_cache_size_mb=${each_cache_size} --max_large_files_cache_size_mb=${each_cache_size}"
   fi
 
@@ -984,6 +995,11 @@ function gke-setup-gcfs {
   local secondary_boot_disk_mount_points_flag=""
   if [[ -n "${SECONDARY_BOOT_DISKS:-}" ]]; then
     secondary_boot_disk_mount_points_flag="--secondary-disk-mount-points=${SECONDARY_BOOT_DISKS}"
+  fi
+
+  local enable_metric_exporter_flag=""
+  if [[ "${ENABLE_RIPTIDE_IMAGE_PRELOADING:-false}" == "true" ]]; then
+    enable_metric_exporter_flag="--enable-metric-exporter=false"
   fi
 
   cat <<EOF >/etc/systemd/system/gcfsd.service
@@ -1024,7 +1040,7 @@ Before=containerd.service
 StartLimitIntervalSec=0
 [Service]
 Environment=HOME=/root
-ExecStart=${KUBE_HOME}/bin/containerd-gcfs-grpc --log-level=info --config=/etc/containerd-gcfs-grpc/config.toml --enable-image-proxy-keychain-client ${secondary_boot_disk_mount_points_flag} --disable-duplicate-layer-support=false
+ExecStart=${KUBE_HOME}/bin/containerd-gcfs-grpc --log-level=info --config=/etc/containerd-gcfs-grpc/config.toml --enable-image-proxy-keychain-client ${secondary_boot_disk_mount_points_flag} --disable-duplicate-layer-support=false ${enable_metric_exporter_flag}
 Restart=always
 RestartSec=1
 [Install]
@@ -1032,7 +1048,10 @@ WantedBy=multi-user.target
 EOF
 
   systemctl daemon-reload
-  systemctl start gcfsd.service
+
+  if [[ "${ENABLE_RIPTIDE_IMAGE_PRELOADING:-false}" == "false" ]]; then
+    systemctl start gcfsd.service
+  fi
   systemctl start gcfs-snapshotter.service
 }
 

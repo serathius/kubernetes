@@ -844,6 +844,11 @@ function install-riptide {
   install-riptide-snapshotter
 }
 
+function prepare-riptide-snapshotter-preloader {
+  source ${KUBE_BIN}/gke-internal-configure-helper.sh
+  log-wrap 'GKESetupContainerd' gke-setup-containerd
+}
+
 function install-auth-provider-gcp {
   case "${HOST_ARCH}" in
     amd64)
