@@ -1644,6 +1644,7 @@ After=network-online.target
 [Service]
 Restart=always
 RestartSec=10
+WatchdogSec=20s
 EnvironmentFile=${kubelet_env_file}
 ExecStart=${kubelet_bin} \$KUBELET_OPTS
 

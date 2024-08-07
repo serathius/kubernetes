@@ -738,7 +738,6 @@ function install-kube-manifests {
   if [[ -e "${dst_dir}/kubernetes/gci-trusty/node-registration-checker.sh" ]]; then
     cp "${dst_dir}/kubernetes/gci-trusty/node-registration-checker.sh" "${KUBE_BIN}/"
   fi
-  cp "${dst_dir}/kubernetes/gci-trusty/health-monitor.sh" "${KUBE_BIN}/health-monitor.sh"
   cp "${dst_dir}/kubernetes/gci-trusty/networkd-monitor.sh" "${KUBE_BIN}/networkd-monitor.sh"
 
   rm -f "${KUBE_HOME}/${manifests_tar}"
