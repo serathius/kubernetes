@@ -2576,16 +2576,6 @@ EOF
     setup-addon-manifests "admission-controls" "limit-range" "gce"
   fi
   setup-addon-manifests "addons" "admission-resource-quota-critical-pods"
-  if [[ "${NETWORK_POLICY_PROVIDER:-}" == "calico" ]]; then
-    setup-addon-manifests "addons" "calico-policy-controller"
-
-    setup-addon-custom-yaml "addons" "calico-policy-controller" "calico-node-daemonset.yaml" "${CUSTOM_CALICO_NODE_DAEMONSET_YAML:-}"
-    setup-addon-custom-yaml "addons" "calico-policy-controller" "typha-deployment.yaml" "${CUSTOM_TYPHA_DEPLOYMENT_YAML:-}"
-
-    # Configure Calico CNI directory.
-    local -r ds_file="${dst_dir}/calico-policy-controller/calico-node-daemonset.yaml"
-    sed -i -e "s@__CALICO_CNI_DIR__@/home/kubernetes/bin@g" "${ds_file}"
-  fi
   if [[ "${ENABLE_DEFAULT_STORAGE_CLASS:-}" == "true" ]]; then
     setup-addon-manifests "addons" "storage-class/gce"
   fi
