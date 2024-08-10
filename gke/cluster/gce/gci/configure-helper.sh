@@ -2584,9 +2584,6 @@ EOF
     setup-addon-manifests "addons" "volumesnapshots/volume-snapshot-controller"
     start-volumesnapshot-crd-and-controller
   fi
-  if [[ "${ENABLE_IP_MASQ_AGENT:-}" == "true" ]]; then
-    setup-addon-manifests "addons" "ip-masq-agent"
-  fi
   if [[ "${ENABLE_METADATA_CONCEALMENT:-}" == "true" ]]; then
     setup-addon-manifests "addons" "metadata-proxy/gce"
     local -r metadata_proxy_yaml="${dst_dir}/metadata-proxy/gce/metadata-proxy.yaml"
