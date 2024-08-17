@@ -25,7 +25,6 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/watch"
-	"k8s.io/client-go/tools/cache"
 )
 
 // watchCacheInterval serves as an abstraction over a source
@@ -129,11 +128,18 @@ func (s sortableWatchCacheEvents) Swap(i, j int) {
 	s[i], s[j] = s[j], s[i]
 }
 
+type storeListerGetter interface {
+	List() []interface{}
+	ListKeys() []string
+	Get(obj interface{}) (item interface{}, exists bool, err error)
+	GetByKey(key string) (item interface{}, exists bool, err error)
+}
+
 // newCacheIntervalFromStore is meant to handle the case of rv=0, such that the events
 // returned by Next() need to be events from a List() done on the underlying store of
 // the watch cache.
 // The items returned in the interval will be sorted by Key.
-func newCacheIntervalFromStore(resourceVersion uint64, store cache.Indexer, getAttrsFunc attrFunc, key string, matchesSingle bool) (*watchCacheInterval, error) {
+func newCacheIntervalFromStore(resourceVersion uint64, store storeListerGetter, getAttrsFunc attrFunc, key string, matchesSingle bool) (*watchCacheInterval, error) {
 	buffer := &watchCacheIntervalBuffer{}
 	var allItems []interface{}
 

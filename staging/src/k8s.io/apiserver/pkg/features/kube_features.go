@@ -18,6 +18,7 @@ package features
 
 import (
 	"k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apimachinery/pkg/util/version"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/component-base/featuregate"
 )
@@ -100,6 +101,12 @@ const (
 	//
 	// Allows authorization to use field and label selectors.
 	AuthorizeWithSelectors featuregate.Feature = "AuthorizeWithSelectors"
+
+	// owner: @serathius
+	// beta: v1.32
+	//
+	// Replaces watch cache hashmap implementation with a btree based one, bringing performance improvements.
+	BtreeWatchCache featuregate.Feature = "BtreeWatchCache"
 
 	// owner: @serathius
 	// beta: v1.31
@@ -318,6 +325,9 @@ var defaultVersionedKubernetesFeatureGates = map[featuregate.Feature]featuregate
 	// EmulationVersion: {
 	// 	{Version: version.MustParse("1.30"), Default: false, PreRelease: featuregate.Alpha},
 	// },
+	BtreeWatchCache: {
+		{Version: version.MustParse("1.31"), Default: true, PreRelease: featuregate.Beta},
+	},
 }
 
 // defaultKubernetesFeatureGates consists of all known Kubernetes-specific feature keys.

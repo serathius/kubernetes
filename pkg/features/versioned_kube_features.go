@@ -18,6 +18,7 @@ package features
 
 import (
 	"k8s.io/apimachinery/pkg/util/version"
+	genericfeatures "k8s.io/apiserver/pkg/features"
 	"k8s.io/component-base/featuregate"
 )
 
@@ -30,5 +31,8 @@ import (
 var defaultVersionedKubernetesFeatureGates = map[featuregate.Feature]featuregate.VersionedSpecs{
 	RelaxedEnvironmentVariableValidation: {
 		{Version: version.MustParse("1.30"), Default: false, PreRelease: featuregate.Alpha},
+	},
+	genericfeatures.BtreeWatchCache: {
+		{Version: version.MustParse("1.31"), Default: true, PreRelease: featuregate.Beta},
 	},
 }
