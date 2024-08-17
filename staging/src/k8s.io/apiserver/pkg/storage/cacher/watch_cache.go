@@ -24,6 +24,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/btree"
+
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
@@ -94,6 +96,12 @@ type storeElement struct {
 	Labels labels.Set
 	Fields fields.Set
 }
+
+func (t *storeElement) Less(than btree.Item) bool {
+	return t.Key < than.(*storeElement).Key
+}
+
+var _ btree.Item = (*storeElement)(nil)
 
 func storeElementKey(obj interface{}) (string, error) {
 	elem, ok := obj.(*storeElement)
@@ -173,7 +181,7 @@ type watchCache struct {
 	// history" i.e. from the moment just after the newest cached watched event.
 	// It is necessary to effectively allow clients to start watching at now.
 	// NOTE: We assume that <store> is thread-safe.
-	store cache.Indexer
+	store *btreeStore
 
 	// ResourceVersion up to which the watchCache is propagated.
 	resourceVersion uint64
@@ -223,7 +231,7 @@ func newWatchCache(
 		upperBoundCapacity:  defaultUpperBoundCapacity,
 		startIndex:          0,
 		endIndex:            0,
-		store:               cache.NewIndexer(storeElementKey, storeElementIndexers(indexers)),
+		store:               newBtreeStore(storeElementKey, storeElementIndexers(indexers), 32),
 		resourceVersion:     0,
 		listResourceVersion: 0,
 		eventHandler:        eventHandler,
@@ -501,29 +509,7 @@ func (s sortableStoreElements) Swap(i, j int) {
 
 // WaitUntilFreshAndList returns list of pointers to `storeElement` objects along
 // with their ResourceVersion and the name of the index, if any, that was used.
-func (w *watchCache) WaitUntilFreshAndList(ctx context.Context, resourceVersion uint64, key string, matchValues []storage.MatchValue) ([]interface{}, uint64, string, error) {
-	items, rv, index, err := w.waitUntilFreshAndListItems(ctx, resourceVersion, key, matchValues)
-	if err != nil {
-		return nil, 0, "", err
-	}
-
-	var result []interface{}
-	for _, item := range items {
-		elem, ok := item.(*storeElement)
-		if !ok {
-			return nil, 0, "", fmt.Errorf("non *storeElement returned from storage: %v", item)
-		}
-		if !hasPathPrefix(elem.Key, key) {
-			continue
-		}
-		result = append(result, item)
-	}
-
-	sort.Sort(sortableStoreElements(result))
-	return result, rv, index, nil
-}
-
-func (w *watchCache) waitUntilFreshAndListItems(ctx context.Context, resourceVersion uint64, key string, matchValues []storage.MatchValue) (result []interface{}, rv uint64, index string, err error) {
+func (w *watchCache) WaitUntilFreshAndList(ctx context.Context, resourceVersion uint64, key string, matchValues []storage.MatchValue) (result []interface{}, rv uint64, index string, err error) {
 	requestWatchProgressSupported := etcdfeature.DefaultFeatureSupportChecker.Supports(storage.RequestWatchProgress)
 	if utilfeature.DefaultFeatureGate.Enabled(features.ConsistentListFromCache) && requestWatchProgressSupported && w.notFresh(resourceVersion) {
 		w.waitingUntilFresh.Add()
@@ -545,13 +531,34 @@ func (w *watchCache) waitUntilFreshAndListItems(ctx context.Context, resourceVer
 		// TODO: if multiple indexes match, return the one with the fewest items, so as to do as much filtering as possible.
 		for _, matchValue := range matchValues {
 			if result, err := w.store.ByIndex(matchValue.IndexName, matchValue.Value); err == nil {
+				result, err = filterPrefix(key, result)
+				if err != nil {
+					return nil, 0, "", err
+				}
+				sort.Sort(sortableStoreElements(result))
 				return result, w.resourceVersion, matchValue.IndexName, nil
 			}
 		}
-		return w.store.List(), w.resourceVersion, "", nil
+		result, _ := w.store.LimitPrefixRead(0, key, "")
+		return result, w.resourceVersion, "", nil
 	}()
 
 	return result, rv, index, err
+}
+
+func filterPrefix(prefix string, items []interface{}) ([]interface{}, error) {
+	var result []interface{}
+	for _, item := range items {
+		elem, ok := item.(*storeElement)
+		if !ok {
+			return nil, fmt.Errorf("non *storeElement returned from storage: %v", item)
+		}
+		if !hasPathPrefix(elem.Key, prefix) {
+			continue
+		}
+		result = append(result, item)
+	}
+	return result, nil
 }
 
 func (w *watchCache) notFresh(resourceVersion uint64) bool {
