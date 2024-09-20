@@ -65,6 +65,13 @@ $AUTH_PROVIDER_GCP_VERSION = 'v0.0.2-gke.4'
 # Hash of auth-provider-gcp.exe binary in version defined above
 $AUTH_PROVIDER_GCP_HASH_WINDOWS_AMD64 = '348af2c189d938e1a4fa5ac5c640d21e003da1f000abcd6fd7eef2acd0678638286e40703618758d4fdfe2cc4b90e920f0422128ec777c74054af9dd4405de12'
 
+# gke exec auth plugin version
+$EXEC_AUTH_PLUGIN_VERSION="internal/gke-internal-branch-v1-30/c7900d96347cec80d505bf138fc7abf25dab12c2"
+# gke exec auth plugin hash
+$EXEC_AUTH_PLUGIN_WINDOWS_AMD64_HASH="57e9c71436cf67e79df955b29fb7ead0dcd953e9689342540c3bad61b3745c30c18d178e818340a6f19f3ad9e07e240eb6e80c7d495bcf5d835060b6e4176d50"
+$EXEC_AUTH_PLUGIN_LICENSE_URL="${STORAGE_ENDPOINT}/gke-prod-binaries/gke-exec-auth-plugin/${EXEC_AUTH_PLUGIN_VERSION}/LICENSE"
+$EXEC_AUTH_PLUGIN_WINDOWS_AMD64_URL="${STORAGE_ENDPOINT}/gke-prod-binaries/gke-exec-auth-plugin/${EXEC_AUTH_PLUGIN_VERSION}/windows_amd64/gke-exec-auth-plugin.exe"
+
 Import-Module -Force C:\common.psm1
 
 # Writes a TODO with $Message to the console.

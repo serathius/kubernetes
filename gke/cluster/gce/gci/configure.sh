@@ -59,6 +59,13 @@ AUTH_PROVIDER_GCP_VERSION="v0.0.2-gke.4"
 AUTH_PROVIDER_GCP_HASH_LINUX_AMD64="156058e5b3994cba91c23831774033e0d505d6d8b80f43541ef6af91b320fd9dfaabe42ec8a8887b51d87104c2b57e1eb895649d681575ffc80dd9aee8e563db"
 AUTH_PROVIDER_GCP_HASH_LINUX_ARM64="1aa3b0bea10a9755231989ffc150cbfa770f1d96932db7535473f7bfeb1108bafdae80202ae738d59495982512e716ff7366d5f414d0e76dd50519f98611f9ab"
 
+# gke-exec-auth-plugin local version.
+# The URLs below are relative to ${STORAGE_ENDPOINT}/${EXEC_AUTH_PLUGIN_BUCKET}
+EXEC_AUTH_PLUGIN_BUCKET="gke-prod-binaries"
+EXEC_AUTH_PLUGIN_VERSION="internal/gke-internal-branch-v1-30/c7900d96347cec80d505bf138fc7abf25dab12c2"
+EXEC_AUTH_PLUGIN_LINUX_AMD64_HASH="eaef0f028e08c7b28cb34f8d110210b61c819a500031f4794e1bcdbc277a20a563bc3f796be31b7e73063908a3671f95cf315a5198327fc3426ebedae4829a72"
+EXEC_AUTH_PLUGIN_LINUX_ARM64_HASH="ee9d19661572dbe46553e77de2b86981e489aec46224898ebc582e68e9fe53feaaf337b6c7915b84f6a1fda64c16a3ac083d5072ae605bd13063762029847c0c"
+
 ###
 
 # Backend endpoints (configurable for TPC).
@@ -653,11 +660,25 @@ function preload-pause-image {
 }
 
 function install-exec-auth-plugin {
-  if [[ ! "${EXEC_AUTH_PLUGIN_URL:-}" ]]; then
-      return
-  fi
-  local -r plugin_url="${EXEC_AUTH_PLUGIN_URL}"
-  local -r plugin_hash="${EXEC_AUTH_PLUGIN_HASH}"
+  # We always use the URL/VERSION/HASH
+  # set at the top of this file,
+  # Values from kube-env are ignored in this version.
+  local -r plugin_base_url="${STORAGE_ENDPOINT}/${EXEC_AUTH_PLUGIN_BUCKET}/gke-exec-auth-plugin/${EXEC_AUTH_PLUGIN_VERSION}"
+  case "${HOST_PLATFORM}_${HOST_ARCH}" in
+    linux_amd64)
+      local -r plugin_url="${plugin_base_url}/${HOST_PLATFORM}_${HOST_ARCH}/gke-exec-auth-plugin"
+      local -r plugin_hash="${EXEC_AUTH_PLUGIN_LINUX_AMD64_HASH}"
+      ;;
+
+    linux_arm64)
+      local -r plugin_url="${plugin_base_url}/${HOST_PLATFORM}_${HOST_ARCH}/gke-exec-auth-plugin"
+      local -r plugin_hash="${EXEC_AUTH_PLUGIN_LINUX_ARM64_HASH}"
+      ;;
+
+    *)
+      echo "Unrecognized version and platform/arch combination: ${HOST_PLATFORM}/${HOST_ARCH}"
+      exit 1
+  esac
 
   if is-preloaded "gke-exec-auth-plugin" "${plugin_hash}"; then
     echo "gke-exec-auth-plugin is preloaded"
@@ -669,10 +690,7 @@ function install-exec-auth-plugin {
   mv "${KUBE_HOME}/gke-exec-auth-plugin" "${KUBE_BIN}/gke-exec-auth-plugin"
   chmod a+x "${KUBE_BIN}/gke-exec-auth-plugin"
 
-  if [[ ! "${EXEC_AUTH_PLUGIN_LICENSE_URL:-}" ]]; then
-      return
-  fi
-  local -r license_url="${EXEC_AUTH_PLUGIN_LICENSE_URL}"
+  local -r license_url="${plugin_base_url}/LICENSE"
   echo "Downloading gke-exec-auth-plugin license"
   download-or-bust "" "${license_url}"
   mv "${KUBE_HOME}/LICENSE" "${KUBE_BIN}/gke-exec-auth-plugin-license"
