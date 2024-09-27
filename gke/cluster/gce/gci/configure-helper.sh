@@ -1658,6 +1658,10 @@ function start-kubelet {
   fi
   echo "KUBELET_OPTS=\"${kubelet_opts}\"" > "${kubelet_env_file}"
   echo "KUBE_COVERAGE_FILE=\"/var/log/kubelet.cov\"" >> "${kubelet_env_file}"
+  if [[ -n "${KUBELET_HTTP2_READ_IDLE_TIMEOUT_SECONDS:-}"  && -n "${KUBELET_HTTP2_PING_TIMEOUT_SECONDS:-}" ]]; then
+    echo "HTTP2_READ_IDLE_TIMEOUT_SECONDS=${KUBELET_HTTP2_READ_IDLE_TIMEOUT_SECONDS}" >> "${kubelet_env_file}"
+    echo "HTTP2_PING_TIMEOUT_SECONDS=${KUBELET_HTTP2_PING_TIMEOUT_SECONDS}" >> "${kubelet_env_file}"
+  fi
 
   # Write the systemd service file for kubelet.
   cat <<EOF >/etc/systemd/system/kubelet.service
