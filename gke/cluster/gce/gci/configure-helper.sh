@@ -1764,6 +1764,17 @@ function prepare-kube-proxy-manifest-variables {
   if [[ -n "${DETECT_LOCAL_MODE:-}" ]]; then
     params+=" --detect-local-mode=${DETECT_LOCAL_MODE}"
   fi
+
+  # By setting flags to 0, kube-proxy skip overriding these sysctls.
+  if [[ -n "${SYSCTL_NETFILTER_NF_CONNTRACK_MAX:-}" ]]; then
+    params+=" --conntrack-max-per-core=0 --conntrack-min=0"
+  fi
+  if [[ -n "${SYSCTL_NETFILTER_NF_CONNTRACK_TCP_TIMEOUT_ESTABLISHED:-}" ]]; then
+    params+=" --conntrack-tcp-timeout-established=0"
+  fi
+  if [[ -n "${SYSCTL_NETFILTER_NF_CONNTRACK_TCP_TIMEOUT_CLOSE_WAIT:-}" ]]; then
+    params+=" --conntrack-tcp-timeout-close-wait=0"
+  fi
   local container_env=""
   local kube_cache_mutation_detector_env_name=""
   local kube_cache_mutation_detector_env_value=""
