@@ -28,57 +28,80 @@ Installables can be of two types:
 """
 
 import argparse
+import ast
 import hashlib
 import json
 import logging
 import os
 import re
-import shlex
-import shutil
 import subprocess
 import sys
-import tempfile
-from typing import Any, Dict, List
+from typing import Any
 import urllib3
+
+LOGGER = logging.getLogger('installable')
+
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
-    '-i',
     '--installable',
     help='Installable object described as a JSON blob.',
     required=True,
     type=str,
 )
 
+
 parser.add_argument(
-    '-o',
+    '-d', '--debug',
+    help="Print debug statements",
+    action="store_const", dest="loglevel", const=logging.DEBUG,
+    default=logging.WARNING,
+)
+
+parser.add_argument(
     '--output',
     help=(
-      '''Absolute file to which to write AppPkg installables. If set, write the downloaded
-      file to this directory. Ignored for containers.'''
+      '''Absolute file to which to write AppPkg installables. Required for AppPkgs. Ignored for
+      containers.'''
     ),
     default='',
     nargs='?',
     type=str,
 )
 
+def str_to_bool(v):
+  if isinstance(v, bool):
+    return v
+  if v.lower() == 'true':
+    return True
+  if not v or v.lower() == 'false':
+    return False
+  raise argparse.ArgumentTypeError(f'Invalid arg: expected boolean got: {v}')
+
+
 parser.add_argument(
-  '-d',
-  '--download',
+  '--print-url',
   help=(
-    '''If set, the script will download files. Useful when we are booting from a preloaded
-    image. For containers, this means we only perform the run logic. For binaries, we
-    return immediately without attempting to download or move files.'''
+    '''If true, print installable's URL and exit.'''
   ),
   default=False,
   action='store_true',
 )
 
+
 parser.add_argument(
-  '-p',
+  '--no-download',
+  help=(
+    '''If true, we should not download files. This is to control booting from production'''
+  ),
+  default=False,
+  type=str_to_bool,
+)
+
+parser.add_argument(
   '--preload-file',
   help=(
-    '''Path to file where preload info is recoreded. It is used to check if a given AppPkg is
+    '''Path to file where preload info is recorded. It is used to check if a given AppPkg is
     preloaded or not. Preload info for AppPkgs is also recorded in this file if we are preloading
     an AppPkg. Required for AppPkgs. See configure.sh: "is-preloaded" and "record-preload-info"
     functions.'''
@@ -88,7 +111,6 @@ parser.add_argument(
   type=str,
 )
 
-LOGGER = logging.getLogger(__name__)
 
 def get_gce_credentials() -> str:
   """get_gce_credentials returns the credentials by querying the metadata server."""
@@ -115,15 +137,6 @@ class Ctr:
     return subprocess.run(
       args=cmd,
       shell=True,
-      capture_output=True,
-    )
-
-  def run(self, name: str, url: str, ctr_args: str, container_args: str):
-    cmd = f'ctr -n k8s.io run --rm {ctr_args} {url} {name} {container_args}'
-    subprocess.run(
-      args=cmd,
-      shell=True,
-      check=True,
       capture_output=True,
     )
 
@@ -158,7 +171,6 @@ class Installable:
       if f not in installable or installable[f] == "":
         raise ValueError(f'Requred field "{f}" is omitted or emtpy')
     self.content = installable
-    self.should_download = args.download
 
   def __enter__(self):
     return self
@@ -169,14 +181,17 @@ class Installable:
   def download(self):
     raise NotImplementedError()
 
-  def check_preloaded(self):
+  def is_preloaded(self):
     raise NotImplementedError()
 
-  def install(self):
-    raise NotImplementedError()
-
-  def get_name(self) -> str:
+  def name(self) -> str:
     return self.content['metadata']['name']
+
+  def digest(self) -> str:
+    return self.content['digest']
+
+  def digest_algo(self) -> str:
+    return self.content['digestAlgo']
 
   def get_url(self):
     raise NotImplementedError()
@@ -190,40 +205,25 @@ class Container(Installable):
 
   def download(self):
     """Downloads the underlying container with ctr."""
-    if not self.should_download:
-      LOGGER.info(f'Skip downloading on Container "{self.get_name()}" as it should be preloaded')
-      return
     out = ctr.download(self.get_url())
     if out.returncode != 0:
       msg = out.stderr.strip()
       raise ValueError(f'Failed to download container: return_code: {out.returncode} msg: {msg}')
+    LOGGER.debug(f'Download result:')
+    for l in out.stdout.splitlines():
+      LOGGER.debug(l)
 
-  def check_preloaded(self):
+  def is_preloaded(self)->bool:
     """Use ctr to search the machine to make sure this container is preloaded."""
     out = ctr.list_images()
     if out.returncode != 0:
       err = out.stderr.strip()
       raise ValueError(f'Failed to run ctr: exit_code: {out.returncode} error: {err}')
 
-    stdout = str(out.stdout.strip())
-    if self.get_url() not in stdout:
-      err = out.stdout.strip()
-      raise ValueError(f'Failed to find container "{self.get_name()}" on disk: "{stdout}"')
-
-  def install(self):
-    """Install runs the container with the given arguments using ctr."""
-    if self._should_run() is None:
-      LOGGER.info(f'Run not requested on {self.get_name()}')
-      return
-
-    ctr_args = shlex.join(self.get_ctr_args())
-    container_args = shlex.join(self.get_container_args())
-    ctr.run(name=self.get_name(), url=self.get_url(), ctr_args=ctr_args,
-            container_args=container_args)
-
-  def _should_run(self) -> Dict[str, Any]:
-    """Check if we should run this container."""
-    return self.content['run'] if 'run' in self.content else {}
+    url = self.get_url()
+    num_images = len(out.stdout.splitlines()) - 1
+    LOGGER.debug(f'Total found images: {num_images}')
+    return url in str(out.stdout.strip())
 
   def get_url(self) -> str:
     """Return the URL string for this container"""
@@ -231,25 +231,14 @@ class Container(Installable):
     # For containers, this is of the form: gcr.io/path/to/container@sha256:checksum_string.
     return '%s@%s:%s' % (
         self.content['remoteURL'],
-        self.content['digestAlgo'],
-        self.content['digest'],
+        self.digest_algo(),
+        self.digest(),
     )
-
-  def get_ctr_args(self) -> List[str]:
-    """ctr args are args to ctr such as mounts and network specs"""
-    run = self._should_run()
-    return run['ctrArgs'] if run and 'ctrArgs' in run else []
-
-  def get_container_args(self) -> List[str]:
-    """container args are the actual arguments given to the container (e.g. /bin/sh echo hello)"""
-    run = self._should_run()
-    return run['containerArgs'] if run and 'containerArgs' in run else []
-
 
 class AppPkgHandler:
   '''AppPkgHandler wraps methods that need to be faked for AppPkg unit tests.'''
 
-  def download(self, retry: int, url: str) -> bytes:
+  def download(self, retry: int, url: str)->bytes:
     creds = get_gce_credentials()
     retries = urllib3.util.Retry(
       total=retry,
@@ -269,33 +258,16 @@ class AppPkgHandler:
   def checksum(self, file_path: str, algo: str, digest: str):
     """get_checksum computes the checksum for validating downloaded AppPkgs."""
     func = getattr(hashlib, algo.lower())
+    LOGGER.debug(f'Using hash algo: {func.__name__}')
     if func is None:
       raise ValueError('Unknown digest algo: %s' % algo)
     # we can choose different algos here as hashlib supports several.
     got_digest = ''
     with open(file_path, mode='rb') as f:
       got_digest = func(f.read()).hexdigest()
+      LOGGER.debug(f'checking digest: got: {got_digest} want: {digest}')
       if got_digest != digest:
         raise ValueError(f'mismatch digest: got: {got_digest} want: {digest}')
-
-  def unwrap(self, file_path: str, dir_path: str, prefix: str, file_map: Any):
-    """unwrap uses tar to unwrap the archive."""
-    tar_cmd = f'tar -xzf {file_path} -C {dir_path}'
-    subprocess.run(
-      args=tar_cmd,
-      shell=True,
-      check=True,
-      capture_output=True,
-    )
-    for f in file_map:
-      source = f['source']
-      dest = f['dest']
-      mode = f['mode']
-      source = os.path.join(dir_path, source)
-      dest = os.path.join(prefix, dest)
-      os.makedirs(os.path.dirname(dest), exist_ok=True)
-      shutil.copyfile(source, dest)
-      os.chmod(dest, int(mode, 8))
 
 handler = AppPkgHandler()
 
@@ -316,82 +288,53 @@ class AppPkg(Installable):
     if not os.path.exists(args.preload_file):
       raise ValueError(f'Invalid preload file: "{args.preload_file}".')
     self.preload_file = args.preload_file
+    if not args.output:
+      raise ValueError(f'Output file path is required for AppPkg installables.')
     self.output_file = args.output
-    # Store a path to a temporary file in a temporary directory. We will use the file as a
-    # target to download the package and the directory as a target to extract the needed files.
-    self.dir = tempfile.mkdtemp()
-    self.file = tempfile.mktemp(dir=self.dir)
 
   def __enter__(self):
     return self
 
   def __exit__(self, exc_type, exc_value, traceback):
-    if os.path.exists(self.dir):
-      shutil.rmtree(self.dir)
+    return
 
   def download(self):
     """download function for apppkgs.
 
     Downloads an apppkg via urllib, validates the checksum, and records the apppkg as preloaded.
     """
-    if not self.should_download:
-      LOGGER.info(f'Skip downloading on AppPgk "{self.get_name()}" as it should be preloaded')
-      return
-
     data = handler.download(retry=self.retry, url=self.get_url())
-    with open(self.file, '+wb') as f:
+    with open(self.output_file, '+wb') as f:
       f.write(data)
     try:
-      handler.checksum(file_path=self.file, algo=self.content['digestAlgo'], digest=self._get_digest())
+      handler.checksum(file_path=self.output_file, algo=self.digest_algo(), digest=self.digest())
     except ValueError as e:
-      raise ValueError(f'Error validating package {self.get_name()}: {e=}')
+      raise ValueError(f'Error validating package {self.name()}: {e=}')
     self._record_preload_info()
 
-  def check_preloaded(self):
+  def is_preloaded(self)->bool:
     """For apppkgs, check preload checks the preload file for an entry for this apppkg. Similar to
       the 'is-preloaded' method in configure.sh"""
     with open(self.preload_file, 'r') as f:
       content = f.read()
-      name = re.escape(self.get_name())
-      digest = re.escape(self._get_digest())
+      name = re.escape(self.name())
+      digest = re.escape(self.digest())
     regex = re.compile(fr'{name},{digest}')
-    if not regex.search(content):
-      raise AssertionError(
-        f'Could not find entry "{self.get_name()},{self._get_digest()} in preload file: {content}"'
-      )
-
-  def install(self):
-    """Install for apppkgs copies the downloaded archive to a user given path or unwraps the archive
-    and places it in user defined paths."""
-    if not self.should_download:
-      LOGGER.info(f'Skip installing AppPkg "{self.get_name()}" as it should be preloaded')
-      return
-
-    if self.output_file:
-      shutil.copy2(src=self.file, dst=self.output_file)
-
-    fileMap = self.content.get('fileMap', [])
-    if fileMap:
-      prefix = self.content.get('installPrefix', '')
-      handler.unwrap(file_path=self.file, dir_path=self.dir, prefix=prefix, file_map=fileMap)
+    return True if regex.search(content) else False
 
   def _record_preload_info(self):
     """records the preload info similar to the 'record-preload-info' function in configure.sh"""
     with open(self.preload_file, '+a') as f:
-      f.write(f'{self.get_name()},{self._get_digest()}')
+      f.write(f'{self.name()},{self.digest()}\n')
 
   def get_url(self) -> str:
     """AppPkg URLs are simply the given remoteURL."""
     return self.content['remoteURL'] if 'remoteURL' in self.content else ''
 
-  def _get_digest(self) -> str:
-    """Returns the digest for this apppkg."""
-    return self.content['digest']
-
-
-
 def parse_installable(args: argparse.Namespace) -> Installable:
   """parse_installable parses the given json installable returns the correct class based on kind"""
+  if not args.installable:
+    raise ValueError(f'Cannot pass an empty installable!')
   inst = json.loads(args.installable)
   if inst['apiVersion'] != 'installable.gke.io/v1':
     raise ValueError('Unknown api version: %s' % inst['apiVersion'])
@@ -402,13 +345,20 @@ def parse_installable(args: argparse.Namespace) -> Installable:
     return AppPkg(inst, args)
   raise ValueError(f'Unknown installable type: {kind}')
 
-def do_install(args: argparse.Namespace):
-  """do_install performs the sequence common to all installables."""
+def process_installable(args: argparse.Namespace):
+  """process_installable validates and downloads the given installable"""
   with parse_installable(args) as inst:
-    LOGGER.info(f'Processing installable: "{inst.get_name()}": url: "{inst.get_url()}"')
-    inst.download()
-    inst.check_preloaded()
-    inst.install()
+    if args.print_url:
+      print(inst.get_url())
+      exit(0)
+    LOGGER.info(f'Processing installable: "{inst.name()}": url: "{inst.get_url()}"')
+    if not args.no_download and not inst.is_preloaded():
+      LOGGER.info(f'Installable not preloaded...downloading')
+      inst.download()
+    if not inst.is_preloaded():
+      raise ValueError(f'Installable {inst.name()} not preloaded.')
 
 if __name__ == '__main__':
-  do_install(parser.parse_args(sys.argv[1:]))
+  args = parser.parse_args(sys.argv[1:])
+  logging.basicConfig(level=args.loglevel)
+  process_installable(args)
