@@ -69,8 +69,8 @@ $AUTH_PROVIDER_GCP_HASH_WINDOWS_AMD64 = '348af2c189d938e1a4fa5ac5c640d21e003da1f
 $EXEC_AUTH_PLUGIN_VERSION="internal/gke-internal-branch-v1-30/c7900d96347cec80d505bf138fc7abf25dab12c2"
 # gke exec auth plugin hash
 $EXEC_AUTH_PLUGIN_WINDOWS_AMD64_HASH="57e9c71436cf67e79df955b29fb7ead0dcd953e9689342540c3bad61b3745c30c18d178e818340a6f19f3ad9e07e240eb6e80c7d495bcf5d835060b6e4176d50"
-$EXEC_AUTH_PLUGIN_LICENSE_URL="${STORAGE_ENDPOINT}/gke-prod-binaries/gke-exec-auth-plugin/${EXEC_AUTH_PLUGIN_VERSION}/LICENSE"
-$EXEC_AUTH_PLUGIN_WINDOWS_AMD64_URL="${STORAGE_ENDPOINT}/gke-prod-binaries/gke-exec-auth-plugin/${EXEC_AUTH_PLUGIN_VERSION}/windows_amd64/gke-exec-auth-plugin.exe"
+$EXEC_AUTH_PLUGIN_LICENSE_URL="https://storage.googleapis.com/gke-prod-binaries/gke-exec-auth-plugin/${EXEC_AUTH_PLUGIN_VERSION}/LICENSE"
+$EXEC_AUTH_PLUGIN_WINDOWS_AMD64_URL="https://storage.googleapis.com/gke-prod-binaries/gke-exec-auth-plugin/${EXEC_AUTH_PLUGIN_VERSION}/windows_amd64/gke-exec-auth-plugin.exe"
 
 Import-Module -Force C:\common.psm1
 
@@ -379,12 +379,6 @@ function Download-HelperScripts {
 # Downloads the gke-exec-auth-plugin for TPM-based authentication to the
 # master, if auth plugin support has been requested for this node (see
 # Test-NodeUsesAuthPlugin).
-# https://github.com/kubernetes/cloud-provider-gcp/tree/master/cmd/gke-exec-auth-plugin
-#
-# Required ${kube_env} keys:
-#   EXEC_AUTH_PLUGIN_LICENSE_URL
-#   EXEC_AUTH_PLUGIN_HASH
-#   EXEC_AUTH_PLUGIN_URL
 function DownloadAndInstall-AuthPlugin {
   if (-not (Test-NodeUsesAuthPlugin ${kube_env})) {
     Log-Output 'Skipping download of auth plugin'
@@ -394,18 +388,12 @@ function DownloadAndInstall-AuthPlugin {
     return
   }
 
-  if (-not ($kube_env.ContainsKey('EXEC_AUTH_PLUGIN_LICENSE_URL') -and
-            $kube_env.ContainsKey('EXEC_AUTH_PLUGIN_HASH') -and
-            $kube_env.ContainsKey('EXEC_AUTH_PLUGIN_URL'))) {
-    Log-Output -Fatal ("Missing one or more kube-env keys needed for " +
-                       "downloading auth plugin: $(Out-String $kube_env)")
-  }
   MustDownload-File `
-      -URLs ${kube_env}['EXEC_AUTH_PLUGIN_URL'] `
-      -Hash ${kube_env}['EXEC_AUTH_PLUGIN_HASH'] `
+      -URLs ${EXEC_AUTH_PLUGIN_WINDOWS_AMD64_URL} `
+      -Hash ${EXEC_AUTH_PLUGIN_WINDOWS_AMD64_HASH} `
       -OutFile "${env:NODE_DIR}\gke-exec-auth-plugin.exe"
   MustDownload-File `
-      -URLs ${kube_env}['EXEC_AUTH_PLUGIN_LICENSE_URL'] `
+      -URLs ${EXEC_AUTH_PLUGIN_LICENSE_URL} `
       -OutFile "${env:LICENSE_DIR}\LICENSE_gke-exec-auth-plugin.txt"
 }
 

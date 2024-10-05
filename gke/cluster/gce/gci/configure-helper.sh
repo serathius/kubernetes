@@ -796,8 +796,9 @@ function create-master-pki {
 }
 
 function ensure-exec-auth-config {
-  if [[ -z "${EXEC_AUTH_PLUGIN_URL:-}" ]]; then
-    1>&2 echo "GKE exec auth support required, but EXEC_AUTH_PLUGIN_URL was not specified.  This configuration depends on gke-exec-auth-plugin for authenticating."
+  local plugin_bin="${KUBE_BIN}/gke-exec-auth-plugin"
+  if [[ ! -f "${plugin_bin}" ]]; then
+    1>&2 echo "GKE exec auth support required, but ${plugin_bin} was not found"
     exit 1
   fi
 }
@@ -1065,10 +1066,7 @@ EOF
   fi
 
   if [[ -n "${WEBHOOK_GKE_EXEC_AUTH:-}" ]]; then
-    if [[ -z "${EXEC_AUTH_PLUGIN_URL:-}" ]]; then
-      1>&2 echo "You requested GKE exec auth support for webhooks, but EXEC_AUTH_PLUGIN_URL was not specified.  This configuration depends on gke-exec-auth-plugin for authenticating to the webhook endpoint."
-      exit 1
-    fi
+    ensure-exec-auth-config
 
     if [[ -z "${TOKEN_URL:-}" || -z "${TOKEN_BODY:-}" || -z "${TOKEN_BODY_UNQUOTED:-}" ]]; then
       1>&2 echo "You requested GKE exec auth support for webhooks, but TOKEN_URL, TOKEN_BODY, and TOKEN_BODY_UNQUOTED were not provided.  gke-exec-auth-plugin requires these values for its configuration."

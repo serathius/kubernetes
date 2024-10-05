@@ -656,7 +656,7 @@ function Test-NodeUsesAuthPlugin {
     [parameter(Mandatory=$true)] [hashtable]$KubeEnv
   )
 
-  return $KubeEnv.Contains('EXEC_AUTH_PLUGIN_URL')
+  return $KubeEnv.Contains('TPM_BOOTSTRAP_CERT')
 }
 
 # Permanently adds a directory to the $env:PATH environment variable.
