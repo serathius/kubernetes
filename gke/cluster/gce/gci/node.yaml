@@ -192,7 +192,6 @@ runcmd:
       placeholders-presuspend-setup.service
       kube-node-installation.service
       kube-node-configuration.service
-      kube-container-runtime-monitor.service
       kubelet-monitor.service
       kube-logrotate.timer
       kube-logrotate.service

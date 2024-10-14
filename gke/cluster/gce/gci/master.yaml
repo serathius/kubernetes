@@ -189,7 +189,6 @@ runcmd:
  - systemctl enable kube-bootstrap-logs-forwarder.service
      kube-master-installation.service
      kube-master-configuration.service
-     kube-container-runtime-monitor.service
      kubelet-monitor.service
      networkd-monitor.service
      kube-logrotate.timer
