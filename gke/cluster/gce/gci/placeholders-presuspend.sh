@@ -58,8 +58,23 @@ ExecStart=/bin/true
 WantedBy=suspend.target
 EOF
 
+  # Prior the VM suspending; we unload gvnic module as part of b/365605093 and b/374160698. It is reloaded after the VM has resumed.
+  cat <<EOF >/etc/systemd/system/gke-placeholder-suspend-trigger.service
+[Unit]
+Description=GKE Placeholder Suspend Trigger
+Before=sleep.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/sbin/rmmod gve
+
+[Install]
+WantedBy=sleep.target
+EOF
+
   systemctl daemon-reload
-  systemctl enable gke-placeholder-resume-trigger.service
+  systemctl enable gke-placeholder-resume-trigger.service gke-placeholder-suspend-trigger.service
 
 
   # TODO: We hardcode the driver verision to latest temporarily.
@@ -84,7 +99,7 @@ EOF
 
   # b/365605093 - On resume, gve must be reloaded because mac address is changed on resume and must be refreshed
   log "Reloading gvnic"
-  rmmod gve; modprobe gve
+  modprobe gve
 
   log "Wait for systemd-networkd-wait-online..."
   systemctl restart systemd-networkd-wait-online.service
