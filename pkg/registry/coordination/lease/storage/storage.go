@@ -17,23 +17,31 @@ limitations under the License.
 package storage
 
 import (
+	"context"
+	"fmt"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apiserver/pkg/registry/generic"
 	genericregistry "k8s.io/apiserver/pkg/registry/generic/registry"
+	"k8s.io/apiserver/pkg/registry/rest"
+	"k8s.io/apiserver/pkg/storage"
+	storageerr "k8s.io/apiserver/pkg/storage/errors"
 	coordinationapi "k8s.io/kubernetes/pkg/apis/coordination"
 	"k8s.io/kubernetes/pkg/printers"
 	printersinternal "k8s.io/kubernetes/pkg/printers/internalversion"
 	printerstorage "k8s.io/kubernetes/pkg/printers/storage"
 	"k8s.io/kubernetes/pkg/registry/coordination/lease"
+	"k8s.io/apimachinery/pkg/api/errors"
 )
 
-// REST implements a RESTStorage for leases against etcd
-type REST struct {
-	*genericregistry.Store
+// LeaseStorage implements a RESTStorage for leases against etcd
+type LeaseStorage struct {
+	Lease        *REST
+	LeaseRefresh *RefreshREST
 }
 
-// NewREST returns a RESTStorage object that will work against leases.
-func NewREST(optsGetter generic.RESTOptionsGetter) (*REST, error) {
+// NewStorage returns a RESTStorage object that will work against leases.
+func NewStorage(optsGetter generic.RESTOptionsGetter) (*LeaseStorage, error) {
 	store := &genericregistry.Store{
 		NewFunc:                   func() runtime.Object { return &coordinationapi.Lease{} },
 		NewListFunc:               func() runtime.Object { return &coordinationapi.LeaseList{} },
@@ -51,5 +59,62 @@ func NewREST(optsGetter generic.RESTOptionsGetter) (*REST, error) {
 		return nil, err
 	}
 
-	return &REST{store}, nil
+	return &LeaseStorage{
+		Lease:        &REST{store},
+		LeaseRefresh: &RefreshREST{store},
+	}, nil
 }
+
+type REST struct {
+	*genericregistry.Store
+}
+
+func (r *REST) Create(ctx context.Context, obj runtime.Object, createValidation rest.ValidateObjectFunc, options *metav1.CreateOptions) (runtime.Object, error) {
+	_, ok := obj.(*coordinationapi.Lease)
+	if !ok {
+		return nil, fmt.Errorf("not right type")
+	}
+	// TODO: Implement lease handling here
+	return r.Store.Create(ctx, obj, createValidation, options)
+}
+
+type RefreshREST struct {
+	store *genericregistry.Store
+}
+
+func (r *RefreshREST) Get(ctx context.Context, name string, options *metav1.GetOptions) (runtime.Object, error) {
+	key, err := r.store.KeyFunc(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	obj := r.store.NewFunc()
+	// Try to fetch from cache, as long as lease should not change.
+	if err = r.store.Storage.Get(ctx, key, storage.GetOptions{ResourceVersion: "0"}, obj); err != nil {
+		if !errors.IsNotFound(err) {
+			return nil, storageerr.InterpretGetError(err, r.store.DefaultQualifiedResource, name)
+		}
+		// Lease was not yet observed by cache or already deleted. Let's confirm with etcd.
+		err = r.store.Storage.Get(ctx, key, storage.GetOptions{}, obj)
+		if err != nil {
+			return nil, storageerr.InterpretGetError(err, r.store.DefaultQualifiedResource, name)
+		}
+	}
+	lease, ok := obj.(*coordinationapi.Lease)
+	if !ok {
+		return nil, fmt.Errorf("not right type")
+	}
+	if lease.Spec.LeaseID == nil {
+		return nil, fmt.Errorf("lease with no lease")
+	}
+	err = r.store.Storage.Refresh(ctx, *lease.Spec.LeaseID)
+	return obj, err
+}
+
+func (r *RefreshREST) New() runtime.Object {
+	return &coordinationapi.Lease{}
+}
+
+func (r *RefreshREST) Destroy() {
+}
+
+var _ rest.Getter = (*RefreshREST)(nil)

@@ -175,6 +175,10 @@ func (c *CacheDelegator) Get(ctx context.Context, key string, opts storage.GetOp
 	return c.cacher.Get(ctx, key, opts, objPtr)
 }
 
+func (c *CacheDelegator) Refresh(ctx context.Context, leaseID int64) error {
+	return c.storage.Refresh(ctx, leaseID)
+}
+
 func (c *CacheDelegator) GetList(ctx context.Context, key string, opts storage.ListOptions, listObj runtime.Object) error {
 	_, _, err := storage.ValidateListOptions(c.cacher.resourcePrefix, c.cacher.versioner, opts)
 	if err != nil {

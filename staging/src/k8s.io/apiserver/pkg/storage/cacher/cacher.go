@@ -481,6 +481,12 @@ func (c *Cacher) startCaching(stopChannel <-chan struct{}) {
 	}
 }
 
+
+// Create implements storage.Interface.
+func (c *Cacher) Create(ctx context.Context, key string, obj, out runtime.Object, ttl uint64) error {
+	return c.storage.Create(ctx, key, obj, out, ttl)
+}
+
 type namespacedName struct {
 	namespace string
 	name      string

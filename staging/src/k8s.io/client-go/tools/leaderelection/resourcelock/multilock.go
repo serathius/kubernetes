@@ -70,16 +70,12 @@ func (ml *MultiLock) Create(ctx context.Context, ler LeaderElectionRecord) error
 }
 
 // Update will update and existing annotation on both two resources.
-func (ml *MultiLock) Update(ctx context.Context, ler LeaderElectionRecord) error {
-	err := ml.Primary.Update(ctx, ler)
+func (ml *MultiLock) Delete(ctx context.Context) error {
+	err := ml.Primary.Delete(ctx)
 	if err != nil {
 		return err
 	}
-	_, _, err = ml.Secondary.Get(ctx)
-	if err != nil && apierrors.IsNotFound(err) {
-		return ml.Secondary.Create(ctx, ler)
-	}
-	return ml.Secondary.Update(ctx, ler)
+	return ml.Secondary.Delete(ctx)
 }
 
 // RecordEvent in leader election while adding meta-data

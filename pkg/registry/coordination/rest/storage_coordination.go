@@ -63,11 +63,12 @@ func (p RESTStorageProvider) v1Storage(apiResourceConfigSource serverstorage.API
 
 	// leases
 	if resource := "leases"; apiResourceConfigSource.ResourceEnabled(coordinationv1.SchemeGroupVersion.WithResource(resource)) {
-		leaseStorage, err := leasestorage.NewREST(restOptionsGetter)
+		leaseStorage, err := leasestorage.NewStorage(restOptionsGetter)
 		if err != nil {
 			return storage, err
 		}
-		storage[resource] = leaseStorage
+		storage[resource] = leaseStorage.Lease
+		storage[resource+"/refresh"] = leaseStorage.LeaseRefresh
 	}
 	return storage, nil
 }

@@ -4504,6 +4504,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: leaseDurationSeconds
       type:
         scalar: numeric
+    - name: leaseID
+      type:
+        scalar: numeric
     - name: leaseTransitions
       type:
         scalar: numeric
@@ -4623,6 +4626,9 @@ var schemaYAML = typed.YAMLObject(`types:
       type:
         scalar: string
     - name: leaseDurationSeconds
+      type:
+        scalar: numeric
+    - name: leaseID
       type:
         scalar: numeric
     - name: leaseTransitions

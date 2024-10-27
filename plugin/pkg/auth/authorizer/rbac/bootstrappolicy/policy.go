@@ -454,7 +454,8 @@ func ClusterRoles() []rbacv1.ClusterRole {
 				eventsRule(),
 				// Needed for leader election.
 				rbacv1helpers.NewRule("create").Groups(coordinationGroup).Resources("leases").RuleOrDie(),
-				rbacv1helpers.NewRule("get", "update").Groups(coordinationGroup).Resources("leases").Names("kube-controller-manager").RuleOrDie(),
+				rbacv1helpers.NewRule("get").Groups(coordinationGroup).Resources("leases/refresh").Resources().RuleOrDie(),
+				rbacv1helpers.NewRule("get", "delete").Groups(coordinationGroup).Resources("leases").Names("kube-controller-manager").RuleOrDie(),
 				// Fundamental resources.
 				rbacv1helpers.NewRule("create").Groups(legacyGroup).Resources("secrets", "serviceaccounts").RuleOrDie(),
 				rbacv1helpers.NewRule("delete").Groups(legacyGroup).Resources("secrets").RuleOrDie(),
@@ -593,7 +594,8 @@ func ClusterRoles() []rbacv1.ClusterRole {
 		// This is for leaderlease access
 		// TODO: scope this to the kube-system namespace
 		rbacv1helpers.NewRule("create").Groups(coordinationGroup).Resources("leases").RuleOrDie(),
-		rbacv1helpers.NewRule("get", "update", "list", "watch").Groups(coordinationGroup).Resources("leases").Names("kube-scheduler").RuleOrDie(),
+		rbacv1helpers.NewRule("get").Groups(coordinationGroup).Resources("leases/refresh").RuleOrDie(),
+		rbacv1helpers.NewRule("get", "list", "watch", "delete").Groups(coordinationGroup).Resources("leases").Names("kube-scheduler").RuleOrDie(),
 		rbacv1helpers.NewRule(ReadWrite...).Groups(coordinationGroup).Resources("leasecandidates").RuleOrDie(),
 
 		// Fundamental resources

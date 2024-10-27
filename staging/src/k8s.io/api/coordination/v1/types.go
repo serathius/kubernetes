@@ -84,6 +84,8 @@ type LeaseSpec struct {
 	// +featureGate=CoordinatedLeaderElection
 	// +optional
 	PreferredHolder *string `json:"preferredHolder,omitempty" protobuf:"bytes,7,opt,name=preferredHolder"`
+	// +optional
+	LeaseID *int64 `json:"leaseID,omitempty" protobuf:"varint,8,opt,name=leaseID"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object

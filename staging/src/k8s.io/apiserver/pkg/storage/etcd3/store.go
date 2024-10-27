@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"k8s.io/kubernetes/pkg/apis/coordination"
 	"path"
 	"reflect"
 	"strconv"
@@ -209,6 +210,11 @@ func (s *store) Versioner() storage.Versioner {
 	return s.versioner
 }
 
+func (s *store) Refresh(ctx context.Context, leaseID int64) error {
+	_, err := s.client.Lease.KeepAliveOnce(ctx, clientv3.LeaseID(leaseID))
+	return err
+}
+
 // Get implements storage.Interface.Get.
 func (s *store) Get(ctx context.Context, key string, opts storage.GetOptions, out runtime.Object) error {
 	preparedKey, err := s.prepareKey(key)
@@ -258,6 +264,25 @@ func (s *store) Create(ctx context.Context, key string, obj, out runtime.Object,
 		attribute.String("resource", s.groupResourceString),
 	)
 	defer span.End(500 * time.Millisecond)
+	var lease clientv3.LeaseID
+	if ttl != 0 {
+		lease, err = s.leaseManager.GetLease(ctx, int64(ttl))
+		if err != nil {
+			return err
+		}
+	}
+	if leaseObj, ok := obj.(*coordination.Lease); ok {
+		if leaseObj.Spec.LeaseDurationSeconds == nil {
+			return fmt.Errorf("lease duration set to zero")
+		}
+		resp, err := s.client.Lease.Grant(ctx, int64(*leaseObj.Spec.LeaseDurationSeconds))
+		if err != nil {
+			return err
+		}
+		id := int64(resp.ID)
+		leaseObj.Spec.LeaseID = &id
+		lease = resp.ID
+	}
 	if version, err := s.versioner.ObjectResourceVersion(obj); err == nil && version != 0 {
 		return storage.ErrResourceVersionSetOnCreate
 	}
@@ -271,14 +296,6 @@ func (s *store) Create(ctx context.Context, key string, obj, out runtime.Object,
 		return err
 	}
 	span.AddEvent("Encode succeeded", attribute.Int("len", len(data)))
-
-	var lease clientv3.LeaseID
-	if ttl != 0 {
-		lease, err = s.leaseManager.GetLease(ctx, int64(ttl))
-		if err != nil {
-			return err
-		}
-	}
 
 	newData, err := s.transformer.TransformToStorage(ctx, data, authenticatedDataString(preparedKey))
 	if err != nil {

@@ -19586,6 +19586,12 @@ func schema_k8sio_api_coordination_v1_LeaseSpec(ref common.ReferenceCallback) co
 							Format:      "",
 						},
 					},
+					"leaseID": {
+						SchemaProps: spec.SchemaProps{
+							Type:   []string{"integer"},
+							Format: "int64",
+						},
+					},
 				},
 			},
 		},
@@ -20044,6 +20050,12 @@ func schema_k8sio_api_coordination_v1beta1_LeaseSpec(ref common.ReferenceCallbac
 							Description: "PreferredHolder signals to a lease holder that the lease has a more optimal holder and should be given up.",
 							Type:        []string{"string"},
 							Format:      "",
+						},
+					},
+					"leaseID": {
+						SchemaProps: spec.SchemaProps{
+							Type:   []string{"integer"},
+							Format: "int64",
 						},
 					},
 				},

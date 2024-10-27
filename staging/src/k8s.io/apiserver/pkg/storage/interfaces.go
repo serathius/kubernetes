@@ -267,6 +267,7 @@ type Interface interface {
 	// GetCurrentResourceVersion gets the current resource version from etcd.
 	// This method issues an empty list request and reads only the ResourceVersion from the object metadata
 	GetCurrentResourceVersion(ctx context.Context) (uint64, error)
+	Refresh(ctx context.Context, leaseID int64) error
 }
 
 // GetOptions provides the options that may be provided for storage get operations.

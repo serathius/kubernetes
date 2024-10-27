@@ -309,16 +309,13 @@ func (le *LeaderElector) release() bool {
 	if !le.IsLeader() {
 		return true
 	}
-	now := metav1.NewTime(le.clock.Now())
 	leaderElectionRecord := rl.LeaderElectionRecord{
 		LeaderTransitions:    le.observedRecord.LeaderTransitions,
 		LeaseDurationSeconds: 1,
-		RenewTime:            now,
-		AcquireTime:          now,
 	}
 	timeoutCtx, timeoutCancel := context.WithTimeout(context.Background(), le.config.RenewDeadline)
 	defer timeoutCancel()
-	if err := le.config.Lock.Update(timeoutCtx, leaderElectionRecord); err != nil {
+	if err := le.config.Lock.Delete(timeoutCtx); err != nil {
 		klog.Errorf("Failed to release lock: %v", err)
 		return false
 	}
@@ -335,8 +332,6 @@ func (le *LeaderElector) tryCoordinatedRenew(ctx context.Context) bool {
 	leaderElectionRecord := rl.LeaderElectionRecord{
 		HolderIdentity:       le.config.Lock.Identity(),
 		LeaseDurationSeconds: int(le.config.LeaseDuration / time.Second),
-		RenewTime:            now,
-		AcquireTime:          now,
 	}
 
 	// 1. obtain the electionRecord
@@ -381,23 +376,6 @@ func (le *LeaderElector) tryCoordinatedRenew(ctx context.Context) bool {
 		return false
 	}
 
-	// 3. We're going to try to update. The leaderElectionRecord is set to it's default
-	// here. Let's correct it before updating.
-	if le.IsLeader() {
-		leaderElectionRecord.AcquireTime = oldLeaderElectionRecord.AcquireTime
-		leaderElectionRecord.LeaderTransitions = oldLeaderElectionRecord.LeaderTransitions
-		leaderElectionRecord.Strategy = oldLeaderElectionRecord.Strategy
-		le.metrics.slowpathExercised(le.config.Name)
-	} else {
-		leaderElectionRecord.LeaderTransitions = oldLeaderElectionRecord.LeaderTransitions + 1
-	}
-
-	// update the lock itself
-	if err = le.config.Lock.Update(ctx, leaderElectionRecord); err != nil {
-		klog.Errorf("Failed to update lock: %v", err)
-		return false
-	}
-
 	le.setObservedRecord(&leaderElectionRecord)
 	return true
 }
@@ -410,18 +388,12 @@ func (le *LeaderElector) tryAcquireOrRenew(ctx context.Context) bool {
 	leaderElectionRecord := rl.LeaderElectionRecord{
 		HolderIdentity:       le.config.Lock.Identity(),
 		LeaseDurationSeconds: int(le.config.LeaseDuration / time.Second),
-		RenewTime:            now,
-		AcquireTime:          now,
 	}
 
 	// 1. fast path for the leader to update optimistically assuming that the record observed
 	// last time is the current version.
 	if le.IsLeader() && le.isLeaseValid(now.Time) {
-		oldObservedRecord := le.getObservedRecord()
-		leaderElectionRecord.AcquireTime = oldObservedRecord.AcquireTime
-		leaderElectionRecord.LeaderTransitions = oldObservedRecord.LeaderTransitions
-
-		err := le.config.Lock.Update(ctx, leaderElectionRecord)
+		err := le.config.Lock.Refresh(ctx)
 		if err == nil {
 			le.setObservedRecord(&leaderElectionRecord)
 			return true
@@ -460,7 +432,6 @@ func (le *LeaderElector) tryAcquireOrRenew(ctx context.Context) bool {
 	// 4. We're going to try to update. The leaderElectionRecord is set to it's default
 	// here. Let's correct it before updating.
 	if le.IsLeader() {
-		leaderElectionRecord.AcquireTime = oldLeaderElectionRecord.AcquireTime
 		leaderElectionRecord.LeaderTransitions = oldLeaderElectionRecord.LeaderTransitions
 		le.metrics.slowpathExercised(le.config.Name)
 	} else {
@@ -468,7 +439,7 @@ func (le *LeaderElector) tryAcquireOrRenew(ctx context.Context) bool {
 	}
 
 	// update the lock itself
-	if err = le.config.Lock.Update(ctx, leaderElectionRecord); err != nil {
+	if err = le.config.Lock.Refresh(ctx); err != nil {
 		klog.Errorf("Failed to update lock: %v", err)
 		return false
 	}

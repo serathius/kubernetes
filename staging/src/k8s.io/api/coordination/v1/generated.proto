@@ -92,5 +92,8 @@ message LeaseSpec {
   // +featureGate=CoordinatedLeaderElection
   // +optional
   optional string preferredHolder = 7;
+
+  // +optional
+  optional int64 leaseID = 8;
 }
 
