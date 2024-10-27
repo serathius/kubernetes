@@ -32,9 +32,20 @@ type LeaseLock struct {
 	// LeaseMeta should contain a Name and a Namespace of a
 	// LeaseMeta object that the LeaderElector will attempt to lead.
 	LeaseMeta  metav1.ObjectMeta
-	Client     coordinationv1client.LeasesGetter
+	Client     coordinationv1client.CoordinationV1Interface
 	LockConfig ResourceLockConfig
 	lease      *coordinationv1.Lease
+}
+
+func (ll *LeaseLock) Refresh(ctx context.Context) error {
+	return ll.Client.RESTClient().Get().
+		AbsPath("/apis/coordination.k8s.io/v1").
+		Namespace(ll.LeaseMeta.Namespace).
+		Resource("leases").
+		Name(ll.LeaseMeta.Name).
+		SubResource("refresh").
+		Do(ctx).
+		Error()
 }
 
 // Get returns the election record from a Lease spec
@@ -66,18 +77,17 @@ func (ll *LeaseLock) Create(ctx context.Context, ler LeaderElectionRecord) error
 }
 
 // Update will update an existing Lease spec.
-func (ll *LeaseLock) Update(ctx context.Context, ler LeaderElectionRecord) error {
+func (ll *LeaseLock) Delete(ctx context.Context) error {
 	if ll.lease == nil {
 		return errors.New("lease not initialized, call get or create first")
 	}
-	ll.lease.Spec = LeaderElectionRecordToLeaseSpec(&ler)
 
-	lease, err := ll.Client.Leases(ll.LeaseMeta.Namespace).Update(ctx, ll.lease, metav1.UpdateOptions{})
+	err := ll.Client.Leases(ll.LeaseMeta.Namespace).Delete(ctx, ll.LeaseMeta.Name, metav1.DeleteOptions{})
 	if err != nil {
 		return err
 	}
 
-	ll.lease = lease
+	ll.lease = nil
 	return nil
 }
 
@@ -116,12 +126,6 @@ func LeaseSpecToLeaderElectionRecord(spec *coordinationv1.LeaseSpec) *LeaderElec
 	if spec.LeaseTransitions != nil {
 		r.LeaderTransitions = int(*spec.LeaseTransitions)
 	}
-	if spec.AcquireTime != nil {
-		r.AcquireTime = metav1.Time{Time: spec.AcquireTime.Time}
-	}
-	if spec.RenewTime != nil {
-		r.RenewTime = metav1.Time{Time: spec.RenewTime.Time}
-	}
 	if spec.PreferredHolder != nil {
 		r.PreferredHolder = *spec.PreferredHolder
 	}
@@ -138,8 +142,6 @@ func LeaderElectionRecordToLeaseSpec(ler *LeaderElectionRecord) coordinationv1.L
 	spec := coordinationv1.LeaseSpec{
 		HolderIdentity:       &ler.HolderIdentity,
 		LeaseDurationSeconds: &leaseDurationSeconds,
-		AcquireTime:          &metav1.MicroTime{Time: ler.AcquireTime.Time},
-		RenewTime:            &metav1.MicroTime{Time: ler.RenewTime.Time},
 		LeaseTransitions:     &leaseTransitions,
 	}
 	if ler.PreferredHolder != "" {

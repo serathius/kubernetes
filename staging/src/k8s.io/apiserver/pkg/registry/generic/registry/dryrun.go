@@ -32,6 +32,10 @@ type DryRunnableStorage struct {
 	Codec   runtime.Codec
 }
 
+func (s *DryRunnableStorage) Refresh(ctx context.Context, id int64) error {
+	return s.Storage.Refresh(ctx, id)
+}
+
 func (s *DryRunnableStorage) Versioner() storage.Versioner {
 	return s.Storage.Versioner()
 }

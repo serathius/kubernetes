@@ -51,8 +51,6 @@ type LeaderElectionRecord struct {
 	// a client voluntarily steps down.
 	HolderIdentity       string                      `json:"holderIdentity"`
 	LeaseDurationSeconds int                         `json:"leaseDurationSeconds"`
-	AcquireTime          metav1.Time                 `json:"acquireTime"`
-	RenewTime            metav1.Time                 `json:"renewTime"`
 	LeaderTransitions    int                         `json:"leaderTransitions"`
 	Strategy             v1.CoordinatedLeaseStrategy `json:"strategy"`
 	PreferredHolder      string                      `json:"preferredHolder"`
@@ -85,8 +83,8 @@ type Interface interface {
 	// Create attempts to create a LeaderElectionRecord
 	Create(ctx context.Context, ler LeaderElectionRecord) error
 
-	// Update will update and existing LeaderElectionRecord
-	Update(ctx context.Context, ler LeaderElectionRecord) error
+	Delete(ctx context.Context) error
+	Refresh(ctx context.Context) error
 
 	// RecordEvent is used to record events
 	RecordEvent(string)

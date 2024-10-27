@@ -262,6 +262,7 @@ type Interface interface {
 	// TODO: Remove when storage.Interface will be separate from etc3.store.
 	// Deprecated: Added temporarily to simplify exposing RequestProgress for watch cache.
 	RequestWatchProgress(ctx context.Context) error
+	Refresh(ctx context.Context, leaseID int64) error
 }
 
 // GetOptions provides the options that may be provided for storage get operations.

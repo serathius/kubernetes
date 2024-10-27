@@ -33,6 +33,7 @@ type LeaseSpecApplyConfiguration struct {
 	LeaseTransitions     *int32                                   `json:"leaseTransitions,omitempty"`
 	Strategy             *coordinationv1.CoordinatedLeaseStrategy `json:"strategy,omitempty"`
 	PreferredHolder      *string                                  `json:"preferredHolder,omitempty"`
+	LeaseID              *int64                                   `json:"leaseID,omitempty"`
 }
 
 // LeaseSpecApplyConfiguration constructs a declarative configuration of the LeaseSpec type for use with
@@ -94,5 +95,13 @@ func (b *LeaseSpecApplyConfiguration) WithStrategy(value coordinationv1.Coordina
 // If called multiple times, the PreferredHolder field is set to the value of the last call.
 func (b *LeaseSpecApplyConfiguration) WithPreferredHolder(value string) *LeaseSpecApplyConfiguration {
 	b.PreferredHolder = &value
+	return b
+}
+
+// WithLeaseID sets the LeaseID field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the LeaseID field is set to the value of the last call.
+func (b *LeaseSpecApplyConfiguration) WithLeaseID(value int64) *LeaseSpecApplyConfiguration {
+	b.LeaseID = &value
 	return b
 }

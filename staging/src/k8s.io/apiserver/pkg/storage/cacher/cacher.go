@@ -484,6 +484,10 @@ func (c *Cacher) Versioner() storage.Versioner {
 	return c.storage.Versioner()
 }
 
+func (c *Cacher) Refresh(ctx context.Context, leaseID int64) error {
+	return c.storage.Refresh(ctx, leaseID)
+}
+
 // Create implements storage.Interface.
 func (c *Cacher) Create(ctx context.Context, key string, obj, out runtime.Object, ttl uint64) error {
 	return c.storage.Create(ctx, key, obj, out, ttl)

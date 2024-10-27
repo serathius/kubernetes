@@ -127,6 +127,7 @@ func autoConvert_v1_LeaseSpec_To_coordination_LeaseSpec(in *coordinationv1.Lease
 	out.LeaseTransitions = (*int32)(unsafe.Pointer(in.LeaseTransitions))
 	out.Strategy = (*coordination.CoordinatedLeaseStrategy)(unsafe.Pointer(in.Strategy))
 	out.PreferredHolder = (*string)(unsafe.Pointer(in.PreferredHolder))
+	out.LeaseID = (*int64)(unsafe.Pointer(in.LeaseID))
 	return nil
 }
 
@@ -143,6 +144,7 @@ func autoConvert_coordination_LeaseSpec_To_v1_LeaseSpec(in *coordination.LeaseSp
 	out.LeaseTransitions = (*int32)(unsafe.Pointer(in.LeaseTransitions))
 	out.Strategy = (*coordinationv1.CoordinatedLeaseStrategy)(unsafe.Pointer(in.Strategy))
 	out.PreferredHolder = (*string)(unsafe.Pointer(in.PreferredHolder))
+	out.LeaseID = (*int64)(unsafe.Pointer(in.LeaseID))
 	return nil
 }
 
