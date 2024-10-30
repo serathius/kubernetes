@@ -815,6 +815,9 @@ EOF
     if [[ -n "${GVISOR_METRIC_SERVER:-}" ]]; then
       echo "  metric-server = \"${GVISOR_METRIC_SERVER}\"" >> "${shim_config_path}"
     fi
+    if [[ -n "${GVISOR_HOST_SETTINGS:-}" ]]; then
+      echo "  host-settings = \"${GVISOR_HOST_SETTINGS}\"" >> "${shim_config_path}"
+    fi
   fi
 
   if [[ "${gvisor_platform}" == "xemu" ]]; then
