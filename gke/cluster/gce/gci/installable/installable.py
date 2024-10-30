@@ -14,8 +14,8 @@
 
 """Library for processing installables.
 
-This module is for parsing 'installable' components, that is software
-that is downloaded and installed at boot node boot time or preload time.
+This module is for parsing 'installable' components, that is software/files
+that are downloaded and installed at boot node boot time or preload time.
 This is intended to work with internal GKE definitions for EVE, which
 will manage installable versions internally. The module parses those
 definitions and processes them to download and install the proper versions
@@ -28,12 +28,12 @@ Installables can be of two types:
 """
 
 import argparse
-import ast
 import hashlib
 import json
 import logging
 import os
 import re
+import shlex
 import subprocess
 import sys
 from typing import Any
@@ -80,12 +80,12 @@ def str_to_bool(v):
 
 
 parser.add_argument(
-  '--print-url',
+  '--run',
   help=(
-    '''If true, print installable's URL and exit.'''
+    '''If true, call the run method.'''
   ),
   default=False,
-  action='store_true',
+  type=str_to_bool,
 )
 
 
@@ -111,6 +111,23 @@ parser.add_argument(
   type=str,
 )
 
+class InvalidInstallableError(Exception):
+  """Error marking invalid installables."""
+
+class GetCredentialError(Exception):
+  """Error marking when we fail to get credentials."""
+
+class DownloadError(Exception):
+  """Error marking when a download fails."""
+
+class CtrError(Exception):
+  """Error when calls to 'ctr' fail."""
+
+class PreloadError(Exception):
+  """Error to mark preload errors."""
+
+class GetCredentialError(Exception):
+  """Error to mark failure to get credentials"""
 
 def get_gce_credentials() -> str:
   """get_gce_credentials returns the credentials by querying the metadata server."""
@@ -126,33 +143,39 @@ def get_gce_credentials() -> str:
   ) as http:
     response = http.request('GET', service_account_url, headers={'Metadata-Flavor': 'Google'})
     if response.status != 200:
-      raise IOError(f'Failed to get credentials: status: {response.status} reason: {response.reason}')
+      raise GetCredentialError(f'Failed to get credentials: status: {response.status} reason: {response.reason}')
     data = response.data.decode('utf-8')
     return json.loads(data)['access_token']
 
 class Ctr:
   """Ctr is a wrapper around the container binary. It is used for faking in tests."""
   def download(self, url: str) -> subprocess.CompletedProcess:
-    cmd = f'ctr -n k8s.io image pull --user="oauth2accesstoken:{get_gce_credentials()}" {url}'
+    cmd = shlex.split(f'ctr -n k8s.io image pull --user="oauth2accesstoken:{get_gce_credentials()}" {url}')
     return subprocess.run(
       args=cmd,
-      shell=True,
       capture_output=True,
     )
 
   def list_images(self) -> subprocess.CompletedProcess:
-    cmd = 'ctr -n k8s.io images list'
+    cmd = shlex.split('ctr -n k8s.io images list')
     return subprocess.run(
       args=cmd,
-      shell=True,
+      capture_output=True,
+    )
+
+  def run(self, container_name: str, url: str, ctr_args: list, container_args: list) -> subprocess.CompletedProcess:
+    ctr_flags = shlex.join(ctr_args)
+    cont_args = shlex.join(container_args)
+    cmd = shlex.split(f'ctr -n k8s.io run --rm {ctr_flags} {url} {container_name} {cont_args}')
+    return subprocess.run(
+      args=cmd,
       capture_output=True,
     )
 
   def delete(self, url: str):
-    cmd = f'ctr -n k8s.io images delete {url}'
+    cmd = shlex.split(f'ctr -n k8s.io images delete {url}')
     subprocess.run(
       args=cmd,
-      shell=True,
       check=True,
       stdout=subprocess.PIPE,
       stderr=subprocess.PIPE,
@@ -166,10 +189,10 @@ class Installable:
 
   def __init__(self, installable: Any, args: argparse.Namespace):
     if installable['metadata']['name'] == '':
-      raise ValueError('Name must not be omitted.')
+      raise InvalidInstallableError('Name must not be omitted.')
     for f in ['remoteURL', 'digestAlgo', 'digest']:
       if f not in installable or installable[f] == "":
-        raise ValueError(f'Requred field "{f}" is omitted or emtpy')
+        raise InvalidInstallableError(f'Requred field "{f}" is omitted or emtpy')
     self.content = installable
 
   def __enter__(self):
@@ -179,6 +202,9 @@ class Installable:
     return
 
   def download(self):
+    raise NotImplementedError()
+
+  def run(self):
     raise NotImplementedError()
 
   def is_preloaded(self):
@@ -208,7 +234,7 @@ class Container(Installable):
     out = ctr.download(self.get_url())
     if out.returncode != 0:
       msg = out.stderr.strip()
-      raise ValueError(f'Failed to download container: return_code: {out.returncode} msg: {msg}')
+      raise DownloadError(f'Failed to download container: return_code: {out.returncode} msg: {msg}')
     LOGGER.debug(f'Download result:')
     for l in out.stdout.splitlines():
       LOGGER.debug(l)
@@ -218,7 +244,7 @@ class Container(Installable):
     out = ctr.list_images()
     if out.returncode != 0:
       err = out.stderr.strip()
-      raise ValueError(f'Failed to run ctr: exit_code: {out.returncode} error: {err}')
+      raise CtrError(f'Failed to run ctr: exit_code: {out.returncode} error: {err}')
 
     url = self.get_url()
     num_images = len(out.stdout.splitlines()) - 1
@@ -234,6 +260,16 @@ class Container(Installable):
         self.digest_algo(),
         self.digest(),
     )
+
+  def run(self):
+    ctr_args = self.content.get('ctrArgs', [])
+    container_args = self.content.get('containerArgs', [])
+    out = ctr.run(self.name(), self.get_url(), ctr_args=ctr_args,  container_args=container_args)
+    if out.returncode != 0:
+      msg = out.stderr.strip()
+      raise CtrError(f'Failed to run container: return_code: {out.returncode} msg: {msg}')
+    LOGGER.debug(out.stdout)
+    LOGGER.info(f'Running container {self.get_url()} succeeded.')
 
 class AppPkgHandler:
   '''AppPkgHandler wraps methods that need to be faked for AppPkg unit tests.'''
@@ -260,14 +296,14 @@ class AppPkgHandler:
     func = getattr(hashlib, algo.lower())
     LOGGER.debug(f'Using hash algo: {func.__name__}')
     if func is None:
-      raise ValueError('Unknown digest algo: %s' % algo)
+      raise InvalidInstallableError('Unknown digest algo: %s' % algo)
     # we can choose different algos here as hashlib supports several.
     got_digest = ''
     with open(file_path, mode='rb') as f:
       got_digest = func(f.read()).hexdigest()
       LOGGER.debug(f'checking digest: got: {got_digest} want: {digest}')
       if got_digest != digest:
-        raise ValueError(f'mismatch digest: got: {got_digest} want: {digest}')
+        raise DownloadError(f'mismatch digest: got: {got_digest} want: {digest}')
 
 handler = AppPkgHandler()
 
@@ -286,10 +322,10 @@ class AppPkg(Installable):
     # The preload file marks if an apppkg has been preloaded yet. This is usually
     # /home/kubernetes/preload_info with entries of the form {name}:{checksum}.
     if not os.path.exists(args.preload_file):
-      raise ValueError(f'Invalid preload file: "{args.preload_file}".')
+      raise argparse.ArgumentTypeError(f'Invalid preload file: "{args.preload_file}".')
     self.preload_file = args.preload_file
     if not args.output:
-      raise ValueError(f'Output file path is required for AppPkg installables.')
+      raise argparse.ArgumentTypeError(f'Output file path is required for AppPkg installables.')
     self.output_file = args.output
 
   def __enter__(self):
@@ -309,7 +345,7 @@ class AppPkg(Installable):
     try:
       handler.checksum(file_path=self.output_file, algo=self.digest_algo(), digest=self.digest())
     except ValueError as e:
-      raise ValueError(f'Error validating package {self.name()}: {e=}')
+      raise DownloadError(f'Error validating package {self.name()}: {e=}')
     self._record_preload_info()
 
   def is_preloaded(self)->bool:
@@ -321,6 +357,9 @@ class AppPkg(Installable):
       digest = re.escape(self.digest())
     regex = re.compile(fr'{name},{digest}')
     return True if regex.search(content) else False
+
+  def run(self):
+    LOGGER.info(f'AppPkg types do not have a run method. Returning.')
 
   def _record_preload_info(self):
     """records the preload info similar to the 'record-preload-info' function in configure.sh"""
@@ -334,29 +373,28 @@ class AppPkg(Installable):
 def parse_installable(args: argparse.Namespace) -> Installable:
   """parse_installable parses the given json installable returns the correct class based on kind"""
   if not args.installable:
-    raise ValueError(f'Cannot pass an empty installable!')
+    raise InvalidInstallableError(f'Cannot pass an empty installable!')
   inst = json.loads(args.installable)
   if inst['apiVersion'] != 'installable.gke.io/v1':
-    raise ValueError('Unknown api version: %s' % inst['apiVersion'])
+    raise InvalidInstallableError('Unknown api version: %s' % inst['apiVersion'])
   kind = inst['kind'].lower()
   if kind == 'container':
     return Container(inst, args)
   if kind == 'apppkg':
     return AppPkg(inst, args)
-  raise ValueError(f'Unknown installable type: {kind}')
+  raise InvalidInstallableError(f'Unknown installable type: {kind}')
 
 def process_installable(args: argparse.Namespace):
   """process_installable validates and downloads the given installable"""
   with parse_installable(args) as inst:
-    if args.print_url:
-      print(inst.get_url())
-      exit(0)
     LOGGER.info(f'Processing installable: "{inst.name()}": url: "{inst.get_url()}"')
     if not args.no_download and not inst.is_preloaded():
       LOGGER.info(f'Installable not preloaded...downloading')
       inst.download()
     if not inst.is_preloaded():
-      raise ValueError(f'Installable {inst.name()} not preloaded.')
+      raise PreloadError(f'Installable {inst.name()} not preloaded.')
+    if args.run:
+      inst.run()
 
 if __name__ == '__main__':
   args = parser.parse_args(sys.argv[1:])
