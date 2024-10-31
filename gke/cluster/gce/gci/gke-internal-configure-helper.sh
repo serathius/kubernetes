@@ -910,6 +910,8 @@ function gke-configure-npd-custom-plugins {
   if [[ "${ENABLE_BEST_EFFORT_NODE_REBOOT:-}" == "true" ]]; then
     GKE_NPD_CUSTOM_PLUGINS_CONFIG+=",${config_dir}/node-reboot-monitor.json"
   fi
+
+  GKE_NPD_CUSTOM_PLUGINS_CONFIG+=",${config_dir}/swap-monitor.json"
 }
 
 # Set up GCFS daemons.
