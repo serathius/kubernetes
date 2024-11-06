@@ -47,21 +47,24 @@ function generate_namespaced() {
   sleep 60
 
   msg "Copying generate_namespaced.py script to ${vm_name}"
-  gcloud compute scp "${git_root}/gke/cluster/gce/gci/systl-internal/update-namespaced-sysctls/generate_namespaced.py" "${vm_name}:/tmp" \
+  gcloud compute scp "${git_root}/gke/cluster/gce/gci/sysctl-internal/update-namespaced-sysctls/generate_namespaced.py" "${vm_name}:/tmp" \
     --project="${project}" \
-    --zone="${zone}"
+    --zone="${zone}" \
+    --scp-flag "-o ProxyCommand=corp-ssh-helper %h %p"
 
   msg "Running generate_namespaced.py script on ${vm_name}"
   gcloud compute ssh "${vm_name}" \
     --project="${project}" \
     --zone="${zone}" \
-    --command="python3 /tmp/generate_namespaced.py --out-file=/tmp/namespaced_sysctsl.yaml"
+    --command="python3 /tmp/generate_namespaced.py --out-file=/tmp/namespaced_sysctsl.yaml" \
+    -- -o ProxyCommand='corp-ssh-helper %h %p'
 
   local local_out_path="/tmp/namespaced_sysctls_${vm_name}.yaml"
   msg "Copying generate_namespaced.py output to ${local_out_path}"
   gcloud compute scp "${vm_name}:/tmp/namespaced_sysctsl.yaml" "${local_out_path}" \
     --project="${project}" \
-    --zone="${zone}"
+    --zone="${zone}" \
+    --scp-flag "-o ProxyCommand=corp-ssh-helper %h %p"
 
   msg "Deleting ${vm_name}"
   gcloud compute instances delete "${vm_name}" \

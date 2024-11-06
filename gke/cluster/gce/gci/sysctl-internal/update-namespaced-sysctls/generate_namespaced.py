@@ -29,6 +29,7 @@ DENYLIST = set([
     'net.ipv6.ip6frag_high_thresh',  # flaky: sometimes failed to set.
     'net.netfilter.nf_conntrack_count',  # ignore status value.
     'net.netfilter.nf_conntrack_frag6_high_thresh',  # flaky: sometimes failed to set.
+    'net.netfilter.nf_hooks_lwtunnel', # Device or resource busy
     'net.ipv6.conf.all.stable_secret',
     'net.ipv6.conf.default.stable_secret',
     'net.ipv6.conf.eth0.stable_secret',
@@ -50,6 +51,8 @@ DENYLIST_PREFIX = set([
 ])
 
 SPECIAL_SYSCTLS = {
+    'net.ipv4.tcp_allowed_congestion_control': ('reno', 'cubic'),
+    'net.ipv4.tcp_available_congestion_control': ('reno', 'cubic'),
     'net.ipv4.tcp_congestion_control': ('htcp', 'cubic'),
     'net.ipv4.tcp_fastopen_key': ('00000000-00000000-00000000-00000000',
                                   '00000000-00000000-00000000-00000001'),
