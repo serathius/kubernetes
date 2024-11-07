@@ -1,0 +1,23 @@
+# See: https://cos.googlesource.com/cos/tools/+/refs/heads/master/src/cmd/cos_customizer/
+steps:
+- name: 'gcr.io/cos-cloud/cos-customizer'
+  args: ['start-image-build',
+    '--image-family=${_COS_FAMILY_}',
+    '--image-project=cos-cloud',
+    '--gcs-bucket=${PROJECT_ID}_cloudbuild',
+    '--gcs-workdir=image-build-${BUILD_ID}',
+  ]
+- name: 'gcr.io/cos-cloud/cos-customizer'
+  args: ['run-script',
+         '-script=installable_test.sh']
+- name: 'gcr.io/cos-cloud/cos-customizer'
+  args: ['finish-image-build',
+         '-zone=us-west1-b',
+         '-project=$PROJECT_ID',
+         '-image-suffix=${BUILD_ID}',
+         '-image-family=${_OUTPUT_IMAGE_FAMILY_}',
+         '-deprecate-old-images',
+         '-old-image-ttl=5',
+         '-enable-cleanup',
+         '-image-project=$PROJECT_ID']
+timeout: '1200s'
