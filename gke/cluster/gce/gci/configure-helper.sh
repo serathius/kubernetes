@@ -1387,10 +1387,34 @@ function create-kubeconfig {
   local path="/etc/srv/kubernetes/${component}/kubeconfig"
   mkdir -p "/etc/srv/kubernetes/${component}"
 
-  if [[ -e "${KUBE_HOME}/bin/gke-internal-configure-helper.sh" ]]; then
-    gke-internal-create-kubeconfig "${component}" "${token}" "${path}"
+  if [[ "${KUBE_APISERVER_TLS_VERIFY_ENABLED:-}" == "true" ]]; then
+    if [[ -z "${KUBE_APISERVER_INTERNAL_ADDRESS}" ]]; then
+      echo "Error: TLS verification is enabled, but KUBE_APISERVER_INTERNAL_ADDRESS is missing in env var."
+      exit 1
+    fi
+    echo "Creating TLS verification enabled kubeconfig file for component ${component}"
+    cat <<EOF >"${path}"
+apiVersion: v1
+kind: Config
+users:
+- name: ${component}
+  user:
+    token: ${token}
+clusters:
+- name: local
+  cluster:
+    certificate-authority-data: ${CA_CERT}
+    server: https://${KUBE_APISERVER_INTERNAL_ADDRESS}:443
+    disable-compression: true
+contexts:
+- context:
+    cluster: local
+    user: ${component}
+  name: ${component}
+current-context: ${component}
+EOF
   else
-    echo "Creating kubeconfig file for component ${component}"
+    echo "Creating TLS verification disabled kubeconfig file for component ${component}"
     cat <<EOF >"${path}"
 apiVersion: v1
 kind: Config
@@ -1403,6 +1427,7 @@ clusters:
   cluster:
     insecure-skip-tls-verify: true
     server: https://localhost:443
+    disable-compression: true
 contexts:
 - context:
     cluster: local
@@ -2658,14 +2683,10 @@ function setup-kubelet-dir {
     mount -t tmpfs tmpfs /var/lib/kubelet/pki
 }
 
-# Override for GKE custom master setup scripts (no-op outside of GKE).
+# Override for GKE custom master setup scripts.
 function gke-master-start {
   if [[ -e "${KUBE_HOME}/bin/gke-internal-configure-helper.sh" ]]; then
     gke-internal-master-start
- elif [[ -n "${KUBE_BEARER_TOKEN:-}" ]]; then
-   echo "setting up local admin kubeconfig"
-   create-kubeconfig "local-admin" "${KUBE_BEARER_TOKEN}"
-   echo "export KUBECONFIG=/etc/srv/kubernetes/local-admin/kubeconfig" > /etc/profile.d/kubeconfig.sh
   fi
 }
 

@@ -17,62 +17,6 @@ function is-ubuntu {
 }
 # --- END ---
 
-# Create TLS enabled or disabled kubeconfig files for component static pods.
-function gke-internal-create-kubeconfig {
-  local component=$1
-  local token=$2
-  local path=$3
-  if [[ "${KUBE_APISERVER_TLS_VERIFY_ENABLED:-}" == "true" ]]; then
-    if [[ -z "${KUBE_APISERVER_INTERNAL_ADDRESS}" ]]; then
-      echo "Error: TLS verification is enabled, but KUBE_APISERVER_INTERNAL_ADDRESS is missing in env var."
-      exit 1
-    fi
-    echo "Creating TLS verification enabled kubeconfig file for component ${component}"
-    cat <<EOF >${path}
-apiVersion: v1
-kind: Config
-users:
-- name: ${component}
-  user:
-    token: ${token}
-clusters:
-- name: local
-  cluster:
-    certificate-authority-data: ${CA_CERT}
-    server: https://${KUBE_APISERVER_INTERNAL_ADDRESS}:443
-    disable-compression: true
-contexts:
-- context:
-    cluster: local
-    user: ${component}
-  name: ${component}
-current-context: ${component}
-EOF
-  else
-    echo "Creating TLS verification disabled kubeconfig file for component ${component}"
-    cat <<EOF >${path}
-apiVersion: v1
-kind: Config
-users:
-- name: ${component}
-  user:
-    token: ${token}
-clusters:
-- name: local
-  cluster:
-    insecure-skip-tls-verify: true
-    server: https://localhost:443
-    disable-compression: true
-contexts:
-- context:
-    cluster: local
-    user: ${component}
-  name: ${component}
-current-context: ${component}
-EOF
-  fi
-}
-
 # Returns TLS SNI param for kube-apiserver.
 function gke-kube-apiserver-internal-sni-param {
   if [[ "${KUBE_APISERVER_TLS_VERIFY_ENABLED:-}" == "true" ]]; then
