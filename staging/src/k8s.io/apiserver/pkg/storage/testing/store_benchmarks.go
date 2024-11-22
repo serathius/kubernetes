@@ -69,6 +69,36 @@ func RunBenchmarkStoreListCreate(ctx context.Context, b *testing.B, store storag
 	b.ReportMetric(float64(objectCount.Load())/float64(b.N), "objects/op")
 }
 
+
+func RunBenchmarkStorePatch(ctx context.Context, b *testing.B, store storage.Interface, match metav1.ResourceVersionMatch) {
+	pods := []*example.Pod{}
+	for i := 0; i < b.N; i++ {
+		name := rand.String(100)
+		pod := &example.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: name}}
+		podOut := &example.Pod{}
+		err := store.Create(ctx, computePodKey(pod), pod, podOut, 0)
+		if err != nil {
+			panic(fmt.Sprintf("Unexpected error %s", err))
+		}
+		pods = append(pods, podOut)
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		pod := pods[i]
+		podOut := &example.Pod{}
+		err := store.GuaranteedUpdate(ctx, computePodKey(pod), podOut, false, &storage.Preconditions{
+			UID:             &pod.UID,
+			ResourceVersion: &pod.ResourceVersion,
+		}, func(input runtime.Object, res storage.ResponseMeta) (output runtime.Object, ttl *uint64, err error) {
+			
+			return nil, nil, nil
+		}, nil)
+		if err != nil {
+			panic(fmt.Sprintf("Unexpected error %s", err))
+		}
+	}
+}
+
 func RunBenchmarkStoreList(ctx context.Context, b *testing.B, store storage.Interface) {
 	namespaceCount := 100
 	podPerNamespaceCount := 100

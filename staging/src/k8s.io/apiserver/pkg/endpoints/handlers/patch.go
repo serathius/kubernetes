@@ -25,6 +25,7 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 	jsonpatch "gopkg.in/evanphx/json-patch.v4"
+	"k8s.io/klog/v2"
 	kjson "sigs.k8s.io/json"
 
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -616,6 +617,7 @@ func (p *patcher) applyAdmission(ctx context.Context, patchedObject runtime.Obje
 
 // patchResource divides PatchResource for easier unit testing
 func (p *patcher) patchResource(ctx context.Context, scope *RequestScope) (runtime.Object, bool, error) {
+	klog.Infof("Patch %s %s", p.patchType, p.patchBytes)
 	p.namespace = request.NamespaceValue(ctx)
 	switch p.patchType {
 	case types.JSONPatchType, types.MergePatchType:
@@ -653,6 +655,7 @@ func (p *patcher) patchResource(ctx context.Context, scope *RequestScope) (runti
 		dedupOwnerReferencesAndAddWarning(obj, ctx, true)
 		return obj, nil
 	}
+	//klog.Infof("Patch scope %+v", scope.)
 
 	transformers := []rest.TransformFunc{p.applyPatch, p.applyAdmission, dedupOwnerReferencesTransformer}
 
