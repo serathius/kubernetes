@@ -9,6 +9,13 @@ set -o pipefail
 
 SCRIPT_DIR="$(dirname "$(realpath "$0")")"
 
+# If explicitly requested, trigger a release build
+if [[ "${_FORCE_RELEASE_BUILD:-}" == "true" ]]; then
+  "${SCRIPT_DIR}"/make_louhi_prod.sh
+  exit 0
+fi
+
+# Otherwise, auto-detect release build branches
 case "${_LOUHI_BRANCH_NAME}" in
   release-*-gke.*)
     "${SCRIPT_DIR}"/make_louhi_prod.sh

@@ -35,4 +35,5 @@ louhi_hook
 gke_build_entrypoint \
   GKE_BUILD_CONFIG="${SCRIPT_DIR}/config/common.yaml,${SCRIPT_DIR}/config/louhi_prod.yaml" \
   ASSERT_PROD_VERSION=1 \
+  INJECT_DEV_VERSION_MARKER=0 \
   "$@"
