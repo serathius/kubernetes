@@ -920,7 +920,7 @@ function gke-configure-npd-custom-plugins {
     GKE_NPD_CUSTOM_PLUGINS_CONFIG+=",${config_dir}/node-reboot-monitor.json"
   fi
 
-  GKE_NPD_CUSTOM_PLUGINS_CONFIG+=",${config_dir}/swap-monitor.json"
+  GKE_NPD_CUSTOM_PLUGINS_CONFIG+=",${config_dir}/swap-monitor.json,${config_dir}/fs-readonly-monitor.json"
 }
 
 # Set up GCFS daemons.
