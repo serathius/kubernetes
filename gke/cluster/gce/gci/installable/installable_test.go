@@ -14,7 +14,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package gci
+// Package installable_test holds unit tests for the installable script. The tests use fakes
+// to call key workflows to allow for the unit test jobs to be hermetic. This can also be
+// run on local machines over slower integration tests which require COS machines.
+package installable_test
 
 import (
 	"fmt"
@@ -24,7 +27,7 @@ import (
 )
 
 const (
-	testPath = "installable/installable_test.py"
+	testPath = "installable_test.py"
 )
 
 func TestInstallableTests(t *testing.T) {

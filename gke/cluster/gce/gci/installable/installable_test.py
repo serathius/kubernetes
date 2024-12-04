@@ -496,6 +496,85 @@ class InstallableTests(unittest.TestCase):
         d = inst.dir
     self.assertFalse(os.path.exists(d))
 
+class CtrTests(unittest.TestCase):
+  """
+  CtrTests model supported arguments for installable container types.
+
+  If you are adding support for a new argument for installable container types, you should add a
+  test here. The cri interface that ctr interacts with is unstable, so we want to model required
+  arguments here. In general, you should only need to mount host directories in the container
+  and pass environment variables. Container installables should not download anything, just dump
+  binaries and write configuration files on disk.
+  """
+
+  # We need a container image that has bash to run these test. This image rarely changes.
+  bash_image = 'gcr.io/kubernetes-e2e-test-images/busybox-user@sha256:6f88e6ff776a1fb179459b65aae5c4c73577f87cc4413de1f3d70fcb3a1ecb5c'
+
+  def setUp(self):
+    super().setUp()
+    if is_fake():
+      self.skipTest('CTR tests are not hermetic and require containerd.')
+    installable.ctr.download(self.bash_image)
+
+  def tearDown(self):
+    super().setUp()
+    if not is_fake():
+      installable.ctr.delete(self.bash_image)
+
+  def test_ctr_with_mount(self):
+    """Tests that a ctr with the root directory mounted allows us to read from and write to it."""
+    host_content = 'file on the host'
+    guest_content = ' written by guest'
+    host_file = ''
+    with tempfile.NamedTemporaryFile(mode='w+', delete=False) as t:
+      host_file = t.name
+      t.write(host_content)
+
+    os.chmod(path=host_file, mode=0o666)
+
+    result = installable.ctr.run(
+      container_name='mount_container',
+      url=self.bash_image,
+      ctr_args=[
+        '--privileged',
+        '--mount',
+        'type=bind,src=/,dst=/host,options=rbind',
+        ],
+      container_args=[
+        '/bin/sh',
+        '-c',
+        f'cat /host{host_file} && echo "{guest_content}" >> /host{host_file}'
+      ],
+    )
+
+    self.assertEqual(result.returncode, 0, msg=result)
+    self.assertEqual(host_content, result.stdout.decode('utf-8'))
+
+    with open(host_file) as f:
+      expected = host_content + guest_content
+      self.assertEqual(f.read(len(expected)), expected)
+    os.remove(host_file)
+
+
+  def test_ctr_with_env_var(self):
+    """Tests that a ctr passes environment variables."""
+    env_var = 'MY_ENV'
+    env_var_val = 'MY_VAL'
+    result = installable.ctr.run(
+      container_name='mount_container',
+      url=self.bash_image,
+      ctr_args=[
+        '--env', f'{env_var}={env_var_val}'
+        ],
+      container_args=[
+        '/bin/sh',
+        '-c',
+        f'echo ${env_var}'
+      ],
+    )
+    self.assertEqual(result.returncode, 0, msg=result)
+    self.assertEqual(env_var_val + '\n', result.stdout.decode('utf-8'))
+
 fake_creds = "fake_creds"
 
 def is_fake():
