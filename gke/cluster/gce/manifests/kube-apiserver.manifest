@@ -81,6 +81,7 @@
         {{audit_policy_config_mount}}
         {{audit_webhook_config_mount}}
         {{webhook_exec_auth_plugin_mount}}
+        {{token_signing_plugin_socket_mount}}
         {{konnectivity_socket_mount}}
         { "name": "srvkube",
         "mountPath": "/etc/srv/kubernetes",
@@ -124,6 +125,7 @@
   {{audit_policy_config_volume}}
   {{audit_webhook_config_volume}}
   {{webhook_exec_auth_plugin_volume}}
+  {{token_signing_plugin_socket_volume}}
   {{konnectivity_socket_volume}}
   { "name": "srvkube",
     "hostPath": {

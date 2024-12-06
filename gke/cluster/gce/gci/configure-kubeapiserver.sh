@@ -108,9 +108,6 @@ function start-kube-apiserver {
     params+=" --kubelet-client-certificate=${APISERVER_CLIENT_CERT_PATH}"
     params+=" --kubelet-client-key=${APISERVER_CLIENT_KEY_PATH}"
   fi
-  if [[ -n "${SERVICEACCOUNT_CERT_PATH:-}" ]]; then
-    params+=" --service-account-key-file=${SERVICEACCOUNT_CERT_PATH}"
-  fi
   local known_tokens_file='/etc/srv/kubernetes/known_tokens.csv'
   if [[ -f "${known_tokens_file}" ]]; then
     chown "${KUBE_API_SERVER_RUNASUSER:-0}":"${KUBE_API_SERVER_RUNASGROUP:-0}" "${known_tokens_file}"
@@ -136,9 +133,37 @@ function start-kube-apiserver {
   if [[ -n "${SERVICE_CLUSTER_IP_RANGE:-}" ]]; then
     params+=" --service-cluster-ip-range=${SERVICE_CLUSTER_IP_RANGE}"
   fi
+
+  local token_signing_plugin_socket_mount=""
+  local token_signing_plugin_socket_volume=""
+  local feature_gates_local="${FEATURE_GATES:-}"
+  if [[ -n "${USE_GKE_EXTERNAL_TOKEN_SIGNING:-}" ]]; then
+    # External JWT token signing currently (1.32) requires the feature gate
+    # set to true.
+    if [[ -n "${feature_gates_local:-}" ]]; then
+      feature_gates_local+=",ExternalServiceAccountTokenSigner=true"
+    else
+      feature_gates_local="ExternalServiceAccountTokenSigner=true"
+    fi
+    # External token signing is a 1.32+ feature that allows kube-apiserver to
+    # call out to gRPC plugin when signing and verifying service account
+    # tokens. We use this to support storing the service account signing key
+    # in Cloud KMS.
+    #
+    # "@" denotes that we are using the abstract socket namespace, so the socket
+    # won't actually appear any place in the filesystem.  The plugin enforces an
+    # allowlist of UIDs that can connect to it.
+    params+=' --service-account-signing-endpoint=\@gke-identity-envelope.sock'
+    token_signing_plugin_socket_mount='{"name": "token-signing-plugin-socket", "mountPath": "/var/run/gke-identity-envelope/"},'
+    token_signing_plugin_socket_volume='{"name": "token-signing-plugin-socket", "hostPath": {"path": "/var/run/gke-identity-envelope/", "type": "DirectoryOrCreate"}},'
+  else
+    if [[ -n "${SERVICEACCOUNT_CERT_PATH:-}" ]]; then
+      params+=" --service-account-key-file=${SERVICEACCOUNT_CERT_PATH}"
+    fi
+    params+=" --service-account-signing-key-file=${SERVICEACCOUNT_KEY_PATH}"
+  fi
   params+=" --service-account-issuer=${SERVICEACCOUNT_ISSUER}"
   params+=" --api-audiences=${SERVICEACCOUNT_ISSUER}"
-  params+=" --service-account-signing-key-file=${SERVICEACCOUNT_KEY_PATH}"
 
   local audit_policy_config_mount=""
   local audit_policy_config_volume=""
@@ -259,8 +284,8 @@ function start-kube-apiserver {
   if [[ -n "${RUNTIME_CONFIG:-}" ]]; then
     params+=" --runtime-config=${RUNTIME_CONFIG}"
   fi
-  if [[ -n "${FEATURE_GATES:-}" ]]; then
-    params+=" --feature-gates=${FEATURE_GATES}"
+  if [[ -n "${feature_gates_local:-}" ]]; then
+    params+=" --feature-gates=${feature_gates_local}"
   fi
   if [[ -n "${KUBE_EMULATED_VERSION:-}" ]]; then
     params+=" --emulated-version=kube=${KUBE_EMULATED_VERSION}"
@@ -460,6 +485,8 @@ EOF
   sed -i -e "s@{{audit_webhook_config_volume}}@${audit_webhook_config_volume}@g" "${src_file}"
   sed -i -e "s@{{webhook_exec_auth_plugin_mount}}@${webhook_exec_auth_plugin_mount}@g" "${src_file}"
   sed -i -e "s@{{webhook_exec_auth_plugin_volume}}@${webhook_exec_auth_plugin_volume}@g" "${src_file}"
+  sed -i -e "s@{{token_signing_plugin_socket_mount}}@${token_signing_plugin_socket_mount}@g" "${src_file}"
+  sed -i -e "s@{{token_signing_plugin_socket_volume}}@${token_signing_plugin_socket_volume}@g" "${src_file}"
   sed -i -e "s@{{konnectivity_socket_mount}}@${default_konnectivity_socket_mnt}@g" "${src_file}"
   sed -i -e "s@{{konnectivity_socket_volume}}@${default_konnectivity_socket_vol}@g" "${src_file}"
   sed -i -e "s@{{healthcheck_ip}}@${healthcheck_ip}@g" "${src_file}"
