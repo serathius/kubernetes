@@ -17,8 +17,13 @@ limitations under the License.
 package json
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/conversion"
+	"reflect"
 	"strconv"
 
 	kjson "sigs.k8s.io/json"
@@ -242,8 +247,86 @@ func (s *Serializer) doEncode(obj runtime.Object, w io.Writer) error {
 		_, err = w.Write(data)
 		return err
 	}
-	encoder := json.NewEncoder(w)
-	return encoder.Encode(obj)
+	typeMeta, listMeta, items, err := getListMeta(obj)
+	if err == nil {
+		buf := bytes.Buffer{}
+		_, err := buf.WriteString(fmt.Sprintf(`{"kind":%q,"apiVersion":%q`,
+			typeMeta.Kind, typeMeta.APIVersion))
+		if err != nil {
+			return err
+		}
+		if listMeta.ResourceVersion != "" || listMeta.Continue != "" || listMeta.RemainingItemCount != nil {
+			_, err = buf.WriteString(`,"metadata":`)
+			if err != nil {
+				return err
+			}
+			data, err := json.Marshal(listMeta)
+			if err != nil {
+				return err
+			}
+			_, err = buf.Write(data)
+			if err != nil {
+				return err
+			}
+		}
+		_, err = buf.Write([]byte(`,"items":[`))
+		if err != nil {
+			return err
+		}
+		for i := 0; i < items.Len(); i++ {
+			data, err := json.Marshal(items.Index(i).Interface())
+			if err != nil {
+				return err
+			}
+			_, err = buf.Write(data)
+			if err != nil {
+				return err
+			}
+			if i != items.Len()-1 {
+				err = buf.WriteByte(',')
+				if err != nil {
+					return err
+				}
+			}
+			_, err = io.Copy(w, &buf)
+			if err != nil {
+				return err
+			}
+			buf.Reset()
+		}
+		_, err = buf.WriteString("]}\n")
+		_, err = io.Copy(w, &buf)
+		if err != nil {
+			return err
+		}
+		return err
+	} else {
+		encoder := json.NewEncoder(w)
+		return encoder.Encode(obj)
+	}
+}
+
+func getListMeta(obj runtime.Object) (typeMeta v1.TypeMeta, list v1.ListMeta, items reflect.Value, err error) {
+	v, err := conversion.EnforcePtr(obj)
+	if err != nil {
+		return typeMeta, list, items, err
+	}
+	listField := v.FieldByName("ListMeta")
+	if !listField.IsValid() {
+		return typeMeta, list, items, fmt.Errorf("expected ListMeta")
+	}
+	list = listField.Interface().(v1.ListMeta)
+	typeField := v.FieldByName("TypeMeta")
+	if !listField.IsValid() {
+		return typeMeta, list, items, fmt.Errorf("expected TypeMeta")
+	}
+	typeMeta = typeField.Interface().(v1.TypeMeta)
+
+	items = v.FieldByName("Items")
+	if !items.IsValid() {
+		return typeMeta, list, items, fmt.Errorf("expected Items")
+	}
+	return typeMeta, list, items, nil
 }
 
 // IsStrict indicates whether the serializer
