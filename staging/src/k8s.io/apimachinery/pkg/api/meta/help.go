@@ -22,6 +22,7 @@ import (
 	"reflect"
 	"sync"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/conversion"
 	"k8s.io/apimachinery/pkg/runtime"
 )
@@ -72,6 +73,29 @@ var (
 	errExpectSliceItems = errors.New("Items field must be a slice of objects")
 )
 
+func GetListMeta(list runtime.Object) (metav1.TypeMeta, metav1.ListMeta, []runtime.Object, error) {
+	v, err := conversion.EnforcePtr(list)
+	if err != nil {
+		return metav1.TypeMeta{}, metav1.ListMeta{}, nil,  err
+	}
+	listField := v.FieldByName("ListMeta")
+	if !listField.IsValid() {
+		return metav1.TypeMeta{}, metav1.ListMeta{}, nil, fmt.Errorf("expected ListMeta")
+	}
+	listMeta := listField.Interface().(metav1.ListMeta)
+
+	typeField := v.FieldByName("TypeMeta")
+	if !typeField.IsValid() {
+		return metav1.TypeMeta{}, metav1.ListMeta{}, nil, fmt.Errorf("expected TypeMeta")
+	}
+	typeMeta := typeField.Interface().(metav1.TypeMeta)
+	items, err := extractList(list, false)
+	if err != nil {
+		return metav1.TypeMeta{}, metav1.ListMeta{}, nil, err
+	}
+	return typeMeta, listMeta, items, nil
+}
+
 // GetItemsPtr returns a pointer to the list object's Items member.
 // If 'list' doesn't have an Items member, it's not really a list type
 // and an error will be returned.
@@ -91,7 +115,10 @@ func getItemsPtr(list runtime.Object) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
+	return getItemsField(v)
+}
 
+func getItemsField(v reflect.Value) (interface{}, error) {
 	items := v.FieldByName("Items")
 	if !items.IsValid() {
 		return nil, errExpectFieldItems

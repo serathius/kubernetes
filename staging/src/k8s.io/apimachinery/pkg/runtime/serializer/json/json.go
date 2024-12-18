@@ -18,12 +18,17 @@ package json
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"strconv"
 
+	"k8s.io/apiserver/pkg/features"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	kjson "sigs.k8s.io/json"
 	"sigs.k8s.io/yaml"
 
+	"k8s.io/apimachinery/pkg/api/meta"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/runtime/serializer/recognizer"
@@ -242,8 +247,57 @@ func (s *Serializer) doEncode(obj runtime.Object, w io.Writer) error {
 		_, err = w.Write(data)
 		return err
 	}
+	if utilfeature.DefaultFeatureGate.Enabled(features.StreamingJSONListEncoding) {
+		typeMeta, listMeta, items, err := meta.GetListMeta(obj)
+		if err == nil {
+			return streamingEncodeList(w, typeMeta, listMeta, items)
+		}
+	}
 	encoder := json.NewEncoder(w)
 	return encoder.Encode(obj)
+}
+
+func streamingEncodeList(w io.Writer, typeMeta v1.TypeMeta, listMeta v1.ListMeta, items []runtime.Object) error {
+	_, err := w.Write([]byte(fmt.Sprintf(`{"kind":%q,"apiVersion":%q`, typeMeta.Kind, typeMeta.APIVersion)))
+	if err != nil {
+		return err
+	}
+	if listMeta.ResourceVersion != "" || listMeta.Continue != "" || listMeta.RemainingItemCount != nil {
+		_, err = w.Write([]byte(`,"metadata":`))
+		if err != nil {
+			return err
+		}
+		data, err := json.Marshal(listMeta)
+		if err != nil {
+			return err
+		}
+		_, err = w.Write(data)
+		if err != nil {
+			return err
+		}
+	}
+	_, err = w.Write([]byte(`,"items":[`))
+	if err != nil {
+		return err
+	}
+	for i, item := range items {
+		data, err := json.Marshal(item)
+		if err != nil {
+			return err
+		}
+		_, err = w.Write(data)
+		if err != nil {
+			return err
+		}
+		if i != len(items)-1 {
+			_, err = w.Write([]byte(","))
+			if err != nil {
+				return err
+			}
+		}
+	}
+	_, err = w.Write([]byte("]}\n"))
+	return err
 }
 
 // IsStrict indicates whether the serializer
