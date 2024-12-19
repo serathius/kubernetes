@@ -5,8 +5,8 @@ build-env:
   - "windows/amd64"
 push:
   gcs:
-    to:
-    - gs://kubernetes-release-gke-internal/devel
+    # Don't push any artifacts.
+    to: []
   gcr:
     # Don't push any images.
     repos: []
