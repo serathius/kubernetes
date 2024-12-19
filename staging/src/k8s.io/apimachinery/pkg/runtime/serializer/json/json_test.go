@@ -26,6 +26,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	testapigroupv1 "k8s.io/apimachinery/pkg/apis/testapigroup/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/runtime/serializer/json"
@@ -1037,6 +1038,182 @@ func TestEncode(t *testing.T) {
 				t.Errorf("unexpected error: %v", err)
 			}
 			if diff := cmp.Diff(tc.want, dst.Bytes()); diff != "" {
+				t.Errorf("unexpected output:\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestStreamingListEncode(t *testing.T) {
+	var remainingItems int64 = 1
+	for _, tc := range []struct {
+		name string
+		in   runtime.Object
+	}{
+		{
+			name: "List empty",
+			in:   &testapigroupv1.CarpList{},
+		},
+		{
+			name: "List just kind",
+			in: &testapigroupv1.CarpList{
+				TypeMeta: metav1.TypeMeta{
+					Kind: "List",
+				},
+			},
+		},
+		{
+			name: "List just apiVersion",
+			in: &testapigroupv1.CarpList{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "v1",
+				},
+			},
+		},
+		{
+			name: "List no elements",
+			in: &testapigroupv1.CarpList{
+				TypeMeta: metav1.TypeMeta{
+					Kind:       "List",
+					APIVersion: "v1",
+				},
+				ListMeta: metav1.ListMeta{
+					ResourceVersion: "2345",
+				},
+				Items: []testapigroupv1.Carp{},
+			},
+		},
+		{
+			name: "List one element with continue",
+			in: &testapigroupv1.CarpList{
+				TypeMeta: metav1.TypeMeta{
+					Kind:       "List",
+					APIVersion: "v1",
+				},
+				ListMeta: metav1.ListMeta{
+					ResourceVersion:    "2345",
+					Continue:           "abc",
+					RemainingItemCount: &remainingItems,
+				},
+				Items: []testapigroupv1.Carp{
+					{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Carp"}, ObjectMeta: metav1.ObjectMeta{
+						Name:      "pod",
+						Namespace: "default",
+					}},
+				},
+			},
+		},
+		{
+			name: "List two elements",
+			in: &testapigroupv1.CarpList{
+				TypeMeta: metav1.TypeMeta{
+					Kind:       "List",
+					APIVersion: "v1",
+				},
+				ListMeta: metav1.ListMeta{
+					ResourceVersion: "2345",
+				},
+				Items: []testapigroupv1.Carp{
+					{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Carp"}, ObjectMeta: metav1.ObjectMeta{
+						Name:      "pod",
+						Namespace: "default",
+					}},
+					{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Carp"}, ObjectMeta: metav1.ObjectMeta{
+						Name:      "pod2",
+						Namespace: "default2",
+					}},
+				},
+			},
+		},
+		{
+			name: "UnstructuredList empty",
+			in:   &unstructured.UnstructuredList{},
+		},
+		//{
+		//	name: "UnstructuredList just kind",
+		//	in: &unstructured.UnstructuredList{
+		//		Object: map[string]interface{}{"kind": "List"},
+		//	},
+		//},
+		//{
+		//	name: "UnstructuredList just apiVersion",
+		//	in: &unstructured.UnstructuredList{
+		//		Object: map[string]interface{}{"apiVersion": "v1"},
+		//	},
+		//},
+		{
+			name: "UnstructuredList no elements",
+			in: &unstructured.UnstructuredList{
+				//Object: map[string]interface{}{"kind": "List", "apiVersion": "v1", "metadata": map[string]interface{}{"resourceVersion": "2345"}},
+				Items: []unstructured.Unstructured{},
+			},
+		},
+		{
+			name: "UnstructuredList one element with continue",
+			in: &unstructured.UnstructuredList{
+				//Object: map[string]interface{}{"kind": "List", "apiVersion": "v1", "metadata": map[string]interface{}{
+				//	"resourceVersion":    "2345",
+				//	"continue":           "abc",
+				//	"remainingItemCount": "1",
+				//}},
+				Items: []unstructured.Unstructured{
+					{
+						Object: map[string]interface{}{
+							"apiVersion": "v1",
+							"kind":       "Carp",
+							"metadata": map[string]interface{}{
+								"name":      "pod",
+								"namespace": "default",
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "UnstructuredList two elements",
+			in: &unstructured.UnstructuredList{
+				//Object: map[string]interface{}{"kind": "List", "apiVersion": "v1", "metadata": map[string]interface{}{
+				//	"resourceVersion": "2345",
+				//}},
+				Items: []unstructured.Unstructured{
+					{
+						Object: map[string]interface{}{
+							"apiVersion": "v1",
+							"kind":       "Carp",
+							"metadata": map[string]interface{}{
+								"name":      "pod",
+								"namespace": "default",
+							},
+						},
+					},
+					{
+						Object: map[string]interface{}{
+							"apiVersion": "v1",
+							"kind":       "Carp",
+							"metadata": map[string]interface{}{
+								"name":      "pod2",
+								"namespace": "default",
+							},
+						},
+					},
+				},
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var streamingBuffer bytes.Buffer
+			streamingSerializer := json.NewSerializerWithOptions(json.DefaultMetaFactory, nil, nil, json.SerializerOptions{StreamingCollections: true})
+			if err := streamingSerializer.Encode(tc.in, &streamingBuffer); err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+
+			var normalBuffer bytes.Buffer
+			normalEncoder := json.NewSerializerWithOptions(json.DefaultMetaFactory, nil, nil, json.SerializerOptions{StreamingCollections: false})
+			if err := normalEncoder.Encode(tc.in, &normalBuffer); err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+			if diff := cmp.Diff(normalBuffer.String(), streamingBuffer.String()); diff != "" {
 				t.Errorf("unexpected output:\n%s", diff)
 			}
 		})
