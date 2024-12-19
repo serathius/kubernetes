@@ -19,6 +19,7 @@ package json_test
 import (
 	"bytes"
 	"fmt"
+	v1 "k8s.io/api/core/v1"
 	"reflect"
 	"strings"
 	"testing"
@@ -977,6 +978,7 @@ func (testEncodableMap[K]) DeepCopyObject() runtime.Object {
 }
 
 func TestEncode(t *testing.T) {
+	var remainingItems int64 = 1
 	for _, tc := range []struct {
 		name string
 		in   runtime.Object
@@ -1028,6 +1030,76 @@ func TestEncode(t *testing.T) {
 				metav1.Date(2222, 11, 30, 23, 59, 58, 57, time.FixedZone("", 0)): nil,
 			},
 			want: []byte("{\"2222-11-30T23:59:58.000000057Z\":null,\"2222-11-30T23:59:58.000000057Z\":null}\n"),
+		},
+		{
+			name: "List empty",
+			in: &v1.PodList{
+				TypeMeta: metav1.TypeMeta{
+					Kind:       "List",
+					APIVersion: "v1",
+				},
+				ListMeta: metav1.ListMeta{
+					ResourceVersion:    "2345",
+					Continue:           "",
+					RemainingItemCount: nil,
+				},
+				Items: []v1.Pod{},
+			},
+			want: []byte(`{"kind":"List","apiVersion":"v1","metadata":{"resourceVersion":"2345"},"items":[]}
+`),
+		},
+		{
+			name: "List one element with continue",
+			in: &v1.PodList{
+				TypeMeta: metav1.TypeMeta{
+					Kind:       "List",
+					APIVersion: "v1",
+				},
+				ListMeta: metav1.ListMeta{
+					ResourceVersion:    "2345",
+					Continue:           "abc",
+					RemainingItemCount: &remainingItems,
+				},
+				Items: []v1.Pod{
+					{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Pod"}, ObjectMeta: metav1.ObjectMeta{
+						Name:      "pod",
+						Namespace: "default",
+					}},
+				},
+			},
+			want: []byte(
+				`{"kind":"List","apiVersion":"v1","metadata":{"resourceVersion":"2345","continue":"abc","remainingItemCount":1},"items":[` +
+				`{"kind":"Pod","apiVersion":"v1","metadata":{"name":"pod","namespace":"default","creationTimestamp":null},"spec":{"containers":null},"status":{}}` +
+			  `]}
+`),
+		},
+		{
+			name: "List two elements",
+			in: &v1.PodList{
+				TypeMeta: metav1.TypeMeta{
+					Kind:       "List",
+					APIVersion: "v1",
+				},
+				ListMeta: metav1.ListMeta{
+					ResourceVersion:    "2345",
+				},
+				Items: []v1.Pod{
+					{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Pod"}, ObjectMeta: metav1.ObjectMeta{
+						Name:      "pod",
+						Namespace: "default",
+					}},
+					{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Pod"}, ObjectMeta: metav1.ObjectMeta{
+						Name:      "pod2",
+						Namespace: "default2",
+					}},
+				},
+			},
+			want: []byte(
+				`{"kind":"List","apiVersion":"v1","metadata":{"resourceVersion":"2345"},"items":[` +
+				`{"kind":"Pod","apiVersion":"v1","metadata":{"name":"pod","namespace":"default","creationTimestamp":null},"spec":{"containers":null},"status":{}},` +
+				`{"kind":"Pod","apiVersion":"v1","metadata":{"name":"pod2","namespace":"default2","creationTimestamp":null},"spec":{"containers":null},"status":{}}` +
+			  `]}
+`),
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
