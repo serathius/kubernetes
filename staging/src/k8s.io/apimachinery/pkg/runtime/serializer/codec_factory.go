@@ -23,6 +23,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/serializer/protobuf"
 	"k8s.io/apimachinery/pkg/runtime/serializer/recognizer"
 	"k8s.io/apimachinery/pkg/runtime/serializer/versioning"
+	"k8s.io/klog/v2"
+	"runtime/debug"
 )
 
 func newSerializersForScheme(scheme *runtime.Scheme, mf json.MetaFactory, options CodecFactoryOptions) []runtime.SerializerInfo {
@@ -170,6 +172,9 @@ func NewCodecFactory(scheme *runtime.Scheme, mutators ...CodecFactoryOptionsMuta
 	options := CodecFactoryOptions{Pretty: true}
 	for _, fn := range mutators {
 		fn(&options)
+	}
+	if !options.StreamingCollectionsEncoderToJSON {
+		klog.InfoS("NewCodecFactory", "scheme", scheme.Name(), "streaming", options.StreamingCollectionsEncoderToJSON, "stack", string(debug.Stack()))
 	}
 
 	serializers := newSerializersForScheme(scheme, json.DefaultMetaFactory, options)

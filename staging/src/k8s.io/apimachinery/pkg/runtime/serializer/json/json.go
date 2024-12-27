@@ -18,15 +18,16 @@ package json
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"strconv"
 
 	kjson "sigs.k8s.io/json"
 	"sigs.k8s.io/yaml"
 
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/api/meta"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/runtime/serializer/recognizer"
@@ -257,6 +258,7 @@ func (s *Serializer) doEncode(obj runtime.Object, w io.Writer) error {
 		if ok {
 			return streamingEncodeUnstructured(w, list)
 		}
+		klog.InfoS("Encode not a collection", "type", fmt.Sprintf("%T", obj), "error", err)
 	}
 	encoder := json.NewEncoder(w)
 	return encoder.Encode(obj)
