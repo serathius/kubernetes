@@ -498,7 +498,13 @@ function ensure-local-ssds() {
   # NODE_EPHEMERAL_STORAGE_LOCAL_SSD is env variable for --ephemeral-storage-local-ssd API
   # Both APIs now have the same functionality
   if [ "${NODE_LOCAL_SSDS_EPHEMERAL:-false}" == "true" ] || [ "${NODE_EPHEMERAL_STORAGE_LOCAL_SSD:-false}" == "true" ] ; then
-    ensure-local-ssds-ephemeral-storage
+    if [ "${ENABLE_DATA_CACHE:-false}" == "true" ]; then
+       # Follow data cache specific logic if enabled.
+       # Local SSD selection logic is different but format/mounting logic stays the same with ensure-local-ssds-ephemeral-storage().
+       ensure-local-ssds-ephemeral-storage-data-cache
+    else
+      ensure-local-ssds-ephemeral-storage
+    fi
     return
   fi
   get-local-disk-num "scsi" "block"
@@ -574,6 +580,69 @@ function ensure-local-ssds-ephemeral-storage() {
     fi
   fi
 
+  # If format and mount LSSD logic is modified below, please also match the
+  # change in ensure-local-ssds-ephemeral-storage-data-cache()
+  local ephemeral_mountpoint="/mnt/stateful_partition/kube-ephemeral-ssd"
+  safe-format-and-mount-local-ssd "${device}" "${ephemeral_mountpoint}"
+
+  # mount container runtime root dir on SSD
+  local container_runtime_name="${CONTAINER_RUNTIME_NAME:-containerd}"
+  systemctl stop "$container_runtime_name"
+  # Some images remount the container runtime root dir.
+  umount "/var/lib/${container_runtime_name}" || true
+  # Move the container runtime's directory to the new location to preserve
+  # preloaded images.
+  if [ ! -d "${ephemeral_mountpoint}/${container_runtime_name}" ]; then
+    cp -a "/var/lib/${container_runtime_name}" "${ephemeral_mountpoint}/${container_runtime_name}"
+  fi
+  safe-bind-mount "${ephemeral_mountpoint}/${container_runtime_name}" "/var/lib/${container_runtime_name}"
+  systemctl start "$container_runtime_name"
+
+  # mount kubelet root dir on SSD
+  mkdir -p "${ephemeral_mountpoint}/kubelet"
+  safe-bind-mount "${ephemeral_mountpoint}/kubelet" "/var/lib/kubelet"
+
+  # mount pod logs root dir on SSD
+  mkdir -p "${ephemeral_mountpoint}/log_pods"
+  safe-bind-mount "${ephemeral_mountpoint}/log_pods" "/var/log/pods"
+}
+
+# Local SSDs + Data Cached SSDs, if present, are used in a single RAID 0 array and
+# directories that back ephemeral storage are mounted on them (kubelet root, container runtime
+# root and pod logs).
+function ensure-local-ssds-ephemeral-storage-data-cache() {
+  local devices=()
+  # Get nvme devices
+  for ssd in "${LOCAL_SSDS_ID_PATH_PREFIX}"-nvme-ssd-*; do
+    if [ -e "${ssd}" ]; then
+      devices+=("${ssd}")
+    fi
+  done
+  if [ "${#devices[@]}" -eq 0 ]; then
+    echo "No local NVMe SSD disks found."
+    return
+  fi
+
+  ssd_for_data_cache="${NODE_LOCAL_SSDS_DATA_CACHE_COUNT:-0}"
+  available_lssds=$(( "${#devices[@]}" - "${ssd_for_data_cache}" ))
+  if [ "${available_lssds}" -eq 0 ]; then
+    return
+  fi
+  available_devices=("${devices[@]:0:$available_lssds}")
+
+  local device="${available_devices[0]}"
+  md_device="/dev/md/kubelet_ephemeral_storage"
+  if [ "${#available_devices[@]}" -ne 1 ]; then
+    device="${md_device}"
+    if [ ! -e "${device}" ]; then
+      echo "y" | mdadm --create "${device}" --level=0 --raid-devices=${#available_devices[@]} "${available_devices[@]}"
+    else
+      echo "Using existing RAID array ${md_device} for the devices"
+    fi
+  fi
+
+  # If format and mount LSSD logic is modified below, please also match the
+  # change in ensure-local-ssds-ephemeral-storage()
   local ephemeral_mountpoint="/mnt/stateful_partition/kube-ephemeral-ssd"
   safe-format-and-mount-local-ssd "${device}" "${ephemeral_mountpoint}"
 
