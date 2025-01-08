@@ -814,9 +814,14 @@ set_compiler_image_tag()
   local golang_tag
 
   golang_image_full="${__golang_image}"
-  golang_image_only="${golang_image_full%:*}"
+  # split image:tag, on the image side
+  golang_image_only="${golang_image_full%%:*}"
+  # keep last path segment, IE the "image name" without the host / repo
   golang_image_only="${golang_image_only##*/}"
+  # split image:tag on the tag side
   golang_tag="${golang_image_full#*:}"
+  # trim tag@digest to just tag
+  golang_tag="${golang_tag%%@*}"
   __compiler_image_tag="${golang_image_only}-${golang_tag}"
   if (( ${#__compiler_image_tag} > 128 )); then
     # Docker tags may not exceed 128 characters.
