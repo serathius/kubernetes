@@ -2414,24 +2414,6 @@ function update-dashboard-deployment {
   fi
 }
 
-# Sets up the manifests of coreDNS for k8s addons.
-function setup-coredns-manifest {
-  setup-addon-manifests "addons" "0-dns/coredns"
-  local -r coredns_file="${dst_dir}/0-dns/coredns/coredns.yaml"
-  mv "${dst_dir}/0-dns/coredns/coredns.yaml.in" "${coredns_file}"
-  # Replace the salt configurations with variable values.
-  sed -i -e "s@dns_domain@${DNS_DOMAIN}@g" "${coredns_file}"
-  sed -i -e "s@dns_server@${DNS_SERVER_IP}@g" "${coredns_file}"
-  sed -i -e "s@{{ *pillar\['service_cluster_ip_range'\] *}}@${SERVICE_CLUSTER_IP_RANGE}@g" "${coredns_file}"
-  sed -i -e "s@dns_memory_limit@${DNS_MEMORY_LIMIT:-170Mi}@g" "${coredns_file}"
-
-  if [[ "${ENABLE_DNS_HORIZONTAL_AUTOSCALER:-}" == "true" ]]; then
-    setup-addon-manifests "addons" "dns-horizontal-autoscaler" "gce"
-    local -r dns_autoscaler_file="${dst_dir}/dns-horizontal-autoscaler/dns-horizontal-autoscaler.yaml"
-    sed -i'' -e "s@{{.Target}}@${COREDNS_AUTOSCALER}@g" "${dns_autoscaler_file}"
-  fi
-}
-
 # Sets up the manifests of Fluentd configmap and yamls for k8s addons.
 function setup-fluentd {
   local -r dst_dir="$1"
@@ -2462,15 +2444,20 @@ function setup-fluentd {
 
 # Sets up the manifests of kube-dns for k8s addons.
 function setup-kube-dns-manifest {
-  setup-addon-manifests "addons" "0-dns/kube-dns"
-  local -r kubedns_file="${dst_dir}/0-dns/kube-dns/kube-dns.yaml"
-  mv "${dst_dir}/0-dns/kube-dns/kube-dns.yaml.in" "${kubedns_file}"
+  local -r kubedns_dir="${dst_dir}/0-dns/kube-dns"
+  mkdir -p "${kubedns_dir}"
+  chown -R root:root "${kubedns_dir}"
+  chmod 755 "${kubedns_dir}"
+  local -r kubedns_file="${kubedns_dir}/kube-dns.yaml"
   if [ -n "${CUSTOM_KUBE_DNS_YAML:-}" ]; then
     # Replace with custom GKE kube-dns deployment.
     cat > "${kubedns_file}" <<EOF
 $CUSTOM_KUBE_DNS_YAML
 EOF
     update-prometheus-to-sd-parameters "${kubedns_file}"
+  else
+    echo "kubedns addon requires CUSTOM_KUBE_DNS_YAML envvar"
+    exit 1
   fi
   # Replace the salt configurations with variable values.
   sed -i -e "s@dns_domain@${DNS_DOMAIN}@g" "${kubedns_file}"
@@ -2478,20 +2465,13 @@ EOF
   sed -i -e "s@dns_memory_limit@${DNS_MEMORY_LIMIT:-170Mi}@g" "${kubedns_file}"
 
   if [[ "${ENABLE_DNS_HORIZONTAL_AUTOSCALER:-}" == "true" ]]; then
-    setup-addon-manifests "addons" "dns-horizontal-autoscaler" "gce"
-    local -r dns_autoscaler_file="${dst_dir}/dns-horizontal-autoscaler/dns-horizontal-autoscaler.yaml"
+    if [[ "${DNS_HORIZONTAL_AUTOSCALER_CRP:-false}" != "true" ]]; then
+      setup-addon-manifests "addons" "dns-horizontal-autoscaler" "gce"
+      local -r dns_autoscaler_file="${dst_dir}/dns-horizontal-autoscaler/dns-horizontal-autoscaler.yaml"
+    else
+      echo "dns-horizontal-autoscaler configured via CRP"
+    fi
   fi
-}
-
-# Sets up the manifests of local dns cache agent for k8s addons.
-function setup-nodelocaldns-manifest {
-  setup-addon-manifests "addons" "0-dns/nodelocaldns"
-  local -r localdns_file="${dst_dir}/0-dns/nodelocaldns/nodelocaldns.yaml"
-  setup-addon-custom-yaml "addons" "0-dns/nodelocaldns" "nodelocaldns.yaml" "${CUSTOM_NODELOCAL_DNS_YAML:-}"
-  # eventually all the __PILLAR__ stuff will be gone, but theyre still in nodelocaldns for backward compat.
-  sed -i -e "s/__PILLAR__DNS__DOMAIN__/${DNS_DOMAIN}/g" "${localdns_file}"
-  sed -i -e "s/__PILLAR__DNS__SERVER__/${DNS_SERVER_IP}/g" "${localdns_file}"
-  sed -i -e "s/__PILLAR__LOCAL__DNS__/${LOCAL_DNS_IP}/g" "${localdns_file}"
 }
 
 # A helper function to set up a custom yaml for a k8s addon.
@@ -2580,12 +2560,14 @@ EOF
     NEW_DNS_DIR=${BASE_ADDON_DIR}/0-dns
     mkdir "${NEW_DNS_DIR}" && mv "${BASE_DNS_DIR}"/* "${NEW_DNS_DIR}" && rm -r "${BASE_DNS_DIR}"
     if [[ "${CLUSTER_DNS_CORE_DNS:-}" == "true" ]]; then
-      setup-coredns-manifest
+      echo "coredns addon is not supported"
+      exit 1
     else
       setup-kube-dns-manifest
     fi
     if [[ "${ENABLE_NODELOCAL_DNS:-}" == "true" ]]; then
-      setup-nodelocaldns-manifest
+      echo "nodelocaldns addon is not supported"
+      exit 1
     fi
   fi
   if [[ "${ENABLE_NODE_LOGGING:-}" == "true" ]] && \
