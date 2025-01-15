@@ -61,9 +61,9 @@ $CRICTL_VERSION = 'v1.24.2'
 $CRICTL_SHA256 = 'db202de544fb49ffc58d1aa4b574dfaed0aeb71c45a542715b42f7b739ff7394'
 
 # auth-provider-gcp version
-$AUTH_PROVIDER_GCP_VERSION = 'v0.0.2-gke.4'
+$AUTH_PROVIDER_GCP_VERSION = 'v0.1.0-gke.0'
 # Hash of auth-provider-gcp.exe binary in version defined above
-$AUTH_PROVIDER_GCP_HASH_WINDOWS_AMD64 = '348af2c189d938e1a4fa5ac5c640d21e003da1f000abcd6fd7eef2acd0678638286e40703618758d4fdfe2cc4b90e920f0422128ec777c74054af9dd4405de12'
+$AUTH_PROVIDER_GCP_HASH_WINDOWS_AMD64 = 'f245aebf6783b3b895b2045509bb88eed68ce7a6da3a7e1fd91406d9dced64c4d7b84128b66683020d7ac531b779218eb94f3c0d50198ff934a7ed5b523ea50a'
 
 # gke exec auth plugin version
 $EXEC_AUTH_PLUGIN_VERSION="internal/gke-internal-branch-v1-31/c41916da792183068bb56af4129dbd4718fa1708"
