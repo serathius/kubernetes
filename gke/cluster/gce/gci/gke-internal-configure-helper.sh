@@ -593,6 +593,16 @@ function gke-setup-containerd {
   fi
   # Reuse docker group for containerd.
   local -r containerd_gid="$(cat /etc/group | grep ^docker: | cut -d: -f 3)"
+  # Create directories for cdi and give the correct permissions
+  local -r CDI_ETC_HOME="/etc/cdi"
+  mkdir -p "${CDI_ETC_HOME}"
+  chown root:root "${CDI_ETC_HOME}"
+  chmod 700 "${CDI_ETC_HOME}"
+  local -r CDI_VAR_HOME="/var/run/cdi"
+  mkdir -p "${CDI_VAR_HOME}"
+  chown root:root "${CDI_VAR_HOME}"
+  chmod 700 "${CDI_VAR_HOME}"
+
   cat > "${config_path}" <<EOF
 version = 2
 required_plugins = ["io.containerd.grpc.v1.cri"]
@@ -607,6 +617,7 @@ oom_score = -999
   gid = ${containerd_gid}
 
 [plugins."io.containerd.grpc.v1.cri"]
+  enable_cdi = true
   stream_server_address = "127.0.0.1"
   max_container_log_line_size = ${CONTAINERD_MAX_CONTAINER_LOG_LINE:-262144}
   sandbox_image = "${KUBE_DOCKER_REGISTRY}/${GKE_CONTAINERD_INFRA_CONTAINER}"
