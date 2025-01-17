@@ -25,22 +25,7 @@ import sys
 import tempfile
 from typing import Any
 import unittest
-import urllib3
 
-
-def make_namespace(content: str, no_download: str='False', output: str='', preload_file: str='', run: bool=False) -> argparse.Namespace:
-    """Makes a namespace similar to argparse.parse_args."""
-    args = []
-    if no_download:
-      args.append(f'--no-download={no_download}')
-    if output:
-      args.extend(['--output', output])
-    if preload_file:
-      args.extend(['--preload-file', preload_file])
-    args.extend(['--installable', content])
-    if run:
-      args.append(f'--run={str(run)}')
-    return installable.parser.parse_args(args)
 
 def credentials_in_log(log: str) -> bool:
   """Returns true if the machine's credentials are in a given log string."""
@@ -55,8 +40,8 @@ container_content = """{
 	},
 	"os":"linux",
 	"arch":"MULTI","version":"1.0.1",
-	"remoteURL":"gcr.io/gke-release-staging/busybox",
-	"digest":"d8d3bc2c183ed2f9f10e7258f84971202325ee6011ba137112e01e30f206de67",
+  "remoteURL":"gcr.io/gke-release-staging/gke-distroless/bash",
+  "digest":"9bd9f35657b03f55a00a33feac0500ee183dcfd5f7f1982cd35a7a032953d466",
 	"digestAlgo":"sha256",
 	"containerArgs":["echo", "hello"]
 }"""
@@ -94,8 +79,8 @@ class ContainerTests(unittest.TestCase):
 
   def setUp(self):
     super().setUp()
-    args = make_namespace(content=container_content)
-    container = installable.parse_installable(args)
+    inst = json.loads(container_content)
+    container = installable.parse_installable(inst)
     if container.is_preloaded():
       installable.ctr.delete(container.get_url())
     if isinstance(installable.ctr, FakeCtr):
@@ -103,89 +88,49 @@ class ContainerTests(unittest.TestCase):
 
   def test_parse(self):
     """Tests that a given container blob parses into a container object."""
-    args = make_namespace(content=container_content)
-    inst = installable.parse_installable(args)
+    inst = installable.parse_installable(json.loads(container_content))
     self.assertTrue(isinstance(inst, installable.Container))
     self.assertEqual(inst.name(), 'my-container')
 
-  def test_download(self):
+  def test_preload(self):
     """Tests the download function of the container."""
-    args = make_namespace(content=container_content, no_download='false', run=True)
-    container = installable.parse_installable(args)
+    inst = json.loads(container_content)
     with self.assertLogs(logger=installable.LOGGER, level=logging.INFO) as logs:
-      installable.process_installable(args)
-    self.assertEqual(logs.output, ['INFO:installable:Processing installable: "my-container": url: '
-   '"gcr.io/gke-release-staging/busybox@sha256:d8d3bc2c183ed2f9f10e7258f84971202325ee6011ba137112e01e30f206de67"',
-   'INFO:installable:Installable not preloaded...downloading',
+      with installable.parse_installable(inst) as obj:
+        installable.process_installable(installable=obj, download=True)
+    self.assertEqual(logs.output, ['INFO:installable:Installable not preloaded...downloading',
    'INFO:installable:Running container '
-   'gcr.io/gke-release-staging/busybox@sha256:d8d3bc2c183ed2f9f10e7258f84971202325ee6011ba137112e01e30f206de67 '
+   'gcr.io/gke-release-staging/gke-distroless/bash@sha256:9bd9f35657b03f55a00a33feac0500ee183dcfd5f7f1982cd35a7a032953d466 '
    'succeeded.'])
-    self.assertTrue(container.is_preloaded())
-
-  def test_download_ignore_preload_file(self):
-    """Tests the download function of the container."""
-    preload_file = 'should_not_exist'
-    self.assertFalse(os.path.exists(preload_file))
-    args = make_namespace(content=container_content, no_download='False', preload_file=preload_file)
-    container = installable.parse_installable(args)
-    self.assertFalse(container.is_preloaded())
-    with self.assertLogs(logger=installable.LOGGER, level=logging.INFO) as logs:
-      installable.process_installable(args)
-    self.assertEqual(logs.output, ['INFO:installable:Processing installable: "my-container": url: '
-   '"gcr.io/gke-release-staging/busybox@sha256:d8d3bc2c183ed2f9f10e7258f84971202325ee6011ba137112e01e30f206de67"',
-   'INFO:installable:Installable not preloaded...downloading'])
-    self.assertFalse(os.path.exists(preload_file))
-    self.assertTrue(container.is_preloaded())
-
-  def test_download_ignore_output_file(self):
-    """Tests the download function of the container."""
-    output_file = 'should_not_exist'
-    self.assertFalse(os.path.exists(output_file))
-    args = make_namespace(content=container_content, no_download='false', output=output_file)
-    container = installable.parse_installable(args)
-    self.assertFalse(container.is_preloaded())
-    with self.assertLogs(logger=installable.LOGGER, level=logging.INFO) as logs:
-      installable.process_installable(args)
-    self.assertEqual(logs.output, ['INFO:installable:Processing installable: "my-container": url: '
-   '"gcr.io/gke-release-staging/busybox@sha256:d8d3bc2c183ed2f9f10e7258f84971202325ee6011ba137112e01e30f206de67"',
-   'INFO:installable:Installable not preloaded...downloading'])
-    self.assertFalse(os.path.exists(output_file))
+    container = installable.Container(inst)
     self.assertTrue(container.is_preloaded())
 
   def test_bad_url(self):
     """Tests that downloads fail given a bad URL."""
-    content = json.loads(container_content)
-    content['remoteURL'] = garbage
-    args = make_namespace(content=json.dumps(content), no_download='False')
-    with self.assertRaisesRegex(installable.DownloadError, 'Failed to download container'):
-      inst = installable.parse_installable(args)
-      inst.download()
+    container = json.loads(container_content)
+    container['remoteURL'] = garbage
+    inst = installable.parse_installable(container)
+    with self.assertLogs(installable.LOGGER):
+      with self.assertRaisesRegex(installable.DownloadError, 'Failed to download container'):
+        installable.process_installable(installable=inst, download=True)
 
   def test_already_preloaded(self):
-    args = make_namespace(content=container_content, no_download='true', run='True')
-    container = installable.parse_installable(args)
+    container = installable.parse_installable(json.loads(container_content))
     installable.ctr.download(container.get_url())
     self.assertTrue(container.is_preloaded())
     with self.assertLogs(logger=installable.LOGGER, level=logging.INFO) as logs:
-      installable.process_installable(args)
-    self.assertEqual(logs.output, ['INFO:installable:Processing installable: "my-container": url: '
-   '"gcr.io/gke-release-staging/busybox@sha256:d8d3bc2c183ed2f9f10e7258f84971202325ee6011ba137112e01e30f206de67"',
-   'INFO:installable:Running container '
-   'gcr.io/gke-release-staging/busybox@sha256:d8d3bc2c183ed2f9f10e7258f84971202325ee6011ba137112e01e30f206de67 '
+      installable.process_installable(installable=container, download=True)
+    self.assertEqual(logs.output, ['INFO:installable:Running container '
+   'gcr.io/gke-release-staging/gke-distroless/bash@sha256:9bd9f35657b03f55a00a33feac0500ee183dcfd5f7f1982cd35a7a032953d466 '
    'succeeded.'])
 
 
   def test_not_preloaded(self):
-    args = make_namespace(content=container_content, no_download='True')
-    container = installable.parse_installable(args)
+    container = installable.parse_installable(json.loads(container_content))
     self.assertFalse(container.is_preloaded())
-    with self.assertLogs(logger=installable.LOGGER, level=logging.INFO) as logs:
-      with self.assertRaisesRegex(installable.PreloadError, f'Installable {container.name()} not preloaded.'):
-        installable.process_installable(args)
-    self.assertEqual(logs.output, ['INFO:installable:Processing installable: "my-container": url: '
-   '"gcr.io/gke-release-staging/busybox@sha256:d8d3bc2c183ed2f9f10e7258f84971202325ee6011ba137112e01e30f206de67"'])
+    with self.assertRaisesRegex(installable.PreloadError, f'Installable {container.name()} not preloaded.'):
+      installable.process_installable(installable=container, download=False)
     self.assertFalse(container.is_preloaded())
-
 
   def test_gvisor_integration(self):
 
@@ -225,16 +170,15 @@ class ContainerTests(unittest.TestCase):
         os.remove(p)
       self.assertFalse(os.path.exists(p))
 
-    args = make_namespace(content=gvisor_content, run=True)
-    cont = installable.parse_installable(args)
+    content = json.loads(gvisor_content)
+    cont = installable.parse_installable(content)
     if cont.is_preloaded():
       installable.ctr.delete(cont.get_url())
 
     with self.assertLogs(logger=installable.LOGGER, level=logging.INFO) as logs:
-      installable.process_installable(args)
+      installable.process_installable(installable=cont, download=True)
 
-    self.assertEqual(logs.output ,['INFO:installable:Processing installable: "gvisor": url: '
-   '"gcr.io/gke-release-staging/gke-gvisor-installer@sha256:0c3e3ac8b7bfad7db5df9fe3c3d67eff11ce33ed4391a6ce323a5fced0ccef33"',
+    self.assertEqual(logs.output ,[
    'INFO:installable:Installable not preloaded...downloading',
    'INFO:installable:Running container '
    'gcr.io/gke-release-staging/gke-gvisor-installer@sha256:0c3e3ac8b7bfad7db5df9fe3c3d67eff11ce33ed4391a6ce323a5fced0ccef33 '
@@ -248,8 +192,6 @@ class ContainerTests(unittest.TestCase):
   def test_cilium_cni_integration(self):
     if is_fake():
       raise unittest.SkipTest('Test is not hermetic and should be skipped in fakes.')
-
-
 
     # The container expects these paths to exist.
     os.makedirs('/home/kubernetes/bin', exist_ok=True)
@@ -283,16 +225,14 @@ class ContainerTests(unittest.TestCase):
       "containerArgs": ["/install-plugin.sh"]
     }"""
 
-    args = make_namespace(content=cilium_content, run=True)
-    cont = installable.parse_installable(args)
+    cont = installable.parse_installable(json.loads(cilium_content))
     if cont.is_preloaded():
       installable.ctr.delete(cont.get_url())
     with self.assertLogs(logger=installable.LOGGER, level=logging.INFO) as logs:
-      installable.process_installable(args)
+      installable.process_installable(installable=cont, download=True)
 
 
-    self.assertEqual(logs.output, ['INFO:installable:Processing installable: "cilium-cni": url: '
-    '"us.gcr.io/gke-release-staging/cilium/cilium:v1.15.6-gke.37@sha256:d285cf77f04947eb3a81bf29362bc6c46e296831ea4d410bf7dc86149295890e"',
+    self.assertEqual(logs.output, [
     'INFO:installable:Installable not preloaded...downloading',
     'INFO:installable:Running container '
     'us.gcr.io/gke-release-staging/cilium/cilium:v1.15.6-gke.37@sha256:d285cf77f04947eb3a81bf29362bc6c46e296831ea4d410bf7dc86149295890e '
@@ -302,168 +242,24 @@ class ContainerTests(unittest.TestCase):
       self.assertTrue(os.path.exists(p))
       os.remove(p)
 
-
-app_pkg_content = """{
-	"kind":"AppPkg",
-	"apiVersion": "installable.gke.io/v1",
-	"metadata":{
-	  "name":"cni"
-	},
-	"os":"linux",
-	"arch":"X86_64",
-	"version":"v1.4.0-gke.3",
-	"remoteURL":"https://storage.googleapis.com/gke-release/cni-plugins/v1.4.0-gke.3/cni-plugins-linux-amd64-v1.4.0-gke.3.tgz",
-	"digest":"44a461d6446ce82f9f4b8e81fd95c7b86ca1c4e4c34825b8a1dc0533073e0655750c4b9d39d7d2b742eb0146e0ee9265351d5f04b8e04e953d5cf8fefce33cf9",
-	"digestAlgo":"SHA512"
-}"""
-
-crictl_app_pkg_content = """{
-	"kind":"AppPkg",
-	"apiVersion": "installable.gke.io/v1",
-	"metadata":{
-	  "name":"crictl"
-	},
-	"os":"linux",
-	"arch":"X86_64",
-	"version": "v1.28.0-gke.1",
-  "remoteURL": "https://storage.googleapis.com/gke-release/cri-tools/v1.28.0-gke.1/crictl-v1.28.0-gke.1-linux-amd64.tar.gz",
-  "digest":"46387d29d2d79efe0fc0b83df3de6f3d9b00d1477d9765cd8e9a5d30b234d6d9b5bfd408bf4f7741c75a7bc0163b362156475e941c6387476866f0e69bae6ce3",
-  "digestAlgo":"SHA512"
-}"""
-
-class FakeAppPkgHandler(installable.AppPkgHandler):
-  '''FakeAppPkgHanlder fakes installable.AppPkgHandler methods.'''
-
-  def download(self, retry: int, url: str) -> bytes:
-    if url == garbage:
-      raise urllib3.exceptions.MaxRetryError(url=url, pool=None, reason='Name or service not known')
-    return b'some bytes to write'
-
-  def checksum(self, file_path: str, algo: str, digest: str):
-    if digest == garbage:
-      raise ValueError(f'mismatch digest: got: {garbage} want: "some valid digest"')
-
-class AppPkgTests(unittest.TestCase):
-
-  preload_file = ''
-  output_file = ''
-
-  def setUp(self):
-    """Setup involves us generating a preload file used similarly to the "record-preload-info" and
-    "is-preloaded" functions in configure.sh."""
-    super().setUp()
-    for file in [self.preload_file, self.output_file]:
-      if os.path.exists(file):
-        os.remove(file)
-    with tempfile.NamedTemporaryFile(delete=False) as f:
-      self.preload_file = f.name
-    with tempfile.NamedTemporaryFile(delete=True) as f:
-      self.output_file = f.name
-
-  def test_parse(self):
-    """Test that a valid apppkg parses and returns a valid apppkg."""
-    args = make_namespace(content=app_pkg_content, output=self.output_file, preload_file=self.preload_file)
-    with installable.parse_installable(args) as inst:
-      self.assertTrue(isinstance(inst, installable.AppPkg))
-      self.assertEqual(inst.name(), "cni")
-
-  def test_download(self):
-    """Test download function."""
-    args = make_namespace(content=app_pkg_content, no_download="false",
-                          output=self.output_file, preload_file=self.preload_file, run=True)
-    with installable.parse_installable(args) as inst:
-      self._set_preload_file(info={})
-      self.assertFalse(os.path.exists(self.output_file))
-      with self.assertLogs(logger=installable.LOGGER, level=logging.INFO) as logs:
-        installable.process_installable(args)
-      self.assertEqual(logs.output, ['INFO:installable:Processing installable: "cni": url: '
-      '"https://storage.googleapis.com/gke-release/cni-plugins/v1.4.0-gke.3/cni-plugins-linux-amd64-v1.4.0-gke.3.tgz"',
-      'INFO:installable:Installable not preloaded...downloading',
-      'INFO:installable:AppPkg types do not have a run method. Returning.'])
-      self.assertTrue(os.path.exists(self.output_file))
-      self.assertTrue(inst.is_preloaded())
-      algo = inst.content['digestAlgo']
-      digest = inst.content['digest']
-      installable.handler.checksum(file_path=self.output_file, algo=algo, digest=digest)
-
-  def test_bad_preload_file(self):
-    """Tests the case when the given preload file doesn't exist."""
-    with tempfile.NamedTemporaryFile(delete=True) as f:
-        file = f.name
-    args = make_namespace(content=app_pkg_content, no_download="False", preload_file=file)
-    with self.assertRaisesRegex(argparse.ArgumentTypeError, 'Invalid preload file:'):
-      with installable.parse_installable(args) as inst:
-        inst.retry = 1
-        inst.download()
-
-  def test_no_output_target_provided(self):
-    args = make_namespace(content=app_pkg_content, no_download="false", preload_file=self.preload_file)
-    with self.assertRaisesRegex(argparse.ArgumentTypeError, 'Output file path is required for AppPkg installables.'):
-      installable.process_installable(args)
-
-  def test_bad_url(self):
-    """Checks that a bad URL fails to download."""
-    content = json.loads(app_pkg_content)
-    content['remoteURL'] = garbage
-    args = make_namespace(content=json.dumps(content), no_download="False",
-                          output=self.output_file, preload_file=self.preload_file)
-    with self.assertRaisesRegex(urllib3.exceptions.MaxRetryError, 'Name or service not known'):
-      with installable.parse_installable(args) as inst:
-        inst.retry = 1
-        inst.download()
-    self.assertFalse(os.path.exists(self.output_file))
-
-  def test_already_preloaded(self):
-    args = make_namespace(content=app_pkg_content, no_download='true',
-                          output=self.output_file, preload_file=self.preload_file)
-    app_pkg = installable.parse_installable(args)
-    self._set_preload_file([f'{app_pkg.name()},{app_pkg.digest()}'])
-    self.assertTrue(app_pkg.is_preloaded())
-    with self.assertLogs(logger=installable.LOGGER, level=logging.INFO) as logs:
-      installable.process_installable(args)
-    self.assertEqual(logs.output, ['INFO:installable:Processing installable: "cni": url: '
-      '"https://storage.googleapis.com/gke-release/cni-plugins/v1.4.0-gke.3/cni-plugins-linux-amd64-v1.4.0-gke.3.tgz"'])
-
-  def test_not_preloaded(self):
-    args = make_namespace(content=crictl_app_pkg_content, no_download='TRUE',
-                          output=self.output_file, preload_file=self.preload_file)
-    crictl = installable.parse_installable(args)
-    self.assertFalse(crictl.is_preloaded())
-    with self.assertLogs(logger=installable.LOGGER, level=logging.INFO) as logs:
-      with self.assertRaisesRegex(installable.PreloadError, f'Installable {crictl.name()} not preloaded.'):
-        installable.process_installable(args)
-    self.assertEqual(logs.output, ['INFO:installable:Processing installable: "crictl": url: '
-      '"https://storage.googleapis.com/gke-release/cri-tools/v1.28.0-gke.1/crictl-v1.28.0-gke.1-linux-amd64.tar.gz"'])
-    self.assertFalse(crictl.is_preloaded())
-
-  def test_crictl_case(self):
-    """Tests downloading a different apppkg: crictl."""
-    args = make_namespace(
-      crictl_app_pkg_content, no_download="FALSE", output=self.output_file, preload_file=self.preload_file)
-    self.assertFalse(os.path.exists(self.output_file))
-    with self.assertLogs(installable.LOGGER, logging.INFO) as logs:
-      installable.process_installable(args)
-    self.assertTrue(os.path.exists(self.output_file))
-    with installable.parse_installable(args) as inst:
-      self.assertTrue(inst.is_preloaded())
-
-  def _set_preload_file(self, info: list=[]):
-    """Sets the preload file content. Utility method for the tests."""
-    with open(self.preload_file, 'w+') as f:
-      f.write('something,some_digest\n')
-      content = '\n'.join(info)
-      f.write(content)
-
 class InstallableTests(unittest.TestCase):
 
   def test_invalid_api(self):
     """Tests an apppkg with an invalid API raises an error."""
-    content = """{"kind":"AppPkg",
+    content = """{"kind":"Container",
 	"apiVersion": "unsupported-api",
 	"metadata":{"name":"my-apppkg"}}"""
-    args = make_namespace(content=content)
     with self.assertRaisesRegex(installable.InvalidInstallableError, 'Unknown api version'):
-      with installable.parse_installable(args):
+      with installable.parse_installable(json.loads(content)):
+        pass
+
+  def test_apppkg_not_supported(self):
+    """Tests that apppkg is not a supported kind."""
+    content = """{"kind":"AppPkg",
+	"apiVersion": "installable.gke.io/v1",
+	"metadata":{"name":"my-apppkg"}}"""
+    with self.assertRaisesRegex(installable.InvalidInstallableError, 'Kind AppPkg is not supported for now'):
+      with installable.parse_installable(json.loads(content)):
         pass
 
   def test_invalid_kind(self):
@@ -471,9 +267,8 @@ class InstallableTests(unittest.TestCase):
     content = """{"kind":"invalid kind",
 	"apiVersion": "installable.gke.io/v1",
 	"metadata":{"name":"my-apppkg"}}"""
-    args = make_namespace(content=content)
     with self.assertRaisesRegex(installable.InvalidInstallableError, 'Unknown installable type'):
-      installable.parse_installable(args)
+      installable.parse_installable(json.loads(content))
 
   def test_get_credentials(self):
     """Tests that some string is returned when we get credentials."""
@@ -483,16 +278,14 @@ class InstallableTests(unittest.TestCase):
     """Tests installables where required fields are missing."""
     spec = json.loads(container_content)
     del spec['remoteURL']
-    args = make_namespace(content=json.dumps(spec))
     with self.assertRaisesRegex(installable.InvalidInstallableError, 'remoteURL.*is omitted or emtpy'):
-      installable.parse_installable(args)
+      installable.parse_installable(spec)
 
-    spec = json.loads(app_pkg_content)
+    spec = json.loads(container_content)
     spec['digestAlgo'] = ''
-    args = make_namespace(content=json.dumps(spec))
     d = ''
     with self.assertRaisesRegex(installable.InvalidInstallableError, 'digestAlgo.*is omitted or emtpy'):
-      with installable.parse_installable(args) as inst:
+      with installable.parse_installable(spec) as inst:
         d = inst.dir
     self.assertFalse(os.path.exists(d))
 
@@ -508,7 +301,8 @@ class CtrTests(unittest.TestCase):
   """
 
   # We need a container image that has bash to run these test. This image rarely changes.
-  bash_image = 'gcr.io/kubernetes-e2e-test-images/busybox-user@sha256:6f88e6ff776a1fb179459b65aae5c4c73577f87cc4413de1f3d70fcb3a1ecb5c'
+  bash_image = "gcr.io/gke-release-staging/gke-distroless/bash:gke_distroless_20241207.00_p0@sha256:9bd9f35657b03f55a00a33feac0500ee183dcfd5f7f1982cd35a7a032953d466"
+  alpine_image = "docker.io/library/alpine@sha256:a8560b36e8b8210634f77d9f7f9efd7ffa463e380b75e2e74aff4511df3ef88c"
 
   def setUp(self):
     super().setUp()
@@ -582,14 +376,13 @@ def is_fake():
 
 if __name__ == '__main__':
   parser = argparse.ArgumentParser()
-  parser.add_argument('--fake', default=False)
+  parser.add_argument('--fake', action='store_true', default=False)
   options, args = parser.parse_known_args()
   if options.fake:
     installable.ctr = FakeCtr()
     def fake_get_creds() -> str:
       return fake_creds
     installable.get_gce_credentials = fake_get_creds
-    installable.handler = FakeAppPkgHandler()
 
   unit_argv = sys.argv[:1] + args
   unittest.main(argv=unit_argv)
@@ -597,6 +390,3 @@ if __name__ == '__main__':
   # The tests above create a lot of temporary directories. Ensure they are cleaned up.
   for dir in os.listdir(tempfile.gettempdir()):
     assert not dir.startswith(tempfile.gettempprefix)
-
-
-

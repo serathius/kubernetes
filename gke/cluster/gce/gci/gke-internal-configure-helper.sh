@@ -11,6 +11,19 @@ function get-credentials {
     "${GCE_METADATA_INTERNAL}/service-accounts/default/token" \
   | python3 -c 'import sys; import json; print(json.loads(sys.stdin.read())["access_token"])'
 }
+
+if [[ "${KUBERNETES_MASTER:-}" == "true" ]]; then
+  if [[ "${IS_PRELOADER:-}" != "true" ]] &&\
+    grep -qs "PRELOADED," "${KUBE_HOME}/preload_info" &&\
+    [[ $(get-metadata-value "instance/attributes/fail-on-artifact-mismatch" "false") == "true" ]]; then
+      # Disallow artifact downloads when:
+      # - running on master VMs
+      # - && not in preloader (running in bootstrap)
+      # - && VM image is preloaded
+      # - && failure on artifact mismatch feature is enabled
+      ARTIFACT_DOWNLOAD_RESTRICTED="true"
+  fi
+fi
 # --- END ---
 
 # Returns TLS SNI param for kube-apiserver.
@@ -1172,6 +1185,33 @@ providers:
 EOF
 }
 
+# Processes installable artifacts. This respects download restrictions by checking the
+# ARTIFACT_DOWNLOAD_RESTRICTED env variable. If downloads are not restricted, the script downloads
+# and executes installables. If downloads are restricted, the script ensures that the installables
+# have been preloaded and executes them. See installable.py for details.
+function process-installables {
+  local installable_name="${1:-}"
+  local script="${KUBE_BIN}/installable.py"
+  # Installables are passed as JSON. Pass an empty map if none have been passed.
+  local installables="${RENDERED_INSTALLABLES:-{}}"
+  local flags=(
+    "--installables=${installables}"
+    "--component=${installable_name}"
+  )
+  # Record the proecessed installables so we don't process things twice.
+  local record_file="${KUBE_HOME}/processed-installables"
+  if [[ "${IS_PRELOADER:-}" == "true" ]]; then
+    record_file="${KUBE_HOME}/preloaded-installables"
+    flags+=("--preloader")
+  fi
+  flags+=("--record-file=${record_file}")
+
+  if [[ "${ARTIFACT_DOWNLOAD_RESTRICTED:-}" == "true" ]]; then
+    flags+=("--download-restricted")
+  fi
+  python3 "${script}" "${flags[@]}"
+}
+
 function create-kcp-admin-kubeconfig {
   mkdir -p "/etc/srv/kubernetes/local-admin"
   cat > "/etc/srv/kubernetes/local-admin/kubeconfig" << EOF
@@ -1201,5 +1241,3 @@ contexts:
 current-context: local-admin
 EOF
 }
-
-

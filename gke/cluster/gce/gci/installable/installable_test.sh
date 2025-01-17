@@ -19,4 +19,6 @@ set -o nounset
 set -o pipefail
 
 
-python3 installable/installable_test.py -v
+python3 installable_test.py -v
+
+python3 installable_e2e_test.py -v

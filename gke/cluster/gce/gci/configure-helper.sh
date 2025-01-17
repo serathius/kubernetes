@@ -3172,6 +3172,7 @@ function main() {
     fi
   fi
   log-wrap 'InstallNodeRegistrationChecker' install-node-registration-checker
+  log-wrap 'ProcessInstallables' process-installables
 
   # Note prepare-mounter-rootfs must be called before the kubelet starts, as
   # kubelet startup updates its nameserver.

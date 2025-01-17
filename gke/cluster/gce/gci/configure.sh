@@ -738,6 +738,10 @@ function install-kube-manifests {
   fi
   cp "${dst_dir}/kubernetes/gci-trusty/networkd-monitor.sh" "${KUBE_BIN}/networkd-monitor.sh"
 
+  # Add the installable script to KUBE_BIN so installables can be processed.
+  cp "${KUBE_HOME}/kube-manifests/kubernetes/gci-trusty/installable.py" "${KUBE_BIN}/installable.py"
+
+
   rm -f "${KUBE_HOME}/${manifests_tar}"
   rm -f "${KUBE_HOME}/${manifests_tar}.sha512"
 
@@ -855,9 +859,23 @@ function install-riptide {
   install-riptide-snapshotter
 }
 
+
+function source-gke-internal-configure-helper {
+  if [[ "${GKE_INTERNAL_HELPER_SOURCED:-}" != "true" ]]; then
+    source ${KUBE_BIN}/gke-internal-configure-helper.sh
+  fi
+  GKE_INTERNAL_HELPER_SOURCED="true"
+}
+
+
 function prepare-riptide-snapshotter-preloader {
-  source ${KUBE_BIN}/gke-internal-configure-helper.sh
+  source-gke-internal-configure-helper
   log-wrap 'GKESetupContainerd' gke-setup-containerd
+}
+
+function process-installables-preloader {
+  source-gke-internal-configure-helper
+  log-wrap 'ProcessInstallablesPreloader' process-installables
 }
 
 function install-auth-provider-gcp {

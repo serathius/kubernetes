@@ -31,18 +31,7 @@ const (
 )
 
 func TestInstallableTests(t *testing.T) {
-	args := fmt.Sprintf("python3 %s --fake=true InstallableTests", testPath)
-	cmd := exec.Command("bash", "-c", args)
-
-	result, err := cmd.CombinedOutput()
-	if err != nil {
-		printOutput(t, result)
-		t.Fatalf("Failed to run %q: %v", cmd.Args, err)
-	}
-}
-
-func TestInstallableAppPkgTests(t *testing.T) {
-	args := fmt.Sprintf("python3 %s --fake=true AppPkgTests", testPath)
+	args := fmt.Sprintf("python3 %s --fake InstallableTests", testPath)
 	cmd := exec.Command("bash", "-c", args)
 
 	result, err := cmd.CombinedOutput()
@@ -53,7 +42,7 @@ func TestInstallableAppPkgTests(t *testing.T) {
 }
 
 func TestInstallableContainerTests(t *testing.T) {
-	args := fmt.Sprintf("python3 %s --fake=true ContainerTests", testPath)
+	args := fmt.Sprintf("python3 %s --fake ContainerTests", testPath)
 	cmd := exec.Command("bash", "-c", args)
 
 	result, err := cmd.CombinedOutput()
