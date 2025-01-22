@@ -322,6 +322,22 @@ authorizers:
 EOF
   chown "${KUBE_API_SERVER_RUNASUSER:-0}":"${KUBE_API_SERVER_RUNASGROUP:-0}" "${authorization_config_file}"
 
+  if [[ "${ANONYMOUS_AUTHENTICATION_CONFIG:-}" == "LIMITED" ]]; then
+    local -r authentication_config_file="/etc/srv/kubernetes/authentication_config.yaml"
+    cat <<EOF >${authentication_config_file}
+apiVersion: apiserver.config.k8s.io/v1beta1
+kind: AuthenticationConfiguration
+anonymous:
+  enabled: true
+  conditions:
+  - path: "/healthz"
+  - path: "/livez"
+  - path: "/readyz"
+EOF
+    chown "${KUBE_API_SERVER_RUNASUSER:-0}":"${KUBE_API_SERVER_RUNASGROUP:-0}" "${authentication_config_file}"
+    params+=" --authentication-config=${authentication_config_file}"
+  fi
+
   # Add autopilot webhook first, if enabled
   if [ -n "${GKEWARDEN_AUTHZ_KUBECONFIG:-}" ]; then
     echo "Enabling autopilot authorization webhook"
