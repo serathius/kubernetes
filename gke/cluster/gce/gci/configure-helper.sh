@@ -3114,22 +3114,27 @@ function main() {
   fi
   log-end 'VerifyKubeUser'
 
-  log-start 'GenerateTokens'
-  KUBE_CONTROLLER_MANAGER_TOKEN="$(secure_random 32)"
-  KUBE_SCHEDULER_TOKEN="$(secure_random 32)"
-  KUBE_CLUSTER_AUTOSCALER_TOKEN="$(secure_random 32)"
-  if [[ "${ENABLE_L7_LOADBALANCING:-}" == "glbc" ]]; then
-    GCE_GLBC_TOKEN="$(secure_random 32)"
+  if [[ "${KUBERNETES_MASTER:-}" == "true" ]]; then
+    log-start 'GenerateTokens'
+    KUBE_CONTROLLER_MANAGER_TOKEN="$(secure_random 32)"
+    KUBE_SCHEDULER_TOKEN="$(secure_random 32)"
+    KUBE_CLUSTER_AUTOSCALER_TOKEN="$(secure_random 32)"
+    if [[ -z "${KUBE_BEARER_TOKEN:-}" ]]; then
+      KUBE_BEARER_TOKEN="$(secure_random 32)"
+    fi
+    if [[ "${ENABLE_L7_LOADBALANCING:-}" == "glbc" ]]; then
+      GCE_GLBC_TOKEN="$(secure_random 32)"
+    fi
+    ADDON_MANAGER_TOKEN="$(secure_random 32)"
+    KUBE_BOOTSTRAP_TOKEN="$(secure_random 32)"
+    if [[ "${PREPARE_KONNECTIVITY_SERVICE:-false}" == "true" ]]; then
+      KONNECTIVITY_SERVER_TOKEN="$(secure_random 32)"
+    fi
+    if [[ "${ENABLE_MONITORING_TOKEN:-false}" == "true" ]]; then
+      MONITORING_TOKEN="$(secure_random 32)"
+    fi
+    log-end 'GenerateTokens'
   fi
-  ADDON_MANAGER_TOKEN="$(secure_random 32)"
-  KUBE_BOOTSTRAP_TOKEN="$(secure_random 32)"
-  if [[ "${PREPARE_KONNECTIVITY_SERVICE:-false}" == "true" ]]; then
-    KONNECTIVITY_SERVER_TOKEN="$(secure_random 32)"
-  fi
-  if [[ "${ENABLE_MONITORING_TOKEN:-false}" == "true" ]]; then
-    MONITORING_TOKEN="$(secure_random 32)"
-  fi
-  log-end 'GenerateTokens'
 
   # Source the GKE specific scripts.
   if [[ -e "${KUBE_HOME}/bin/gke-internal-configure-helper.sh" ]]; then
