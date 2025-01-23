@@ -518,17 +518,35 @@ EOF
   done
 }
 
-function gke-setup-containerd-drop-in-systemd-config {
+function gke-setup-containerd-memlock-limit {
   local -r CONTAINERD_DROP_IN="/etc/systemd/system/containerd.service.d"
   if [[ "${SET_MEMLOCK_LIMIT_UNLIMITED:-}" == "true" ]]; then
-    mkdir -p "${CONTAINERD_DROP_IN}"
-    echo "Generating containerd system drop in config for memlock limit"
-    local memlock_limit_path="${CONTAINERD_DROP_IN}/30-LimitMEMLOCK-infinity.conf"
-    cat >> "${memlock_limit_path}" <<EOF
+      echo "Generating containerd system drop in config for memlock limit"
+      local -r memlock_limit_path="${CONTAINERD_DROP_IN}/30-LimitMEMLOCK-infinity.conf"
+      cat >> "${memlock_limit_path}" <<EOF
 [Service]
 LimitMEMLOCK=infinity
 EOF
+    fi
+}
+
+function gke-setup-containerd-gcfs-dependency {
+  local -r CONTAINERD_DROP_IN="/etc/systemd/system/containerd.service.d"
+  if [[ "${ENABLE_GCFS:-}" == "true" ]]; then
+    local -r gcfs_require_path="${CONTAINERD_DROP_IN}/40-RequireGCFS-snapshotter.conf"
+    echo "Generating containerd system drop in config for gcfs-snapshotter requirement (ENABLE_GCFS=true)"
+    cat >> "${gcfs_require_path}" <<EOF
+[Unit]
+Requires=gcfs-snapshotter.service
+EOF
   fi
+}
+
+function gke-setup-containerd-drop-in-systemd-config {
+  local -r CONTAINERD_DROP_IN="/etc/systemd/system/containerd.service.d"
+  mkdir -p "${CONTAINERD_DROP_IN}"
+  gke-setup-containerd-gcfs-dependency
+  gke-setup-containerd-memlock-limit
 }
 
 function gke-setup-containerd {
@@ -985,6 +1003,7 @@ Before=containerd.service
 # Disable restart rate limiting
 StartLimitIntervalSec=0
 [Service]
+Type=notify
 Environment=HOME=/root
 ExecStart=${KUBE_HOME}/bin/containerd-gcfs-grpc --log-level=info --config=/etc/containerd-gcfs-grpc/config.toml --enable-image-proxy-keychain-client ${secondary_boot_disk_mount_points_flag} --disable-duplicate-layer-support=false ${enable_metric_exporter_flag}
 Restart=always
