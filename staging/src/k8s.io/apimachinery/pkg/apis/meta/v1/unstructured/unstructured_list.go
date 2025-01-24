@@ -18,7 +18,12 @@ package unstructured
 
 import (
 	"bytes"
+	"maps"
+	"slices"
+	"sort"
 
+	"github.com/go-json-experiment/json"
+	"github.com/go-json-experiment/json/jsontext"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -137,6 +142,48 @@ func (u *UnstructuredList) MarshalJSON() ([]byte, error) {
 	err := UnstructuredJSONScheme.Encode(u, &buf)
 	return buf.Bytes(), err
 }
+
+func (u *UnstructuredList) MarshalJSONTo(encoder *jsontext.Encoder) error {
+	err := encoder.WriteToken(jsontext.BeginObject)
+	if err != nil {
+		return err
+	}
+	keys := slices.Collect(maps.Keys(u.Object))
+	if _, exists := u.Object["items"]; !exists {
+		keys = append(keys, "items")
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		err := encoder.WriteToken(jsontext.String(key))
+		if err != nil {
+			return err
+		}
+		if key == "items" {
+			err := encoder.WriteToken(jsontext.BeginArray)
+			if err != nil {
+				return err
+			}
+			for _, item := range u.Items {
+				err := json.MarshalEncode(encoder, item)
+				if err != nil {
+					return err
+				}
+			}
+			err = encoder.WriteToken(jsontext.EndArray)
+			if err != nil {
+				return err
+			}
+		} else {
+			err := json.MarshalEncode(encoder, u.Object[key])
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return encoder.WriteToken(jsontext.EndObject)
+}
+
+var _ json.MarshalerTo = (*UnstructuredList)(nil)
 
 // UnmarshalJSON ensures that the unstructured list object properly
 // decodes JSON when passed to Go's standard JSON library.

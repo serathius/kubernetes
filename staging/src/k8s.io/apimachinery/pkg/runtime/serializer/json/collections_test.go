@@ -752,12 +752,9 @@ func TestFuzzCollectionsEncoding(t *testing.T) {
 			f.Fill(list)
 			streamingBuffer.Reset()
 			normalBuffer.Reset()
-			ok, err := streamEncodeCollections(list, streamingBuffer)
+			err := streamingEncode(list, streamingBuffer)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
-			}
-			if !ok {
-				t.Fatalf("expected streaming encoder to encode %T", list)
 			}
 			if err := normalSerializer.Encode(list, normalBuffer); err != nil {
 				t.Fatal(err)
@@ -775,12 +772,9 @@ func TestFuzzCollectionsEncoding(t *testing.T) {
 			f.Fill(list)
 			streamingBuffer.Reset()
 			normalBuffer.Reset()
-			ok, err := streamEncodeCollections(list, streamingBuffer)
+			err := streamingEncode(list, streamingBuffer)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
-			}
-			if !ok {
-				t.Fatalf("expected streaming encoder to encode %T", list)
 			}
 			if err := normalSerializer.Encode(list, normalBuffer); err != nil {
 				t.Fatal(err)

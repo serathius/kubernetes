@@ -246,14 +246,9 @@ func (s *Serializer) doEncode(obj runtime.Object, w io.Writer) error {
 		return err
 	}
 	if s.options.StreamingCollectionsEncoding {
-		ok, err := streamEncodeCollections(obj, w)
-		if err != nil {
-			return err
-		}
-		if ok {
-			return nil
-		}
+		return streamingEncode(obj, w)
 	}
+
 	encoder := json.NewEncoder(w)
 	return encoder.Encode(obj)
 }
