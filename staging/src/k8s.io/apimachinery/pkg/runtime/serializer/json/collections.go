@@ -24,6 +24,9 @@ import (
 	"slices"
 	"sort"
 
+	_ "github.com/go-json-experiment/json"
+	_ "github.com/go-json-experiment/json/jsontext"
+	_ "github.com/go-json-experiment/json/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/conversion"
 
