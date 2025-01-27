@@ -2444,6 +2444,10 @@ function setup-fluentd {
 
 # Sets up the manifests of kube-dns for k8s addons.
 function setup-kube-dns-manifest {
+  # Create a new directory for the DNS addon and prepend a "0" on the name.
+  # Prepending "0" to the directory ensures that add-on manager
+  # creates the dns service first. This ensures no other add-on
+  # can "steal" the designated DNS clusterIP.
   local -r kubedns_dir="${dst_dir}/0-dns/kube-dns"
   mkdir -p "${kubedns_dir}"
   chown -R root:root "${kubedns_dir}"
@@ -2551,14 +2555,6 @@ EOF
     setup-konnectivity-agent-manifest
   fi
   if [[ "${ENABLE_CLUSTER_DNS:-}" == "true" ]]; then
-    # Create a new directory for the DNS addon and prepend a "0" on the name.
-    # Prepending "0" to the directory ensures that add-on manager
-    # creates the dns service first. This ensures no other add-on
-    # can "steal" the designated DNS clusterIP.
-    BASE_ADDON_DIR=${KUBE_HOME}/kube-manifests/kubernetes/gci-trusty
-    BASE_DNS_DIR=${BASE_ADDON_DIR}/dns
-    NEW_DNS_DIR=${BASE_ADDON_DIR}/0-dns
-    mkdir "${NEW_DNS_DIR}" && mv "${BASE_DNS_DIR}"/* "${NEW_DNS_DIR}" && rm -r "${BASE_DNS_DIR}"
     if [[ "${CLUSTER_DNS_CORE_DNS:-}" == "true" ]]; then
       echo "coredns addon is not supported"
       exit 1
