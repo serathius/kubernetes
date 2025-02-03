@@ -973,6 +973,15 @@ function gke-setup-gcfs {
     enable_metric_exporter_flag="--enable-metric-exporter=false"
   fi
 
+  # gcfsd read-ahead parameters
+  local enable_single_flighting="--enable_single_flighting=true"
+  local read_ahead_max_blocks="--read_ahead_max_blocks=10"
+  local read_ahead_cache_size_ratio="--read_ahead_cache_size_ratio=0.1"
+
+  # gcfsd read-ahead flag
+  local gcfs_read_ahead_flag="${enable_single_flighting} ${read_ahead_max_blocks} ${read_ahead_cache_size_ratio}"
+
+
   cat <<EOF >/etc/systemd/system/gcfsd.service
 # Systemd configuration for Google Container File System service
 [Unit]
@@ -987,7 +996,7 @@ ExecStartPre=-/bin/umount -f ${gcfsd_mnt_dir}
 ExecStartPre=/bin/mkdir -p ${gcfsd_mnt_dir}
 ExecStartPre=/bin/mkdir -p ${layer_cache_dir}
 ExecStartPre=/bin/mkdir -p $(dirname ${images_in_use_db_path})
-ExecStart=${KUBE_HOME}/bin/gcfsd --mount_point=${gcfsd_mnt_dir} ${gcfs_cache_size_flag} ${gcfs_layer_caching_flag} --images_in_use_db_path=${images_in_use_db_path} --enable_pull_secret_keychain --client_name=GKE ${client_version_flag}
+ExecStart=${KUBE_HOME}/bin/gcfsd --mount_point=${gcfsd_mnt_dir} ${gcfs_cache_size_flag} ${gcfs_layer_caching_flag} --images_in_use_db_path=${images_in_use_db_path} --enable_pull_secret_keychain --client_name=GKE ${client_version_flag} ${gcfs_read_ahead_flag}
 ExecStop=-/bin/umount -f ${gcfsd_mnt_dir}
 RuntimeDirectory=gcfsd
 Restart=on-failure
