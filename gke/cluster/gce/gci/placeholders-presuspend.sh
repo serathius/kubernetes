@@ -4,7 +4,13 @@ set -o nounset
 set -o errexit
 set -o pipefail
 
+# Directory for predownloaded NVIDIA driver versions.
+readonly NVIDIA_PRELOAD_DIR="/home/kubernetes/bin/nvidia-preload"
+
 INIT_STATE_GUEST_ATTRIBUTE="guest-attributes/google-compute/initialization-state"
+
+# Global variable set from node label metadata.
+GPU_DRIVER_VERSION=""
 
 write_to_mds() {
   path="$1"
@@ -32,6 +38,67 @@ wait_for_suspension() {
   done
 }
 
+# Retrieves the GPU driver version from instance metadata and sets the global variable
+# "GPU_DRIVER_VERSION".
+get_gpu_driver_version_from_metadata() {
+  LABELS=$(curl --retry 5 -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/attributes/kube-labels || {
+    log "ERROR: Failed to retrieve metadata."
+    return 1
+  })
+
+  local original_ifs="$IFS"
+  IFS=,; for label in $LABELS; do
+    IFS==; read -r LABEL VALUE <<< "$label"
+    if [[ "${LABEL}" == "cloud.google.com/gke-gpu-driver-version" ]]; then
+      log "Found GPU driver version: $VALUE"
+      GPU_DRIVER_VERSION=$VALUE
+      return 0
+    fi
+  done
+  IFS="$original_ifs"
+
+  log "GPU driver version label not found."
+  return 1
+}
+
+# Mounts the specified pre-downloaded NVIDIA driver ("latest" or "default") based on the
+# retrieved node label metadata. This function assumes both driver versions have already been downloaded.
+# It performs the bind mount and cleans up the unused driver.
+mount_nvidia_driver() {
+  # The node has just been resumed, this means no bootstrapping has run yet, and
+  # /home/kubernetes/bin/nvidia does not exist to perform the bind mount on.
+  # Create the directory because it doesn't exist.
+  local mount_point="/home/kubernetes/bin/nvidia"
+  mkdir -p "${mount_point}"
+
+  # These variables define the directories where the pre-downloaded NVIDIA drivers are stored.
+  local -r preloaded_gpu_driver_dir_latest="${NVIDIA_PRELOAD_DIR}/latest"
+  local -r preloaded_gpu_driver_dir_default="${NVIDIA_PRELOAD_DIR}/default"
+
+  # Proceed with bind mounting
+  if [[ "${GPU_DRIVER_VERSION}" == "latest" && -d "$preloaded_gpu_driver_dir_latest" ]]; then
+    log "Bind mounting latest NVIDIA driver: $preloaded_gpu_driver_dir_latest to $mount_point"
+    mount --bind "$preloaded_gpu_driver_dir_latest" "$mount_point"
+
+    log "Deleting unused driver version: default."
+    # 7 is the lowest priority for systemd-run(ref: https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html).
+    systemd-run --no-block --property=IOSchedulingPriority=7 rm -rf "$preloaded_gpu_driver_dir_default"
+  elif [[ "${GPU_DRIVER_VERSION}" == "default" && -d "$preloaded_gpu_driver_dir_default" ]]; then
+    log "Bind mounting default NVIDIA driver: $preloaded_gpu_driver_dir_default to $mount_point"
+    mount --bind "$preloaded_gpu_driver_dir_default" "$mount_point"
+
+    log "Deleting unused driver version: latest."
+    # 7 is the lowest priority for systemd-run(ref: https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html).
+    systemd-run --no-block --property=IOSchedulingPriority=7 rm -rf "$preloaded_gpu_driver_dir_latest"
+  else
+    log "ERROR: Invalid BoltVMs GPU_DRIVER_VERSION: $GPU_DRIVER_VERSION. Deleting pre-downloaded driver modules due to invalid version."
+    # Clean up both preloaded drivers since neither seem to be valid and are consuming disk space.
+    systemd-run --no-block --property=IOSchedulingPriority=7 rm -rf "$preloaded_gpu_driver_dir_latest" "$preloaded_gpu_driver_dir_default"
+    return 1
+  fi
+
+  return 0
+}
 
 handle_placeholder_vm() {
   log "Starting placeholders-presuspend.sh"
@@ -77,16 +144,14 @@ EOF
   systemctl enable gke-placeholder-resume-trigger.service gke-placeholder-suspend-trigger.service
 
 
-  # TODO: We hardcode the driver verision to latest temporarily.
-  # Once we have the desired GPU driver version in the suspended state group, we will read it from GCE metadata and pass it to the --version.
+  # Ensure this is a node with GPUs before preloading both LATEST & DEFAULT driver versions.
   if lspci | grep -q -i NVIDIA; then
-    local driver_version="latest"
-    log "Pre-installing GPU driver ${driver_version}"
 
-    # Note #1: --no-verify is to skip loading kernel modules. There is a bug of suspend/resume on GPU VMs if kernel modules are loaded.
+    # Note: --no-verify is to skip loading kernel modules. There is a bug of suspend/resume on GPU VMs if kernel modules are loaded.
     # During post-resume, the GPU device plugin will attempt to install the driver again.
     # The cos-gpu-installer will find the driver files are existed thus skipping downloading. And it will load kernel modules.
-    cos-extensions install gpu -- --version="latest" --no-verify --host-dir /home/kubernetes/bin/nvidia
+    cos-extensions install gpu -- --version="latest" --no-verify --host-dir "${NVIDIA_PRELOAD_DIR}/latest"
+    cos-extensions install gpu -- --version="default" --no-verify --host-dir "${NVIDIA_PRELOAD_DIR}/default"
   else
     log "No GPU detected; skipping GPU driver install"
   fi
@@ -106,6 +171,21 @@ EOF
 
   log "Wait for gcr connectivity..."
   systemctl restart gcr-wait-online.service
+
+  # Ensure this is a node with GPUs before querying GPU version from node label &
+  # conducting mount binding to /bin/nvidia
+  if lspci | grep -q -i NVIDIA; then
+    log "NVIDIA GPU detected."
+    if ! get_gpu_driver_version_from_metadata; then
+      log "WARNING: Failed to get GPU driver version from metadata. Skipping mount_nvidia_driver."
+    else
+      if ! mount_nvidia_driver; then
+        log "WARNING: Failed to mount NVIDIA driver. Continuing without mounting preloaded driver."
+      fi
+    fi
+  else
+    log "No NVIDIA GPU detected. Skipping GPU-related operations."
+  fi
 
   log "Restart google-guest-agent.service..."
   systemctl restart google-guest-agent.service
