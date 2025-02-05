@@ -27,7 +27,7 @@ write_files:
       WantedBy=kubernetes.target
 
   - path: /etc/systemd/system/setup-kubernetes-dir.service
-    permissions: 0644
+    permissions: '0644'
     owner: root
     content: |
       [Unit]
@@ -45,7 +45,7 @@ write_files:
       WantedBy=kubernetes.target
 
   - path: /etc/systemd/system/placeholders-presuspend-setup.service
-    permissions: 0644
+    permissions: '0644'
     owner: root
     content: |
       [Unit]
