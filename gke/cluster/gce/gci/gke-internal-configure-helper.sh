@@ -894,6 +894,11 @@ function gke-configure-npd-custom-plugins {
     GKE_NPD_CUSTOM_PLUGINS_CONFIG+=",${config_dir}/node-reboot-monitor.json"
   fi
 
+  # Configure EK VM monitor
+  if [[ "${ENABLE_EK_NPD_PLUGINS:-}" == "true" ]]; then
+    GKE_NPD_CUSTOM_PLUGINS_CONFIG+=",${config_dir}/ek-node-checker/balloon-pod-checker.json,${config_dir}/ek-node-checker/cgroups-cpu-checker.json,${config_dir}/ek-node-checker/cpu-and-ram-balloon-checker.json,${config_dir}/ek-node-checker/cpu-and-ram-balloon-monitor.json,${config_dir}/ek-node-checker/unsupported-configs-checker.json"
+  fi
+
   GKE_NPD_CUSTOM_PLUGINS_CONFIG+=",${config_dir}/swap-monitor.json,${config_dir}/fs-readonly-monitor.json"
 }
 
