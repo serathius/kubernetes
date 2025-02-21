@@ -32,8 +32,6 @@ import (
 	"k8s.io/apiextensions-apiserver/pkg/controller/establish"
 	"k8s.io/apiextensions-apiserver/pkg/controller/finalizer"
 	"k8s.io/apiextensions-apiserver/pkg/controller/nonstructuralschema"
-	openapicontroller "k8s.io/apiextensions-apiserver/pkg/controller/openapi"
-	openapiv3controller "k8s.io/apiextensions-apiserver/pkg/controller/openapiv3"
 	"k8s.io/apiextensions-apiserver/pkg/controller/status"
 	"k8s.io/apiextensions-apiserver/pkg/registry/customresourcedefinition"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -230,18 +228,6 @@ func (c completedConfig) New(delegationTarget genericapiserver.DelegationTarget)
 		// Together they serve the /openapi/v2 endpoint on a generic apiserver. A generic apiserver may
 		// choose to not enable OpenAPI by having null openAPIConfig, and thus OpenAPIVersionedService
 		// and StaticOpenAPISpec are both null. In that case we don't run the CRD OpenAPI controller.
-		if s.GenericAPIServer.StaticOpenAPISpec != nil {
-			if s.GenericAPIServer.OpenAPIVersionedService != nil {
-				openapiController := openapicontroller.NewController(s.Informers.Apiextensions().V1().CustomResourceDefinitions())
-				go openapiController.Run(s.GenericAPIServer.StaticOpenAPISpec, s.GenericAPIServer.OpenAPIVersionedService, hookContext.Done())
-			}
-
-			if s.GenericAPIServer.OpenAPIV3VersionedService != nil {
-				openapiv3Controller := openapiv3controller.NewController(s.Informers.Apiextensions().V1().CustomResourceDefinitions())
-				go openapiv3Controller.Run(s.GenericAPIServer.OpenAPIV3VersionedService, hookContext.Done())
-			}
-		}
-
 		go namingController.Run(hookContext.Done())
 		go establishingController.Run(hookContext.Done())
 		go nonStructuralSchemaController.Run(5, hookContext.Done())
