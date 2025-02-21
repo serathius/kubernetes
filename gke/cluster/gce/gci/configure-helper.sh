@@ -2178,7 +2178,7 @@ function start-kube-scheduler {
 function start-cluster-autoscaler {
   if [[ "${ENABLE_CLUSTER_AUTOSCALER:-}" == "true" ]]; then
     echo "Start kubernetes cluster autoscaler"
-    setup-addon-manifests "addons" "rbac/cluster-autoscaler"
+    setup-addon-manifests "addons" "1-rbac/cluster-autoscaler"
     create-kubeconfig "cluster-autoscaler" "${KUBE_CLUSTER_AUTOSCALER_TOKEN}"
     prepare-log-file /var/log/cluster-autoscaler.log
 
@@ -2573,12 +2573,12 @@ function start-kube-addons {
   local -r dst_dir="/etc/kubernetes/addons"
 
   # prep addition kube-up specific rbac objects
-  setup-addon-manifests "addons" "rbac/kubelet-api-auth"
-  setup-addon-manifests "addons" "rbac/kubelet-cert-rotation"
+  setup-addon-manifests "addons" "1-rbac/kubelet-api-auth"
+  setup-addon-manifests "addons" "1-rbac/kubelet-cert-rotation"
   if [[ "${REGISTER_MASTER_KUBELET:-false}" == "true" ]]; then
-    setup-addon-manifests "addons" "rbac/legacy-kubelet-user"
+    setup-addon-manifests "addons" "1-rbac/legacy-kubelet-user"
   else
-    setup-addon-manifests "addons" "rbac/legacy-kubelet-user-disable"
+    setup-addon-manifests "addons" "1-rbac/legacy-kubelet-user-disable"
   fi
 
   if [[ "${ENABLE_POD_SECURITY_POLICY:-}" == "true" ]]; then
@@ -2698,7 +2698,7 @@ function start-lb-controller {
     echo "Start GCE L7 pod"
     prepare-log-file /var/log/glbc.log
     setup-addon-manifests "addons" "cluster-loadbalancing/glbc"
-    setup-addon-manifests "addons" "rbac/cluster-loadbalancing/glbc"
+    setup-addon-manifests "addons" "1-rbac/cluster-loadbalancing/glbc"
     create-kubeconfig "l7-lb-controller" "${GCE_GLBC_TOKEN}"
 
     local -r src_manifest="${KUBE_HOME}/kube-manifests/kubernetes/gci-trusty/glbc.manifest"

@@ -82,7 +82,7 @@ function start_internal_ca {
   local -r manifests_dir="${KUBE_HOME}/kube-manifests/kubernetes/gci-trusty"
 
   # Re-using Cluster Autoscaler setup functions from OSS
-  setup-addon-manifests "addons" "rbac/cluster-autoscaler"
+  setup-addon-manifests "addons" "1-rbac/cluster-autoscaler"
   create-kubeconfig "cluster-autoscaler" ${KUBE_CLUSTER_AUTOSCALER_TOKEN}
 
   # Add our GKE specific CRD
