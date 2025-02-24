@@ -439,7 +439,6 @@ function kube::release::package_kube_manifests_tarball() {
   local dst_dir="${release_stage}/gci-trusty"
   mkdir -p "${dst_dir}"
   cp "${src_dir}/kube-proxy.manifest" "${dst_dir}/"
-  cp "${src_dir}/cluster-autoscaler.manifest" "${dst_dir}/"
   cp "${src_dir}/kube-apiserver.manifest" "${dst_dir}"
   cp "${src_dir}/konnectivity-server.yaml" "${dst_dir}"
   cp "${src_dir}/abac-authz-policy.jsonl" "${dst_dir}"

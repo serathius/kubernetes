@@ -2171,36 +2171,10 @@ function start-kube-scheduler {
 }
 
 # Starts cluster autoscaler.
-# Assumed vars (which are calculated in function compute-master-manifest-variables)
-#   CLOUD_CONFIG_OPT
-#   CLOUD_CONFIG_VOLUME
-#   CLOUD_CONFIG_MOUNT
 function start-cluster-autoscaler {
   if [[ "${ENABLE_CLUSTER_AUTOSCALER:-}" == "true" ]]; then
-    echo "Start kubernetes cluster autoscaler"
-    setup-addon-manifests "addons" "1-rbac/cluster-autoscaler"
-    create-kubeconfig "cluster-autoscaler" "${KUBE_CLUSTER_AUTOSCALER_TOKEN}"
-    prepare-log-file /var/log/cluster-autoscaler.log
-
-    # Remove salt comments and replace variables with values
-    local -r src_file="${KUBE_HOME}/kube-manifests/kubernetes/gci-trusty/cluster-autoscaler.manifest"
-
-    local params
-    read -r -a params <<< "${AUTOSCALER_MIG_CONFIG}"
-    params+=("${CLOUD_CONFIG_OPT}" "${AUTOSCALER_EXPANDER_CONFIG:---expander=price}")
-    params+=("--kubeconfig=/etc/srv/kubernetes/cluster-autoscaler/kubeconfig")
-
-    # split the params into separate arguments passed to binary
-    local params_split
-    params_split=$(eval 'for param in "${params[@]}"; do echo -n \""$param"\",; done')
-    params_split=${params_split%?}
-
-    sed -i -e "s@{{params}}@${params_split}@g" "${src_file}"
-    sed -i -e "s@{{cloud_config_mount}}@${CLOUD_CONFIG_MOUNT}@g" "${src_file}"
-    sed -i -e "s@{{cloud_config_volume}}@${CLOUD_CONFIG_VOLUME}@g" "${src_file}"
-    sed -i -e "s@{%.*%}@@g" "${src_file}"
-
-    cp "${src_file}" /etc/kubernetes/manifests
+    echo "Error: Got ENABLE_CLUSTER_AUTOSCALER=true while cluster-autoscaler is deployed via CRP"
+    exit 1
   fi
 }
 
