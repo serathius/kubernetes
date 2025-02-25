@@ -1514,8 +1514,8 @@ log-wrap 'EnsureContainerRuntime' ensure-container-runtime
 # binaries and kube-system manifests
 log-wrap 'InstallKubeBinaryConfig' install-kube-binary-config
 
-# install Riptide components on non-Ubuntu nodes
-if ! is-ubuntu && [[ "${KUBERNETES_MASTER:-}" != "true" ]]; then
+# install Riptide components
+if [[ "${KUBERNETES_MASTER:-}" != "true" ]]; then
   log-wrap 'InstallRiptide' install-riptide
 fi
 
