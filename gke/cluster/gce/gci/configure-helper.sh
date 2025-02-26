@@ -3142,7 +3142,7 @@ function main() {
     KUBE_CONTROLLER_MANAGER_TOKEN="$(secure_random 32)"
     KUBE_SCHEDULER_TOKEN="$(secure_random 32)"
     KUBE_CLUSTER_AUTOSCALER_TOKEN="$(secure_random 32)"
-    if [[ -z "${KUBE_BEARER_TOKEN:-}" ]]; then
+    if [[ -z "${KUBE_BEARER_TOKEN:-}" ]]  && [[ "${LOCAL_ADMIN_GKE_EXEC_AUTH:-false}" == "false" ]]; then
       KUBE_BEARER_TOKEN="$(secure_random 32)"
     fi
     if [[ "${ENABLE_L7_LOADBALANCING:-}" == "glbc" ]]; then

@@ -198,7 +198,11 @@ function gke-internal-master-start {
     create-static-auth-kubeconfig-for-component mastertest
   fi
 
-  if [[ -n "${KUBE_BEARER_TOKEN:-}" ]]; then
+  if [[ "${LOCAL_ADMIN_GKE_EXEC_AUTH:-false}" == "true" ]] && [[ -n "${TOKEN_URL:-}" ]] && [[ -n "${TOKEN_BODY_UNQUOTED:-}" ]]; then
+    echo "setting up local admin kubeconfig with gke-exec-auth-plugin"
+    create-kcp-admin-kubeconfig
+    echo "export KUBECONFIG=/etc/srv/kubernetes/local-admin/kubeconfig" > /etc/profile.d/kubeconfig.sh
+  elif [[ -n "${KUBE_BEARER_TOKEN:-}" ]]; then
     echo "setting up local admin kubeconfig"
     create-kubeconfig "local-admin" "${KUBE_BEARER_TOKEN}"
     echo "export KUBECONFIG=/etc/srv/kubernetes/local-admin/kubeconfig" > /etc/profile.d/kubeconfig.sh
@@ -1179,3 +1183,35 @@ providers:
     defaultCacheDuration: 1m
 EOF
 }
+
+function create-kcp-admin-kubeconfig {
+  mkdir -p "/etc/srv/kubernetes/local-admin"
+  cat > "/etc/srv/kubernetes/local-admin/kubeconfig" << EOF
+apiVersion: v1
+kind: Config
+users:
+- name: local-admin
+  user:
+    exec:
+      apiVersion: "client.authentication.k8s.io/v1beta1"
+      command: /home/kubernetes/bin/gke-exec-auth-plugin
+      args:
+      - --mode=alt-token
+      - --alt-token-url=${TOKEN_URL}
+      - --alt-token-body=${TOKEN_BODY_UNQUOTED}
+clusters:
+- name: local
+  cluster:
+    certificate-authority-data: ${CA_CERT}
+    server: https://${KUBE_APISERVER_INTERNAL_ADDRESS}:443
+    disable-compression: true
+contexts:
+- context:
+    cluster: local
+    user: local-admin
+  name: local-admin
+current-context: local-admin
+EOF
+}
+
+
