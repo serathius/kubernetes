@@ -652,8 +652,10 @@ function Write_PkiData {
   # This command writes out a PEM certificate file, analogous to "base64
   # --decode" on Linux. See https://stackoverflow.com/a/51914136/1230197.
   [IO.File]::WriteAllBytes($File, [Convert]::FromBase64String($Data))
-  Log_Todo ("need to set permissions correctly on ${File}; not sure what the " +
-            "Windows equivalent of 'umask 077' is")
+
+  # The permissions for ${File}; may need to be updated for Windows
+  # to match Linux's 'umask 077'.
+  #
   # Linux: owned by root, rw by user only.
   #   -rw------- 1 root root 1.2K Oct 12 00:56 ca-certificates.crt
   #   -rw------- 1 root root 1.3K Oct 12 00:56 kubelet.crt
