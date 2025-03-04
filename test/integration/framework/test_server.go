@@ -74,29 +74,30 @@ type TearDownFunc func()
 func StartTestServer(ctx context.Context, t testing.TB, setup TestServerSetup) (client.Interface, *rest.Config, TearDownFunc) {
 	ctx, cancel := context.WithCancel(ctx)
 
+	server := NewTestServer(ctx, t, setup)
+	config := server.Run(ctx)
+
+	client, err := client.NewForConfig(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return client, config, func() {
+		cancel()
+		server.Wait()
+	}
+}
+
+func NewTestServer(ctx context.Context, t testing.TB, setup TestServerSetup) *TestServer {
+
 	certDir, err := os.MkdirTemp("", "test-integration-"+strings.ReplaceAll(t.Name(), "/", "_"))
 	if err != nil {
 		t.Fatalf("Couldn't create temp dir: %v", err)
 	}
-
-	var errCh chan error
-	tearDownFn := func() {
-		// Calling cancel function is stopping apiserver and cleaning up
-		// after itself, including shutting down its storage layer.
-		cancel()
-
-		// If the apiserver was started, let's wait for it to
-		// shutdown clearly.
-		if errCh != nil {
-			err, ok := <-errCh
-			if ok && err != nil {
-				t.Error(err)
-			}
-		}
+	t.Cleanup(func() {
 		if err := os.RemoveAll(certDir); err != nil {
 			t.Log(err)
 		}
-	}
+	})
 
 	_, defaultServiceClusterIPRange, _ := netutils.ParseCIDRSloppy("10.0.0.0/24")
 	proxySigningKey, err := utils.NewPrivateKey()
@@ -212,29 +213,44 @@ func StartTestServer(ctx context.Context, t testing.TB, setup TestServerSetup) (
 	if setup.ModifyServerConfig != nil {
 		setup.ModifyServerConfig(kubeAPIServerConfig)
 	}
-	kubeAPIServer, err := kubeAPIServerConfig.Complete().New(genericapiserver.NewEmptyDelegate())
+	return &TestServer{
+		t:       t,
+		Config:  kubeAPIServerConfig,
+		CertDir: certDir,
+	}
+}
+
+type TestServer struct {
+	t       testing.TB
+	Config  *controlplane.Config
+	ErrChan chan error
+	CertDir string
+}
+
+func (s *TestServer) Run(ctx context.Context) *rest.Config {
+	kubeAPIServer, err := s.Config.Complete().New(genericapiserver.NewEmptyDelegate())
 	if err != nil {
-		t.Fatal(err)
+		s.t.Fatal(err)
 	}
 
-	errCh = make(chan error)
+	s.ErrChan = make(chan error)
 	go func() {
-		defer close(errCh)
+		defer close(s.ErrChan)
 		if err := kubeAPIServer.ControlPlane.GenericAPIServer.PrepareRun().RunWithContext(ctx); err != nil {
-			errCh <- err
+			s.ErrChan <- err
 		}
 	}()
 
 	// Adjust the loopback config for external use (external server name and CA)
-	kubeAPIServerClientConfig := rest.CopyConfig(kubeAPIServerConfig.ControlPlane.Generic.LoopbackClientConfig)
-	kubeAPIServerClientConfig.CAFile = path.Join(certDir, "apiserver.crt")
+	kubeAPIServerClientConfig := rest.CopyConfig(s.Config.ControlPlane.Generic.LoopbackClientConfig)
+	kubeAPIServerClientConfig.CAFile = path.Join(s.CertDir, "apiserver.crt")
 	kubeAPIServerClientConfig.CAData = nil
 	kubeAPIServerClientConfig.ServerName = ""
 
 	// wait for health
 	err = wait.PollImmediate(100*time.Millisecond, 10*time.Second, func() (done bool, err error) {
 		select {
-		case err := <-errCh:
+		case err := <-s.ErrChan:
 			return false, err
 		default:
 		}
@@ -245,7 +261,7 @@ func StartTestServer(ctx context.Context, t testing.TB, setup TestServerSetup) (
 		kubeClient, err := client.NewForConfig(healthzConfig)
 		if err != nil {
 			// this happens because we race the API server start
-			t.Log(err)
+			s.t.Log(err)
 			return false, nil
 		}
 
@@ -265,13 +281,19 @@ func StartTestServer(ctx context.Context, t testing.TB, setup TestServerSetup) (
 		return true, nil
 	})
 	if err != nil {
-		t.Fatal(err)
+		s.t.Fatal(err)
 	}
 
-	kubeAPIServerClient, err := client.NewForConfig(kubeAPIServerClientConfig)
-	if err != nil {
-		t.Fatal(err)
-	}
+	return kubeAPIServerClientConfig
+}
 
-	return kubeAPIServerClient, kubeAPIServerClientConfig, tearDownFn
+func (s *TestServer) Wait() {
+	// If the apiserver was started, let's wait for it to
+	// shutdown clearly.
+	if s.ErrChan != nil {
+		err, ok := <-s.ErrChan
+		if ok && err != nil {
+			s.t.Error(err)
+		}
+	}
 }
