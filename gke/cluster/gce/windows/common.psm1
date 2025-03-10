@@ -633,21 +633,6 @@ Rotate-Files -Pattern '${Pattern}' -Path '${Path}' -Config `$config
   }
 }
 
-# Returns true if this node is part of a test cluster (see
-# cluster/gce/config-test.sh). $KubeEnv is a hash table containing the kube-env
-# metadata keys+values.
-function Test-IsTestCluster {
-  param (
-    [parameter(Mandatory=$true)] [hashtable]$KubeEnv
-  )
-
-  if ($KubeEnv.Contains('TEST_CLUSTER') -and `
-      ($KubeEnv['TEST_CLUSTER'] -eq 'true')) {
-    return $true
-  }
-  return $false
-}
-
 # Returns true if this node uses a plugin to support authentication to the
 # master, e.g. for TPM-based authentication. $KubeEnv is a hash table
 # containing the kube-env metadata keys+values.
