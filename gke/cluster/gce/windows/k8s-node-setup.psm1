@@ -66,9 +66,9 @@ $AUTH_PROVIDER_GCP_VERSION = 'v0.1.0-gke.0'
 $AUTH_PROVIDER_GCP_HASH_WINDOWS_AMD64 = 'f245aebf6783b3b895b2045509bb88eed68ce7a6da3a7e1fd91406d9dced64c4d7b84128b66683020d7ac531b779218eb94f3c0d50198ff934a7ed5b523ea50a'
 
 # gke exec auth plugin version
-$EXEC_AUTH_PLUGIN_VERSION="internal/gke-internal-branch-v1-31/c41916da792183068bb56af4129dbd4718fa1708"
+$EXEC_AUTH_PLUGIN_VERSION="internal/gke-internal-branch-v1-32/9fe84096b5d1eaf8d963c9d4c6dbf9f24db01750"
 # gke exec auth plugin hash
-$EXEC_AUTH_PLUGIN_WINDOWS_AMD64_HASH="e4db43139e5a04b41350dab20cb1fa97db13f3bd066e0d831ccd2af0b317fb2f1c39a0f60e583daa3f2622af78f5b032e0537789f1d0e51020349010ed1d5d91"
+$EXEC_AUTH_PLUGIN_WINDOWS_AMD64_HASH="b2df75ba7facd97de0f6bb749a6355a74b969b68511cffde3822a65a8f6a8274a770e2a10d5f916c77b68832b334b9bca73e674afb8c022cfdde177f2b47cfbb"
 $EXEC_AUTH_PLUGIN_LICENSE_URL="https://storage.googleapis.com/gke-prod-binaries/gke-exec-auth-plugin/${EXEC_AUTH_PLUGIN_VERSION}/LICENSE"
 $EXEC_AUTH_PLUGIN_WINDOWS_AMD64_URL="https://storage.googleapis.com/gke-prod-binaries/gke-exec-auth-plugin/${EXEC_AUTH_PLUGIN_VERSION}/windows_amd64/gke-exec-auth-plugin.exe"
 
