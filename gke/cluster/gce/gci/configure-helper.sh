@@ -633,11 +633,19 @@ function ensure-local-ssds-ephemeral-storage-data-cache() {
   local device="${available_devices[0]}"
   md_device="/dev/md/kubelet_ephemeral_storage"
   if [ "${#available_devices[@]}" -ne 1 ]; then
-    device="${md_device}"
-    if [ ! -e "${device}" ]; then
+    local -r seen_arrays=(/dev/md/*)
+    local found_existing=false
+    for dir in "${seen_arrays[@]}"; do
+      if [[ "$dir" == "/dev/md/kubelet_ephemeral_storage"* ]]; then
+        echo "Using existing RAID array ${dir} for the devices"
+        device="${dir}"
+        found_existing=true
+        break
+      fi
+    done
+    if [ "$found_existing" == false ]; then
+      device="${md_device}"
       echo "y" | mdadm --create "${device}" --level=0 --raid-devices=${#available_devices[@]} "${available_devices[@]}"
-    else
-      echo "Using existing RAID array ${md_device} for the devices"
     fi
   fi
 
