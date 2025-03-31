@@ -11,10 +11,6 @@ function get-credentials {
     "${GCE_METADATA_INTERNAL}/service-accounts/default/token" \
   | python3 -c 'import sys; import json; print(json.loads(sys.stdin.read())["access_token"])'
 }
-
-function is-ubuntu {
-  [[ -f "/etc/os-release" && $(grep ^NAME= /etc/os-release) == 'NAME="Ubuntu"' ]]
-}
 # --- END ---
 
 # Returns TLS SNI param for kube-apiserver.
@@ -449,10 +445,6 @@ EOF
 
 function configure-containerd-customization {
   echo "Configuring private CA for container registries using GSM"
-  if is-ubuntu; then
-    echo "containerd customization is only supported on COS, skipping"
-    return
-  fi
   if [[ -n "${CONTAINERD_PRIVATE_CA_GSM_CERT:-}" ]]; then
     mkdir -p "${CONTAINERD_CRI_REGISTRY_HOSTPATH_CERTS_ROOT}"
 
@@ -479,10 +471,6 @@ function configure-containerd-customization {
 # If your new containerd feature uses CRI registry hostpath config model,
 # update this function to include it.
 function use-containerd-cri-registry-hostpath {
-  if is-ubuntu; then
-    echo "false"
-    return
-  fi
   if [[ -n "${CONTAINERD_PRIVATE_CA_GSM_CERT:-}" ]]; then
     echo "true"
     return
