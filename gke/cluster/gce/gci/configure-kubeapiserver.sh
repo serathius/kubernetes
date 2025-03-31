@@ -288,6 +288,8 @@ function start-kube-apiserver {
   fi
   if [[ -n "${KUBE_EMULATED_VERSION:-}" ]]; then
     params+=" --emulated-version=kube=${KUBE_EMULATED_VERSION}"
+    params+=" --emulation-forward-compatible=true"
+    params+=" --runtime-config-emulation-forward-compatible=true"
   fi
   if [[ -n "${MASTER_ADVERTISE_ADDRESS:-}" ]]; then
     params+=" --advertise-address=${MASTER_ADVERTISE_ADDRESS}"
