@@ -89,6 +89,10 @@ function setup-os-params {
   fi
 }
 
+function is-ubuntu {
+  [[ -f "/etc/os-release" && $(grep ^NAME= /etc/os-release) == 'NAME="Ubuntu"' ]]
+}
+
 # secure_random generates a secure random string of bytes. This function accepts
 # a number of secure bytes desired and returns a base64 encoded string with at
 # least the requested entropy. Rather than directly reading from /dev/urandom,
@@ -2989,6 +2993,39 @@ function setup-hugepages {
   fi
 }
 
+function setup-swap {
+  # In private preview stage, set Swap on boot disk by default.
+  local swap_file_on_boot
+  if is-ubuntu; then
+    swap_file_on_boot=/swapfile
+  else
+    swap_file_on_boot=/mnt/stateful_partition/swapfile
+  fi
+
+  # Always remove GKE-provisioned swap file if it exists at bootstrap
+  if [[ -f "$swap_file_on_boot" ]]; then
+    swapoff -a
+    rm -f "${swap_file_on_boot}"
+  fi
+
+  # Enable Swap if user specifies swap file size
+  if [[ -n "${NODE_SWAP_SIZE:-}" ]]; then
+    echo "Create swap file with ${NODE_SWAP_SIZE} in ${swap_file_on_boot}."
+    swapoff -a
+    fallocate -l "${NODE_SWAP_SIZE}" "${swap_file_on_boot}"
+    # Swap should be accessible only by root
+    chmod 600 "${swap_file_on_boot}"
+
+    mkswap "${swap_file_on_boot}"
+    # Setting a specific low priority as default configuration ensures
+    # customer-defined swap takes precedence (higher the priority, more preferencial).
+    swapon -p 10 "${swap_file_on_boot}"
+
+    # Disable swap on system cgroup. This runs before start-kubelet.
+    systemctl set-property system.slice MemorySwapMax=0
+  fi
+}
+
 ########### Main Function ###########
 function main() {
   echo "Start to configure instance for kubernetes"
@@ -3092,6 +3129,7 @@ function main() {
   else
     # Need to be done before the kubelet starts
     log-wrap 'SetupHugepages' setup-hugepages
+    log-wrap 'SetupSwap' setup-swap
     log-wrap 'CreateNodePKI' create-node-pki
     log-wrap 'CreateKubeletKubeconfig' create-kubelet-kubeconfig "${KUBERNETES_MASTER_NAME}"
     if [[ "${KUBE_PROXY_DAEMONSET:-}" != "true" ]] && [[ "${KUBE_PROXY_DISABLE:-}" != "true" ]]; then
