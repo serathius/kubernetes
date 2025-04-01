@@ -1960,81 +1960,6 @@ function wait-till-etcd-ready {
   echo "etcd was reported as healthy by gke-master-healthcheck"
 }
 
-# Replaces the variables in the konnectivity-server manifest file with the real values, and then
-# copy the file to the manifest dir
-# $1: value for variable "agent_port"
-# $2: value for variable "health_port"
-# $3: value for variable "admin_port"
-function prepare-konnectivity-server-manifest {
-  local -r temp_file="/tmp/konnectivity-server.yaml"
-  params=()
-  cp "${KUBE_HOME}/kube-manifests/kubernetes/gci-trusty/konnectivity-server.yaml" "${temp_file}"
-  params+=("--log-file=/var/log/konnectivity-server.log")
-  params+=("--logtostderr=false")
-  params+=("--log-file-max-size=0")
-  params+=("--uds-name=/etc/srv/kubernetes/konnectivity-server/konnectivity-server.socket")
-  params+=("--cluster-cert=/etc/srv/kubernetes/pki/apiserver.crt")
-  params+=("--cluster-key=/etc/srv/kubernetes/pki/apiserver.key")
-  if [[ "${KONNECTIVITY_SERVICE_PROXY_PROTOCOL_MODE:-grpc}" == 'grpc' ]]; then
-    params+=("--mode=grpc")
-  elif [[ "${KONNECTIVITY_SERVICE_PROXY_PROTOCOL_MODE:-grpc}" == 'http-connect' ]]; then
-    params+=("--mode=http-connect")
-  else
-    echo "KONNECTIVITY_SERVICE_PROXY_PROTOCOL_MODE must be set to either grpc or http-connect"
-    exit 1
-  fi
-
-  params+=("--server-port=0")
-  params+=("--agent-port=$1")
-  params+=("--health-port=$2")
-  params+=("--admin-port=$3")
-  params+=("--agent-namespace=kube-system")
-  params+=("--agent-service-account=konnectivity-agent")
-  params+=("--kubeconfig=/etc/srv/kubernetes/konnectivity-server/kubeconfig")
-  params+=("--authentication-audience=system:konnectivity-server")
-  params+=("--kubeconfig-qps=75")
-  params+=("--kubeconfig-burst=150")
-  konnectivity_args=""
-  for param in "${params[@]}"; do
-    konnectivity_args+=", \"${param}\""
-  done
-  sed -i -e "s@{{ *konnectivity_args *}}@${konnectivity_args}@g" "${temp_file}"
-  sed -i -e "s@{{ *agent_port *}}@$1@g" "${temp_file}"
-  sed -i -e "s@{{ *health_port *}}@$2@g" "${temp_file}"
-  sed -i -e "s@{{ *admin_port *}}@$3@g" "${temp_file}"
-  sed -i -e "s@{{ *liveness_probe_initial_delay *}}@30@g" "${temp_file}"
-  if [[ -n "${KONNECTIVITY_SERVER_RUNASUSER:-}" && -n "${KONNECTIVITY_SERVER_RUNASGROUP:-}" && -n "${KONNECTIVITY_SERVER_SOCKET_WRITER_GROUP:-}" ]]; then
-    sed -i -e "s@{{ *run_as_user *}}@runAsUser: ${KONNECTIVITY_SERVER_RUNASUSER}@g" "${temp_file}"
-    sed -i -e "s@{{ *run_as_group *}}@runAsGroup: ${KONNECTIVITY_SERVER_RUNASGROUP}@g" "${temp_file}"
-    sed -i -e "s@{{ *supplemental_groups *}}@supplementalGroups: [${KUBE_PKI_READERS_GROUP}]@g" "${temp_file}"
-    sed -i -e "s@{{ *container_security_context *}}@securityContext:@g" "${temp_file}"
-    sed -i -e "s@{{ *capabilities *}}@capabilities:@g" "${temp_file}"
-    sed -i -e "s@{{ *drop_capabilities *}}@drop: [ ALL ]@g" "${temp_file}"
-    sed -i -e "s@{{ *disallow_privilege_escalation *}}@allowPrivilegeEscalation: false@g" "${temp_file}"
-    mkdir -p /etc/srv/kubernetes/konnectivity-server/
-    chown -R "${KONNECTIVITY_SERVER_RUNASUSER}":"${KONNECTIVITY_SERVER_RUNASGROUP}" /etc/srv/kubernetes/konnectivity-server
-    chmod g+w /etc/srv/kubernetes/konnectivity-server
-  else
-    sed -i -e "s@{{ *run_as_user *}}@@g" "${temp_file}"
-    sed -i -e "s@{{ *run_as_group *}}@@g" "${temp_file}"
-    sed -i -e "s@{{ *supplemental_groups *}}@@g" "${temp_file}"
-    sed -i -e "s@{{ *container_security_context *}}@@g" "${temp_file}"
-    sed -i -e "s@{{ *capabilities *}}@@g" "${temp_file}"
-    sed -i -e "s@{{ *drop_capabilities *}}@@g" "${temp_file}"
-    sed -i -e "s@{{ *disallow_privilege_escalation *}}@@g" "${temp_file}"
-  fi
-  mv "${temp_file}" /etc/kubernetes/manifests
-}
-
-# Starts konnectivity server pod.
-# More specifically, it prepares dirs and files, sets the variable value
-# in the manifests, and copies them to /etc/kubernetes/manifests.
-function start-konnectivity-server {
-  echo "Start konnectivity server pods"
-  prepare-log-file /var/log/konnectivity-server.log "${KONNECTIVITY_SERVER_RUNASUSER:-0}"
-  prepare-konnectivity-server-manifest "8132" "8133" "8134"
-}
-
 # Calculates the following variables based on env variables, which will be used
 # by the manifests of several kube-master components.
 #   CLOUD_CONFIG_OPT
@@ -2584,10 +2509,9 @@ EOF
   if [[ "${ENABLE_NVIDIA_GPU_DEVICE_PLUGIN:-}" == "true" ]]; then
     setup-addon-manifests "addons" "device-plugins/nvidia-gpu"
   fi
-  # Setting up the konnectivity-agent daemonset
   if [[ "${RUN_KONNECTIVITY_PODS:-false}" == "true" ]]; then
-    setup-addon-manifests "addons" "konnectivity-agent"
-    setup-konnectivity-agent-manifest
+    echo "konnectivity agent addon is not supported"
+    exit 1
   fi
   if [[ "${ENABLE_CLUSTER_DNS:-}" == "true" ]]; then
     if [[ "${CLUSTER_DNS_CORE_DNS:-}" == "true" ]]; then
@@ -2648,11 +2572,6 @@ EOF
     echo "kube-addon-manager is not configured (KUBE_ADDON_MANAGER_CRP=${KUBE_ADDON_MANAGER_CRP:-false})"
     exit 1
   fi
-}
-
-function setup-konnectivity-agent-manifest {
-    local -r manifest="/etc/kubernetes/addons/konnectivity-agent/konnectivity-agent-ds.yaml"
-    sed -i "s|__APISERVER_IP__|${KUBERNETES_MASTER_NAME}|g" "${manifest}"
 }
 
 # Setups manifests for ingress controller and gce-specific policies for service controller.
@@ -3278,7 +3197,8 @@ function main() {
       fi
     fi
     if [[ "${RUN_KONNECTIVITY_PODS:-false}" == "true" ]]; then
-      log-wrap 'StartKonnectivityServer' start-konnectivity-server
+      echo "konnectivity server addon is not supported"
+      exit 1
     fi
     log-wrap 'StartKubeControllerManager' start-kube-controller-manager
     log-wrap 'StartKubeScheduler' start-kube-scheduler
