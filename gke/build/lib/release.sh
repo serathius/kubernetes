@@ -308,24 +308,6 @@ function kube::release::sha1() {
   fi
 }
 
-function kube::release::build_conformance_image() {
-  local -r arch="$1"
-  local -r registry="$2"
-  local -r version="$3"
-  local -r save_dir="${4-}"
-  kube::log::status "Building conformance image for arch: ${arch}"
-  ARCH="${arch}" REGISTRY="${registry}" VERSION="${version}" \
-    make -C cluster/images/conformance/ build >/dev/null
-
-  local conformance_tag
-  conformance_tag="${registry}/conformance-${arch}:${version}"
-  if [[ -n "${save_dir}" ]]; then
-    "${DOCKER[@]}" save "${conformance_tag}" > "${save_dir}/conformance-${arch}.tar"
-  fi
-  kube::log::status "Deleting conformance image ${conformance_tag}"
-  "${DOCKER[@]}" rmi "${conformance_tag}" &>/dev/null || true
-}
-
 # This builds all the release docker images (One docker image per binary)
 # Args:
 #  $1 - binary_dir, the directory to save the tared images to.
@@ -415,11 +397,6 @@ function kube::release::create_docker_images_for_server() {
         "${DOCKER[@]}" rmi "${docker_image_tag}" &>/dev/null || true
       ) &
     done
-
-    if [[ "${KUBE_BUILD_CONFORMANCE}" =~ [yY] ]]; then
-      kube::release::build_conformance_image "${arch}" "${docker_registry}" \
-        "${docker_tag}" "${images_dir}" &
-    fi
 
     kube::util::wait-for-jobs || { kube::log::error "previous Docker build failed"; return 1; }
     kube::log::status "Docker builds done"
