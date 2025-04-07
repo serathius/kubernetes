@@ -2574,31 +2574,11 @@ EOF
   fi
 }
 
-# Setups manifests for ingress controller and gce-specific policies for service controller.
+# No-op function ensuring glbc addon is not being requested
 function start-lb-controller {
-  setup-addon-manifests "addons" "loadbalancing"
-
-  # Starts a l7 loadbalancing controller for ingress.
   if [[ "${ENABLE_L7_LOADBALANCING:-}" == "glbc" ]]; then
-    echo "Start GCE L7 pod"
-    prepare-log-file /var/log/glbc.log
-    setup-addon-manifests "addons" "cluster-loadbalancing/glbc"
-    setup-addon-manifests "addons" "1-rbac/cluster-loadbalancing/glbc"
-    create-kubeconfig "l7-lb-controller" "${GCE_GLBC_TOKEN}"
-
-    local -r src_manifest="${KUBE_HOME}/kube-manifests/kubernetes/gci-trusty/glbc.manifest"
-    local -r dest_manifest="/etc/kubernetes/manifests/glbc.manifest"
-
-    if [[ -n "${CUSTOM_INGRESS_YAML:-}" ]]; then
-      echo "${CUSTOM_INGRESS_YAML}" > "${dest_manifest}"
-    else
-      cp "${src_manifest}" "${dest_manifest}"
-    fi
-
-    # Override the glbc image if GCE_GLBC_IMAGE is specified.
-    if [[ -n "${GCE_GLBC_IMAGE:-}" ]]; then
-      sed -i "s|image:.*|image: ${GCE_GLBC_IMAGE}|" "${dest_manifest}"
-    fi
+    echo "ENABLE_L7_LOADBALANCING=glbc addon not supported, must be deployed via CRP"
+    exit 1
   fi
 }
 
