@@ -2501,7 +2501,8 @@ EOF
     sed -i -e "s@{{ metrics_server_min_cluster_size }}@${metrics_server_min_cluster_size}@g" "${metrics_server_yaml}"
   fi
   if [[ "${ENABLE_NVIDIA_GPU_DEVICE_PLUGIN:-}" == "true" ]]; then
-    setup-addon-manifests "addons" "device-plugins/nvidia-gpu"
+    echo "device-plugin addon is not supported"
+    exit 1
   fi
   if [[ "${RUN_KONNECTIVITY_PODS:-false}" == "true" ]]; then
     echo "konnectivity agent addon is not supported"
