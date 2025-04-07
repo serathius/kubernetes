@@ -2424,8 +2424,8 @@ EOF
 
   if [[ "${ENABLE_DNS_HORIZONTAL_AUTOSCALER:-}" == "true" ]]; then
     if [[ "${DNS_HORIZONTAL_AUTOSCALER_CRP:-false}" != "true" ]]; then
-      setup-addon-manifests "addons" "dns-horizontal-autoscaler" "gce"
-      local -r dns_autoscaler_file="${dst_dir}/dns-horizontal-autoscaler/dns-horizontal-autoscaler.yaml"
+      echo "dns-horizontal-autoscaler addon not supported"
+      exit 1
     else
       echo "dns-horizontal-autoscaler configured via CRP"
     fi
