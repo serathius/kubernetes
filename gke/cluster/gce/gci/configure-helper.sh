@@ -3009,6 +3009,33 @@ function setup-swap {
   fi
 }
 
+# Setup transparent hugepage based on provided flags
+function setup-transparent-hugepage {
+  if [[ -n "${TRANSPARENT_HUGEPAGE_ENABLED:-}" ]]; then
+    echo "${TRANSPARENT_HUGEPAGE_ENABLED}" > /sys/kernel/mm/transparent_hugepage/enabled
+    actual="$(cat /sys/kernel/mm/transparent_hugepage/enabled)"
+    # Check if the actual content contains the desired value enclosed in brackets
+    # e.g., checks if "[never]" is a substring of the file content
+    if [[ "${actual}" != *"[${TRANSPARENT_HUGEPAGE_ENABLED}]"* ]]; then
+      echo "Warning: Failed to verify Transparent Hugepage Enabled setting. Actual content: '${actual}' (Expected pattern '[${TRANSPARENT_HUGEPAGE_ENABLED}]' not found)."
+    else
+      echo "Successfully set and verified Transparent Hugepage Enabled as '${actual}'."
+    fi
+  fi
+
+  if [[ -n "${TRANSPARENT_HUGEPAGE_DEFRAG:-}" ]]; then
+    echo "${TRANSPARENT_HUGEPAGE_DEFRAG}" > /sys/kernel/mm/transparent_hugepage/defrag
+    actual="$(cat /sys/kernel/mm/transparent_hugepage/defrag)"
+    # Check if the actual content contains the desired value enclosed in brackets
+    # e.g., checks if "[madvise]" is a substring of the file content
+    if [[ "${actual}" != *"[${TRANSPARENT_HUGEPAGE_DEFRAG}]"* ]]; then
+      echo "Warning: Failed to verify Transparent Hugepage Defrag setting. Actual content: '${actual}' (Expected pattern '[${TRANSPARENT_HUGEPAGE_DEFRAG}]' not found)."
+    else
+      echo "Successfully set and verified Transparent Hugepage Defrag as '${actual}'."
+    fi
+  fi
+}
+
 ########### Main Function ###########
 function main() {
   echo "Start to configure instance for kubernetes"
@@ -3111,6 +3138,7 @@ function main() {
   else
     # Need to be done before the kubelet starts
     log-wrap 'SetupHugepages' setup-hugepages
+    log-wrap 'SetupTransparentHugepage' setup-transparent-hugepage
     log-wrap 'SetupSwap' setup-swap
     log-wrap 'CreateNodePKI' create-node-pki
     log-wrap 'CreateKubeletKubeconfig' create-kubelet-kubeconfig "${KUBERNETES_MASTER_NAME}"
