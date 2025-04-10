@@ -1193,7 +1193,7 @@ function process-installables {
   local installable_name="${1:-}"
   local script="${KUBE_BIN}/installable.py"
   # Installables are passed as JSON. Pass an empty map if none have been passed.
-  local installables="${RENDERED_INSTALLABLES:-{}}"
+  local installables="${RENDERED_INSTALLABLES:-"{}"}"
   local flags=(
     "--installables=${installables}"
     "--component=${installable_name}"

@@ -31,7 +31,7 @@ pushd "${root_dir}"
 REPO_ROOT="${REPO_ROOT:-$(pwd)}"
 popd
 
-pushd  "${REPO_ROOT}/gke/cluster/gce/gci/installable"
+pushd  "${REPO_ROOT}/gke/cluster/gce/gci"
 gcloud builds submit --config "${REPO_ROOT}/gke/hack/installable_cloudbuild.yaml" \
   --substitutions="_OUTPUT_IMAGE_FAMILY_=${OUTPUT_IMAGE_FAMILY}",_COS_FAMILY_="${COS_FAMILY}" .
 popd
