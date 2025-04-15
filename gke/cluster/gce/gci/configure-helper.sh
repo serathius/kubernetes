@@ -1766,8 +1766,11 @@ function start-node-problem-detector {
   fi
   flags+=" --apiserver-override=https://${KUBERNETES_MASTER_NAME}?inClusterConfig=false&auth=/var/lib/node-problem-detector/kubeconfig"
 
+  # Mask the COS node problem detector service to prevent it from starting and conflicting with
+  # the GKE node problem detector.
+  systemctl mask node-problem-detector.service
   # Write the systemd service file for node problem detector.
-  cat <<EOF >/etc/systemd/system/node-problem-detector.service
+  cat <<EOF >/etc/systemd/system/gke-node-problem-detector.service
 [Unit]
 Description=Kubernetes node problem detector
 Requires=network-online.target
@@ -1781,8 +1784,8 @@ ExecStart=${npd_bin} ${flags}
 [Install]
 WantedBy=multi-user.target
 EOF
-
-  systemctl start node-problem-detector.service
+  systemctl daemon-reload
+  systemctl start gke-node-problem-detector.service
 }
 
 # Create the log file and set its properties.
