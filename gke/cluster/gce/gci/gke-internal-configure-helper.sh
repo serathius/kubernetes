@@ -1213,6 +1213,7 @@ function process-installables {
 }
 
 function create-kcp-admin-kubeconfig {
+  ensure-exec-auth-config
   mkdir -p "/etc/srv/kubernetes/local-admin"
   cat > "/etc/srv/kubernetes/local-admin/kubeconfig" << EOF
 apiVersion: v1
