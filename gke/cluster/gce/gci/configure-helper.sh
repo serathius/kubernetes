@@ -1557,19 +1557,6 @@ EOF
   fi
 }
 
-# Uses KUBELET_CA_CERT (falling back to CA_CERT), KUBELET_CERT, and KUBELET_KEY
-# to generate a kubeconfig file for the kubelet to securely connect to the apiserver.
-# Set REGISTER_MASTER_KUBELET to true if kubelet on the master node
-# should register to the apiserver.
-function create-master-kubelet-auth {
-  # Only configure the kubelet on the master if the required variables are
-  # set in the environment.
-  if [[ -n "${KUBELET_APISERVER:-}" && -n "${KUBELET_CERT:-}" && -n "${KUBELET_KEY:-}" ]]; then
-    REGISTER_MASTER_KUBELET="true"
-    create-kubelet-kubeconfig "${KUBELET_APISERVER}"
-  fi
-}
-
 function create-kubeproxy-user-kubeconfig {
   echo "Creating kube-proxy user kubeconfig file"
   cat <<EOF >/var/lib/kube-proxy/kubeconfig
@@ -2464,11 +2451,7 @@ function start-kube-addons {
   # prep addition kube-up specific rbac objects
   setup-addon-manifests "addons" "1-rbac/kubelet-api-auth"
   setup-addon-manifests "addons" "1-rbac/kubelet-cert-rotation"
-  if [[ "${REGISTER_MASTER_KUBELET:-false}" == "true" ]]; then
-    setup-addon-manifests "addons" "1-rbac/legacy-kubelet-user"
-  else
-    setup-addon-manifests "addons" "1-rbac/legacy-kubelet-user-disable"
-  fi
+  setup-addon-manifests "addons" "1-rbac/legacy-kubelet-user-disable"
 
   if [[ "${ENABLE_POD_SECURITY_POLICY:-}" == "true" ]]; then
     setup-addon-manifests "addons" "podsecuritypolicies"
@@ -3121,7 +3104,6 @@ function main() {
     # must be called before 'start-kube-addons'
     log-wrap 'DownloadComponentData' download-component-data
     log-wrap 'EnsureMasterBootstrapKubectlAuth' ensure-master-bootstrap-kubectl-auth
-    log-wrap 'CreateMasterKubeletAuth' create-master-kubelet-auth
     log-wrap 'CreateMasterEtcdAuth' create-master-etcd-auth
     log-wrap 'CreateMasterEtcdApiserverAuth' create-master-etcd-apiserver-auth
     log-wrap 'OverridePVRecycler' override-pv-recycler
