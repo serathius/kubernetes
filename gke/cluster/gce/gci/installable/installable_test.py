@@ -43,7 +43,9 @@ container_content = """{
   "remoteURL":"gcr.io/gke-release-staging/gke-distroless/bash",
   "digest":"9bd9f35657b03f55a00a33feac0500ee183dcfd5f7f1982cd35a7a032953d466",
 	"digestAlgo":"sha256",
-	"containerArgs":["echo", "hello"]
+  "run": {
+	  "containerArgs":["echo", "hello"]
+  }
 }"""
 
 garbage = 'this_is_garbage'
@@ -146,7 +148,9 @@ class ContainerTests(unittest.TestCase):
       "remoteURL":"gcr.io/gke-release-staging/gke-gvisor-installer",
       "digest":"0c3e3ac8b7bfad7db5df9fe3c3d67eff11ce33ed4391a6ce323a5fced0ccef33",
       "digestAlgo":"sha256",
-      "ctrArgs":["--rm", "--mount", "type=bind,src=/,dst=/host,options=rbind", "--privileged"]
+      "run": {
+        "ctrArgs":["--rm", "--mount", "type=bind,src=/,dst=/host,options=rbind", "--privileged"]
+      }
     }"""
 
 
@@ -216,13 +220,15 @@ class ContainerTests(unittest.TestCase):
       "remoteURL":"us.gcr.io/gke-release-staging/cilium/cilium:v1.15.6-gke.37",
       "digest":"d285cf77f04947eb3a81bf29362bc6c46e296831ea4d410bf7dc86149295890e",
       "digestAlgo":"sha256",
-      "ctrArgs":[
-        "--mount",
-       "type=bind,src=/home/kubernetes/bin,dst=/host/opt/cni/bin,options=rbind",
-       "--env",
-       "CNI_DIR=/host/opt/cni"
-      ],
-      "containerArgs": ["/install-plugin.sh"]
+      "run": {
+        "ctrArgs":[
+          "--mount",
+          "type=bind,src=/home/kubernetes/bin,dst=/host/opt/cni/bin,options=rbind",
+          "--env",
+          "CNI_DIR=/host/opt/cni"
+        ],
+        "containerArgs": ["/install-plugin.sh"]
+      }
     }"""
 
     cont = installable.parse_installable(json.loads(cilium_content))

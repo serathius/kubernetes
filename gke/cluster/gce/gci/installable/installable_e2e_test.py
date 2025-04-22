@@ -45,11 +45,13 @@ DEFAULT_INSTALLABLES = {
             "os":"linux",
             "arch":"MULTI",
             "version":"1.4.5",
-            "ctrArgs": ["--privileged", "--mount", "type=bind,src=/,dst=/host,options=rbind"],
-            "containerArgs": ["bash", "-c", f"echo {FILE_CONTENT} > {'/host' + OUTFILE}"],
             "remoteURL":"gcr.io/gke-release-staging/gke-distroless/bash:gke_distroless_20241207.00_p0",
             "digest":"9bd9f35657b03f55a00a33feac0500ee183dcfd5f7f1982cd35a7a032953d466",
-            "digestAlgo":"sha256"
+            "digestAlgo":"sha256",
+            "run": {
+                "ctrArgs": ["--privileged", "--mount", "type=bind,src=/,dst=/host,options=rbind"],
+                "containerArgs": ["bash", "-c", f"echo {FILE_CONTENT} > {'/host' + OUTFILE}"],
+            }
         },
         "printer": {
             "kind":"container",
@@ -60,11 +62,13 @@ DEFAULT_INSTALLABLES = {
             "os":"linux",
             "arch":"MULTI",
             "version":"1.2.3",
-            "ctrArgs": [],
-            "containerArgs": ["bash", "-c", f"echo '{PRINTER_CONTENT}'"],
             "remoteURL":"gcr.io/gke-release-staging/gke-distroless/bash:gke_distroless_20250107.00_p0",
             "digest":"12d99a6a72f4fecd689ead5d93001c1f3acea08ec72a55bbdfc070e0edc30fa4",
-            "digestAlgo":"sha256"
+            "digestAlgo":"sha256",
+            "run": {
+                "ctrArgs": [],
+                "containerArgs": ["bash", "-c", f"echo '{PRINTER_CONTENT}'"],
+            }
         },
     },
     "component2": {
@@ -77,10 +81,12 @@ DEFAULT_INSTALLABLES = {
             "os":"linux",
             "arch":"MULTI",
             "version":"1.9.2",
-            "containerArgs": ["bash", "-c", "printenv"],
             "remoteURL":"gcr.io/gke-release-staging/gke-distroless/bash:gke_distroless_20241207.00_p0",
             "digest":"9bd9f35657b03f55a00a33feac0500ee183dcfd5f7f1982cd35a7a032953d466",
-            "digestAlgo":"sha256"
+            "digestAlgo":"sha256",
+            "run": {
+                "containerArgs": ["bash", "-c", "printenv"],
+            }
         },
     },
 }

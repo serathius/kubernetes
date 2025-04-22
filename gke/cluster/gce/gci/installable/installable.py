@@ -252,9 +252,10 @@ class Container(Installable):
     )
 
   def run(self, is_preloader=False):
-    ctr_args = self.content.get('ctrArgs', [])
+    run_spec = self.content.get('run', {})
+    ctr_args = run_spec.get('ctrArgs', [])
     ctr_args.extend(['--env', f'GKE_PRELOADER_RUN={str(is_preloader).lower()}'])
-    container_args = self.content.get('containerArgs', [])
+    container_args = run_spec.get('containerArgs', [])
     out = ctr.run(self.name(), self.get_url(), ctr_args=ctr_args,  container_args=container_args)
     if out.returncode != 0:
       msg = out.stderr.strip()
