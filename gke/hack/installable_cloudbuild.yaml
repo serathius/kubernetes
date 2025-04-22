@@ -14,7 +14,7 @@ steps:
   args: ['finish-image-build',
          '-zone=us-west1-b',
          '-project=$PROJECT_ID',
-         '-image-suffix=${BUILD_ID}',
+         '-image-suffix=${_SUFFIX_}',
          '-image-family=${_OUTPUT_IMAGE_FAMILY_}',
          '-deprecate-old-images',
          '-old-image-ttl=5',
