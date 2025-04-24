@@ -1791,6 +1791,13 @@ function start-node-problem-detector {
   # Mask the COS node problem detector service to prevent it from starting and conflicting with
   # the GKE node problem detector.
   systemctl mask node-problem-detector.service
+
+  # Enable node problem detector to use node P4SA to call Google APIs.
+  if [[ -n "$NODE_PROBLEM_DETECTOR_ADC_CONFIG" ]]; then
+    local application_default_credentials_config_path="${KUBE_HOME}/node-problem-detector/config/application_default_credentials.json"
+    echo "$NODE_PROBLEM_DETECTOR_ADC_CONFIG" > "${application_default_credentials_config_path}"
+  fi
+
   # Write the systemd service file for node problem detector.
   cat <<EOF >/etc/systemd/system/gke-node-problem-detector.service
 [Unit]
@@ -1799,6 +1806,15 @@ Requires=network-online.target
 After=network-online.target
 
 [Service]
+EOF
+
+  if [[ -n "$NODE_PROBLEM_DETECTOR_ADC_CONFIG" ]]; then
+  cat <<EOF >>/etc/systemd/system/gke-node-problem-detector.service
+Environment="GOOGLE_APPLICATION_CREDENTIALS=${application_default_credentials_config_path}"
+EOF
+  fi
+
+  cat <<EOF >>/etc/systemd/system/gke-node-problem-detector.service
 Restart=always
 RestartSec=10
 ExecStart=${npd_bin} ${flags}
@@ -1806,6 +1822,7 @@ ExecStart=${npd_bin} ${flags}
 [Install]
 WantedBy=multi-user.target
 EOF
+
   systemctl daemon-reload
   systemctl start gke-node-problem-detector.service
 }
