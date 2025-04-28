@@ -310,4 +310,5 @@ def cleanup(installables: dict=None):
                 installable.Ctr().delete(url=image)
 
 if __name__ == '__main__':
+    installable.ctr = installable.Ctr(container_run_output=False)
     unittest.main()

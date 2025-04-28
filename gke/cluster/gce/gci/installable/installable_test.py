@@ -384,6 +384,7 @@ if __name__ == '__main__':
   parser = argparse.ArgumentParser()
   parser.add_argument('--fake', action='store_true', default=False)
   options, args = parser.parse_known_args()
+  installable.ctr = installable.Ctr(container_run_output=False)
   if options.fake:
     installable.ctr = FakeCtr()
     def fake_get_creds() -> str:

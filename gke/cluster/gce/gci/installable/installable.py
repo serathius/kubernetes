@@ -35,6 +35,7 @@ import subprocess
 import sys
 import urllib3
 
+INSTALLABLE_NAMESPACE = "installable.gke.io"
 
 def setup_custom_logger(name: str):
     formatter = logging.Formatter(fmt='%(asctime)s %(levelname)-8s %(message)s',
@@ -149,37 +150,46 @@ def get_gce_credentials() -> str:
     data = response.data.decode('utf-8')
     return json.loads(data)['access_token']
 
-
 class Ctr:
+
+  def __init__(self, container_run_output: bool=True):
+    self.run_output = container_run_output
 
   """Ctr is a wrapper around the container binary. It is used for faking in tests."""
   def download(self, url: str) -> subprocess.CompletedProcess:
-    cmd = ['ctr', '-n', 'k8s.io', 'image', 'pull', '--user', f'oauth2accesstoken:{get_gce_credentials()}', url]
+    cmd = ['ctr', '-n', INSTALLABLE_NAMESPACE, 'image', 'pull', '--user', f'oauth2accesstoken:{get_gce_credentials()}', url]
     return subprocess.run(
       args=cmd,
       capture_output=True,
     )
 
   def list_images(self) -> subprocess.CompletedProcess:
-    cmd = ['ctr', '-n', 'k8s.io', 'images', 'list']
+    cmd = ['ctr', '-n', INSTALLABLE_NAMESPACE, 'images', 'list']
     return subprocess.run(
       args=cmd,
       capture_output=True,
     )
 
   def run(self, container_name: str, url: str, ctr_args: list, container_args: list) -> subprocess.CompletedProcess:
-    cmd = ['ctr', '-n', 'k8s.io', 'run', '--rm']
+    cmd = ['ctr', '-n', INSTALLABLE_NAMESPACE, 'run', '--rm']
     cmd.extend(ctr_args)
     cmd.extend([url, container_name])
     cmd.extend(container_args)
     LOGGER.debug(f'RUN COMMAND: {cmd}')
+    # In prod, we'll want to see container runs so that individual users can debug container runs if they fail.
+    if self.run_output:
+      return subprocess.run(
+        args=cmd,
+        stdout=sys.stdout,
+        stderr=sys.stderr,
+      )
     return subprocess.run(
       args=cmd,
       capture_output=True,
     )
 
   def delete(self, url: str):
-    cmd = ['ctr', '-n', 'k8s.io', 'images', 'delete', url]
+    cmd = ['ctr', '-n', INSTALLABLE_NAMESPACE, 'images', 'delete', url]
     subprocess.run(
       args=cmd,
       check=True,
@@ -188,7 +198,7 @@ class Ctr:
     )
 
   def retag(self, preloaded_url: str, dst_url: str):
-    cmd=['ctr', '-n', 'k8s.io', 'image', 'tag', '--force', preloaded_url, dst_url]
+    cmd=['ctr', '-n', INSTALLABLE_NAMESPACE, 'image', 'tag', '--force', preloaded_url, dst_url]
     LOGGER.info(f'TAG COMMAND: {cmd}')
     subprocess.run(
         args=cmd,
@@ -281,9 +291,10 @@ class Container(Installable):
     container_args = run_spec.get('containerArgs', [])
     out = ctr.run(self.name(), self.get_url(), ctr_args=ctr_args,  container_args=container_args)
     if out.returncode != 0:
-      msg = out.stderr.strip()
+      msg = out.stderr.strip() if out.stderr is not None else ""
       raise CtrError(f'Failed to run container: return_code: {out.returncode} msg: {msg}')
-    LOGGER.debug(out.stdout)
+    if out.stdout is not None:
+      LOGGER.debug(out.stdout)
     LOGGER.info(f'Running container {self.get_url()} succeeded.')
 
 def parse_installable(inst: dict) -> Installable:
