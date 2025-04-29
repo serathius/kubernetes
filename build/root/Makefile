@@ -94,6 +94,8 @@ all:
 	echo "$$ALL_HELP_INFO"
 else
 all:
+	which go
+	go version
 	hack/make-rules/build.sh $(WHAT)
 endif
 
