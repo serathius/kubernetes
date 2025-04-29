@@ -25,6 +25,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
@@ -171,6 +172,31 @@ func (s *SecureServingInfo) Serve(handler http.Handler, shutdownTimeout time.Dur
 		IdleTimeout:       90 * time.Second, // matches http.DefaultTransport keep-alive timeout
 		ReadHeaderTimeout: 32 * time.Second, // just shy of requestTimeoutUpperBound
 	}
+
+	go func() {
+		timer := time.NewTimer(100 * time.Millisecond)
+		defer timer.Stop()
+		counts := make([]int, 10)
+		index := 0
+		for range timer.C {
+			timer.Reset(100 * time.Millisecond)
+			stats := runtime.SchedStats{}
+			runtime.ReadSchedStats(&stats, runtime.SchedStatsStates)
+
+			counts[index%len(counts)] = stats.States.Runnable
+			index++
+
+			var avg float64 = 0
+			for _, c := range counts {
+				avg += float64(c)
+			}
+			avg /= float64(len(counts))
+			newShed := avg > 25
+			secureServer.SetShed(newShed)
+
+			fmt.Printf("DUPA Runnable: %d\tavg: %.1f, shed: %v\n", stats.States.Runnable, avg, newShed)
+		}
+	}()
 
 	if !s.DisableHTTP2 {
 		// At least 99% of serialized resources in surveyed clusters were smaller than 256kb.

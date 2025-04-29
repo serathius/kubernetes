@@ -520,6 +520,7 @@ kube::golang::set_platform_envs() {
 #   env-var FORCE_HOST_GO set to a non-empty value uses the go version in the $PATH and skips ensuring $GO_VERSION is used
 kube::golang::internal::verify_go_version() {
   # default GO_VERSION to content of .go-version
+  return
   GO_VERSION="${GO_VERSION:-"$(cat "${KUBE_ROOT}/.go-version")"}"
   if [ "${GOTOOLCHAIN:-auto}" != 'auto' ]; then
     # no-op, just respect GOTOOLCHAIN
@@ -901,7 +902,7 @@ kube::golang::get_physmem() {
 #   KUBE_BUILD_PLATFORMS - Incoming variable of targets to build for.  If unset
 #     then just the host architecture is built.
 kube::golang::build_binaries() {
-  V=2 kube::log::info "Go version: $(GOFLAGS='' go version)"
+  kube::log::info "Go version: $(GOFLAGS='' go version)"
 
   local host_platform
   host_platform=$(kube::golang::host_platform)
