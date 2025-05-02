@@ -1199,12 +1199,14 @@ function process-installables {
     "--component=${installable_name}"
   )
   # Record the proecessed installables so we don't process things twice.
-  local record_file="${KUBE_HOME}/processed-installables"
+  local preload_info_file="${KUBE_HOME}/preloaded-installables"
   if [[ "${IS_PRELOADER:-}" == "true" ]]; then
-    record_file="${KUBE_HOME}/preloaded-installables"
+    flags+=("--record-file=${preload_info_file}")
     flags+=("--preloader")
+  else
+    flags+=("--preload-info-file=${preload_info_file}")
+    flags+=("--record-file=${KUBE_HOME}/processed-installables")
   fi
-  flags+=("--record-file=${record_file}")
 
   if [[ "${ARTIFACT_DOWNLOAD_RESTRICTED:-}" == "true" ]]; then
     flags+=("--download-restricted")

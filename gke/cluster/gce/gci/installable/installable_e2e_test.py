@@ -209,7 +209,81 @@ class InstallablePyTests(unittest.TestCase):
                     self.assertEqual(len(results[component]), len(installables[component]),
                                     results[component])
 
-def make_args(installables: dict=None, is_preload: bool=False, download_restricted: bool=False, record_path: str='', component: str='') -> argparse.Namespace:
+    def test_successful_run_with_preload_info(self):
+        """Tests the common case where the image URL during preload is different
+        from the image URL during boot due to Artifact Registry migration."""
+        with tempfile.NamedTemporaryFile() as preload_record:
+            # First the preloader runs, which will download the images.
+            with self.assertLogs(logger=installable.LOGGER, level=logging.DEBUG) as logs:
+                args = make_args(installables=DEFAULT_INSTALLABLES, is_preload=True, download_restricted=False, record_path=preload_record.name)
+                installable.process_installables(args=args)
+                output = ''.join(logs.output)
+                self.assertIn(PRINTER_CONTENT, output, str(logs.output))
+                self.assertIn("GKE_PRELOADER_RUN=true", output, str(logs.output))
+                preload_record.seek(0)
+                results = json.loads(preload_record.read())
+                self.assertEqual(len(results.keys()), len(DEFAULT_INSTALLABLES.keys()))
+                for component in results.keys():
+                    self.assertIn(component, DEFAULT_INSTALLABLES.keys(), component)
+                    self.assertEqual(len(results[component]), len(DEFAULT_INSTALLABLES[component]),
+                                    results[component])
+                with open(OUTFILE, 'r') as outfile:
+                    self.assertIn(FILE_CONTENT, outfile.read())
+
+            with tempfile.NamedTemporaryFile() as record:
+                # On boot, we generally provide regionalized URLs, but we should still succeed.
+                with self.assertLogs(logger=installable.LOGGER, level=logging.DEBUG) as logs:
+                    installables = copy.deepcopy(DEFAULT_INSTALLABLES)
+                    installables["component1"]["mount"]["remoteURL"] = "us-central1-artifactregistry.gcr.io/gke-release-staging/gke-release-staging/gke-distroless/bash:gke_distroless_20241207.00_p0"
+                    installables["component1"]["printer"]["remoteURL"] = "us-central1-artifactregistry.gcr.io/gke-release-staging/gke-release-staging/gke-distroless/bash:gke_distroless_20250107.00_p0"
+                    installables["component2"]["env"]["remoteURL"] = "us-central1-artifactregistry.gcr.io/gke-release-staging/gke-release-staging/gke-distroless/bash:gke_distroless_20241207.00_p0"
+                    args = make_args(installables=installables, is_preload=False, download_restricted=True, record_path=record.name, preload_info_path=preload_record.name)
+                    installable.process_installables(args=args)
+                    output = ''.join(logs.output)
+                    self.assertIn(PRINTER_CONTENT, output, str(logs.output))
+                    self.assertIn("GKE_PRELOADER_RUN=false", output, str(logs.output))
+                    self.assertIn("Retagging image in object", output, str(logs.output))
+                    with open(OUTFILE, 'r') as outfile:
+                        self.assertIn(FILE_CONTENT, str(outfile.read()))
+                    os.remove(OUTFILE)
+
+    def test_installable_without_preload_info_fails(self):
+        """Tests the unusual case where the installable is not preloaded but
+        enabled during runtime."""
+        with tempfile.NamedTemporaryFile() as preload_record:
+            with self.assertLogs(logger=installable.LOGGER, level=logging.DEBUG) as logs:
+                # Preload all the installables except component1:printer.
+                installables = copy.deepcopy(DEFAULT_INSTALLABLES)
+                del installables["component1"]["printer"]
+                args = make_args(installables=installables, is_preload=True, download_restricted=False, record_path=preload_record.name)
+                installable.process_installables(args=args)
+                output = ''.join(logs.output)
+                self.assertIn("GKE_PRELOADER_RUN=true", output, str(logs.output))
+                preload_record.seek(0)
+                results = json.loads(preload_record.read())
+                self.assertEqual(len(results.keys()), len(installables.keys()))
+                for component in results.keys():
+                    self.assertIn(component, installables.keys(), component)
+                    self.assertEqual(len(results[component]), len(installables[component]),
+                                    results[component])
+                with open(OUTFILE, 'r') as outfile:
+                    self.assertIn(FILE_CONTENT, outfile.read())
+
+            with tempfile.NamedTemporaryFile() as record:
+                # On boot, we generally provide regionalized URLs.
+                # For unexpected reasons, component1:printer was enabled during
+                # runtime, but not preloaded.
+                with self.assertLogs(logger=installable.LOGGER, level=logging.DEBUG) as logs:
+                    installables = copy.deepcopy(DEFAULT_INSTALLABLES)
+                    installables["component1"]["mount"]["remoteURL"] = "us-central1-artifactregistry.gcr.io/gke-release-staging/gke-release-staging/gke-distroless/bash:gke_distroless_20241207.00_p0"
+                    installables["component1"]["printer"]["remoteURL"] = "us-central1-artifactregistry.gcr.io/gke-release-staging/gke-release-staging/gke-distroless/bash:gke_distroless_20250107.00_p0"
+                    installables["component2"]["env"]["remoteURL"] = "us-central1-artifactregistry.gcr.io/gke-release-staging/gke-release-staging/gke-distroless/bash:gke_distroless_20241207.00_p0"
+                    # We should fail to process component2 because it was not preloaded.
+                    with self.assertRaisesRegex(installable.PreloadError, 'Installable printer not preloaded.'):
+                        args = make_args(installables=installables, is_preload=False, download_restricted=True, record_path=record.name, preload_info_path=preload_record.name)
+                        installable.process_installables(args=args)
+
+def make_args(installables: dict=None, is_preload: bool=False, download_restricted: bool=False, record_path: str='', component: str='', preload_info_path: str='') -> argparse.Namespace:
     args = ['--installables', json.dumps(installables),
         '--component', component,
         '--record-file', record_path]
@@ -217,6 +291,8 @@ def make_args(installables: dict=None, is_preload: bool=False, download_restrict
         args.append('--preloader')
     if download_restricted:
         args.append('--download-restricted')
+    if preload_info_path:
+        args.extend(['--preload-info-file', preload_info_path])
     return installable.parser.parse_args(args)
 
 

@@ -92,7 +92,22 @@ parser.add_argument(
 parser.add_argument(
   '--record-file',
   help=(
-    '''Path to file to place processed installables. This is for debugging and logging purposes.'''
+    '''Path to file to place processed installables. During preloading, this
+    records the installables that were preloaded. During runtime, this records
+    the installables that were processed (and to avoid processing them after a
+    reboot).'''
+  ),
+  default='',
+  nargs='?',
+  type=str,
+)
+
+parser.add_argument(
+  '--preload-info-file',
+  help=(
+    '''Path to file that contains information about preloaded installables. This
+    file is used during runtime to retag preloaded image URL with regionalized
+    Artifact Registry URL.'''
   ),
   default='',
   nargs='?',
@@ -170,6 +185,14 @@ class Ctr:
       check=True,
       stdout=subprocess.PIPE,
       stderr=subprocess.PIPE,
+    )
+
+  def retag(self, preloaded_url: str, dst_url: str):
+    cmd=['ctr', '-n', 'k8s.io', 'image', 'tag', '--force', preloaded_url, dst_url]
+    LOGGER.info(f'TAG COMMAND: {cmd}')
+    subprocess.run(
+        args=cmd,
+        check=True,
     )
 
 ctr = Ctr()
@@ -295,22 +318,27 @@ def process_installables(args: argparse.Namespace):
     LOGGER.info(f'Processsing only {args.component} installables')
     rendered_installables = {args.component: rendered_installables[args.component]}
 
-  with Records(args.record_file) as records:
-    comps = list(rendered_installables.keys())
-    comps.sort()
-    for component in comps:
-      LOGGER.info(f'Processing component: "{component}"')
-      objs = rendered_installables[component]
-      objs_names = list(objs.keys())
-      objs_names.sort()
-      for object_name in objs_names:
-        if records.contains(component, object_name):
-          LOGGER.info(f'Object: "{component}:{object_name}" already processed.')
-          continue
-        LOGGER.info(f'Processing object "{object_name}"')
-        with parse_installable(objs[object_name]) as inst:
-          process_installable(inst, download=download, is_preloader=is_preloader)
-          records.add(component=component, object=inst)
+  with Records(args.preload_info_file) as preload_info:
+    with Records(args.record_file) as records:
+      comps = list(rendered_installables.keys())
+      comps.sort()
+      for component in comps:
+        LOGGER.info(f'Processing component: "{component}"')
+        objs = rendered_installables[component]
+        objs_names = list(objs.keys())
+        objs_names.sort()
+        for object_name in objs_names:
+          if records.get(component, object_name) is not None:
+            LOGGER.info(f'Object: "{component}:{object_name}" already processed.')
+            continue
+          LOGGER.info(f'Processing object "{object_name}"')
+          with parse_installable(objs[object_name]) as inst:
+            preloaded_inst = preload_info.get(component, object_name)
+            if preloaded_inst:
+              LOGGER.info(f'Retagging image in object "{object_name}"')
+              ctr.retag(preloaded_inst.get_url(), inst.get_url())
+            process_installable(inst, download=download, is_preloader=is_preloader)
+            records.add(component=component, object=inst)
   LOGGER.info(f'Done processing installables.')
 
 class Records():
@@ -337,24 +365,6 @@ class Records():
         f.seek(0)
         f.write(json.dumps(self.records))
 
-  def contains(self, component: str='', object_name: str='') -> bool:
-    """contains returns true if an entry matches object and component name, false otherwise."""
-    if component == '':
-      return False
-
-    if component not in self.records.keys():
-      return False
-
-    if object == '':
-      return False
-
-    objs = self.records[component]
-
-    if object_name not in objs.keys():
-      return False
-
-    return True
-
   def add(self, component: str='', object: Installable=None):
     """add adds an entry in the registry."""
     if component not in self.records.keys():
@@ -364,6 +374,16 @@ class Records():
       raise KeyError(msg=f'Duplicate record attempted: {object.name()}')
     objs[object.name()] = object.content
 
+  def get(self, component: str='', object_name: str='')-> Installable:
+    """get returns the object if it exists, None otherwise."""
+    if component == '' or object_name == '':
+      return None
+    if component not in self.records.keys():
+      return None
+    objs = self.records[component]
+    if object_name not in objs.keys():
+      return None
+    return parse_installable(objs[object_name])
 
 if __name__ == '__main__':
   args = parser.parse_args(sys.argv[1:])
