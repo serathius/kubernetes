@@ -31,7 +31,6 @@ import argparse
 import json
 import logging
 import os
-import shlex
 import subprocess
 import sys
 import urllib3
@@ -155,23 +154,24 @@ class Ctr:
 
   """Ctr is a wrapper around the container binary. It is used for faking in tests."""
   def download(self, url: str) -> subprocess.CompletedProcess:
-    cmd = shlex.split(f'ctr -n k8s.io image pull --user="oauth2accesstoken:{get_gce_credentials()}" {url}')
+    cmd = ['ctr', '-n', 'k8s.io', 'image', 'pull', '--user', f'oauth2accesstoken:{get_gce_credentials()}', url]
     return subprocess.run(
       args=cmd,
       capture_output=True,
     )
 
   def list_images(self) -> subprocess.CompletedProcess:
-    cmd = shlex.split('ctr -n k8s.io images list')
+    cmd = ['ctr', '-n', 'k8s.io', 'images', 'list']
     return subprocess.run(
       args=cmd,
       capture_output=True,
     )
 
   def run(self, container_name: str, url: str, ctr_args: list, container_args: list) -> subprocess.CompletedProcess:
-    ctr_flags = shlex.join(ctr_args)
-    cont_args = shlex.join(container_args)
-    cmd = shlex.split(f'ctr -n k8s.io run --rm {ctr_flags} {url} {container_name} {cont_args}')
+    cmd = ['ctr', '-n', 'k8s.io', 'run', '--rm']
+    cmd.extend(ctr_args)
+    cmd.extend([url, container_name])
+    cmd.extend(container_args)
     LOGGER.debug(f'RUN COMMAND: {cmd}')
     return subprocess.run(
       args=cmd,
@@ -179,7 +179,7 @@ class Ctr:
     )
 
   def delete(self, url: str):
-    cmd = shlex.split(f'ctr -n k8s.io images delete {url}')
+    cmd = ['ctr', '-n', 'k8s.io', 'images', 'delete', url]
     subprocess.run(
       args=cmd,
       check=True,
