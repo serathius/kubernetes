@@ -46,7 +46,9 @@ DEFAULT_MOUNTER_ROOTFS_TAR_AMD64_SHA512='224f2e66a16b3aeec1a3a03b3fa15b4ac9cfa0b
 DEFAULT_MOUNTER_ROOTFS_TAR_ARM64_SHA512='9d602657abda73e390e9d0022feca35a3140c7cdb3f0b868c138d9ffe7984a6f4f9f9e7d93b6f46905d2f464ed7b307b723d80dc1980f58dbda2a4adb5075ce1'
 
 RIPTIDE_FUSE_VERSION="v0.275.0"
+RIPTIDE_FUSE_ARM64_SHA512='7b37d479f9d613b30156108d74ac6018af08c9fe33e9a28cd3bf8ab37f5a519e1b8b9a8b29ed5b9c2658d6f7b3bfc9441b78b2e8e50d541a3be733e940ed8bdc'
 RIPTIDE_FUSE_BIN_ARM64_SHA512='c5f86084707d97e89d6ac49a956c765b10d1065ce92d472a564fbefb07ade04e3d696b14d2af9e7980b0ca8dc61ec1226ee23f112be9d4477da058b9ca1b807a'
+RIPTIDE_FUSE_AMD64_SHA512='fdfc81a96a460142ea3516fd1899f31e2049ab317ea372f7cb97c5aba12ce5804ff07c86a592d042eea131b50c94801a732a46905354b212663e82c1ccfcccb9'
 RIPTIDE_FUSE_BIN_AMD64_SHA512='6cb68ed933ffc4c34589ea97b9413701dd116be4fcd1b94ea28dbdfd5031c2e4a520529bb8aa36e3664c0592e7d15ca693d775d7a119efb2e68b8ced9f73dc2f'
 
 RIPTIDE_SNAPSHOTTER_VERSION="v1.33-0"
@@ -510,6 +512,7 @@ function install-node-problem-detector {
 
   echo "Downloading ${npd_tar}."
   local -r npd_release_path="${NODE_PROBLEM_DETECTOR_RELEASE_PATH:-${STORAGE_ENDPOINT}/gke-release}"
+  # We keep the tar file for LICENSES notices - do not remove it.
   download-or-bust "${npd_hash}" "${npd_release_path}/node-problem-detector/${npd_tar}"
   local -r npd_dir="${KUBE_HOME}/node-problem-detector"
   mkdir -p "${npd_dir}"
@@ -517,7 +520,6 @@ function install-node-problem-detector {
   mv "${npd_dir}/bin"/* "${KUBE_BIN}"
   chmod a+x "${KUBE_BIN}/node-problem-detector"
   rmdir "${npd_dir}/bin"
-  rm -f "${KUBE_HOME}/${npd_tar}"
 
   record-preload-info "${npd_tar}" "${npd_hash}"
 }
@@ -816,13 +818,18 @@ function install-gcfsd {
 
   if [[ "${HOST_ARCH}" == "arm64" ]]; then
     RIPTIDE_FUSE_STORE_PATH="${STORAGE_ENDPOINT}/gke-release/gcfsd/${RIPTIDE_FUSE_VERSION}/arm64"
+    TAR_SHA="${RIPTIDE_FUSE_ARM64_SHA512}"
     BIN_SHA="${RIPTIDE_FUSE_BIN_ARM64_SHA512}"
   else
     RIPTIDE_FUSE_STORE_PATH="${STORAGE_ENDPOINT}/gke-release/gcfsd/${RIPTIDE_FUSE_VERSION}"
+    TAR_SHA="${RIPTIDE_FUSE_AMD64_SHA512}"
     BIN_SHA="${RIPTIDE_FUSE_BIN_AMD64_SHA512}"
   fi
 
-  # The binary is small enough to download directly instead of downloading the tarball gcfsd.tar.gz and extracting it.
+  # We keep the tar file for LICENSES notices
+  echo "Downloading tarball for gcfsd"
+  download-or-bust "${TAR_SHA}" "${RIPTIDE_FUSE_STORE_PATH}/gcfsd.tar.gz"
+
   download-or-bust "${BIN_SHA}" "${RIPTIDE_FUSE_STORE_PATH}/gcfsd"
   mv "${KUBE_HOME}/gcfsd" "${KUBE_HOME}/bin/gcfsd"
   chmod a+x "${KUBE_HOME}/bin/gcfsd"
@@ -837,6 +844,7 @@ function install-riptide-snapshotter {
   fi
   RIPTIDE_SNAPSHOTTER_STORE_PATH="${STORAGE_ENDPOINT}/gke-release/gcfs-snapshotter/${RIPTIDE_SNAPSHOTTER_VERSION}"
 
+  # We keep the tar file for LICENSES notices
   echo "Downloading tarball for riptide-snapshotter"
   download-or-bust "${RIPTIDE_SNAPSHOTTER_SHA512}" "${RIPTIDE_SNAPSHOTTER_STORE_PATH}/containerd-gcfs-grpc.tar.gz"
 
