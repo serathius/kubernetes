@@ -74,7 +74,8 @@ export KUBE_CI_VERSION_DASHED_REGEX="^v(0|[1-9][0-9]*)-(0|[1-9][0-9]*)-(0|[1-9][
 #   CA_CERT
 function create-kubeconfig() {
   KUBECONFIG=${KUBECONFIG:-$DEFAULT_KUBECONFIG}
-  local kubectl="$(dirname "${BASH_SOURCE[0]}")/kubectl.sh"
+  local kubectl
+  kubectl="$(dirname "${BASH_SOURCE[0]}")/kubectl.sh"
   SECONDARY_KUBECONFIG=${SECONDARY_KUBECONFIG:-}
   OVERRIDE_CONTEXT=${OVERRIDE_CONTEXT:-}
 
@@ -158,7 +159,8 @@ function clear-kubeconfig() {
       CONTEXT=$OVERRIDE_CONTEXT
   fi
 
-  local kubectl="$(dirname "${BASH_SOURCE[0]}")/kubectl.sh"
+  local kubectl
+  kubectl="$(dirname "${BASH_SOURCE[0]}")/kubectl.sh"
   # Unset the current-context before we delete it, as otherwise kubectl errors.
   local cc
   cc=$("${kubectl}" config view -o jsonpath='{.current-context}')
