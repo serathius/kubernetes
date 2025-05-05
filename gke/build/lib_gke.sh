@@ -667,7 +667,6 @@ set_global_vars()
   local platform
   local docker_registry_from_config
   local bc_binaries_len
-  local bc_assertions_len
   local i
 
   log.info "setting global variables"
@@ -777,7 +776,7 @@ set_global_vars()
   # Make a space-separated list of bins that should be compiled with CGO enabled.
   # See `KUBE_CGO_OVERRIDES` in hack/lib/golang.sh.
   # Boringcrypto requires cgo to be enabled.
-  __KUBE_CGO_OVERRIDES="$(sed "s/,/ /g" <<< "${__boringcrypto_bins}")"
+  __KUBE_CGO_OVERRIDES="${__boringcrypto_bins//,/ }"
   log.debugvar __KUBE_CGO_OVERRIDES
   # Set the `gkeboringcrypto` build flag.
   # Note: as of release `b6`, the go-boringcrypto buildchain automatically
@@ -1230,9 +1229,11 @@ validate_bc_bins()
 
   log.info "validating go-boringcrypto binaries"
 
-  local bc_binaries_len="$(get_val "validate.boringcrypto.binaries" -l)"
+  local bc_binaries_len
+  bc_binaries_len="$(get_val "validate.boringcrypto.binaries" -l)"
   for ((i=0; i<bc_binaries_len; ++i)); do
-    local bc_bin="${bin_dir}/$(get_val "validate.boringcrypto.binaries[$i]")"
+    local bc_bin
+    bc_bin="${bin_dir}/$(get_val "validate.boringcrypto.binaries[$i]")"
     assert_path_exists "${bc_bin}"
 
     log.info "validating ${bc_bin}"
@@ -1516,7 +1517,7 @@ build_docker_images()
         #   - inject_licenses
         #   - inject_source_code
         #
-        if [[ "${to_skip[@]}" =~ $j ]]; then
+        if [[ " ${to_skip[*]} " =~ [[:space:]]"${j}"[[:space:]] ]]; then
           log.info "skipping step $((j+1)) (${action})"
           continue
         fi
