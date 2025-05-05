@@ -18,16 +18,20 @@
 function configure-etcd-params {
   local -n params_ref=$1
 
-  if [[ -n "${ETCD_APISERVER_CA_KEY:-}" && -n "${ETCD_APISERVER_CA_CERT:-}" && -n "${ETCD_APISERVER_SERVER_KEY:-}" && -n "${ETCD_APISERVER_SERVER_CERT:-}" && -n "${ETCD_APISERVER_CLIENT_KEY:-}" && -n "${ETCD_APISERVER_CLIENT_CERT:-}" ]]; then
+  # Check if all the relevant ETCD certs are set.
+  if [[ -n "${ETCD_APISERVER_CA_CERT_PATH:-}" && -n "${ETCD_APISERVER_CLIENT_KEY_PATH:-}" && -n "${ETCD_APISERVER_CLIENT_CERT_PATH:-}" ]]; then
       params_ref+=" --etcd-servers=${ETCD_SERVERS:-https://127.0.0.1:2379}"
       params_ref+=" --etcd-cafile=${ETCD_APISERVER_CA_CERT_PATH}"
       params_ref+=" --etcd-certfile=${ETCD_APISERVER_CLIENT_CERT_PATH}"
       params_ref+=" --etcd-keyfile=${ETCD_APISERVER_CLIENT_KEY_PATH}"
-  elif [[ -z "${ETCD_APISERVER_CA_KEY:-}" && -z "${ETCD_APISERVER_CA_CERT:-}" && -z "${ETCD_APISERVER_SERVER_KEY:-}" && -z "${ETCD_APISERVER_SERVER_CERT:-}" && -z "${ETCD_APISERVER_CLIENT_KEY:-}" && -z "${ETCD_APISERVER_CLIENT_CERT:-}" ]]; then
+  # Check if NONE of the etcd certs are set (perhaps intentionally in an insecure mode)
+  elif [[ -z "${ETCD_APISERVER_CA_CERT_PATH:-}"  && -z "${ETCD_APISERVER_CLIENT_KEY_PATH:-}" && -z "${ETCD_APISERVER_CLIENT_CERT_PATH:-}" ]]; then
       params_ref+=" --etcd-servers=${ETCD_SERVERS:-http://127.0.0.1:2379}"
-      echo "WARNING: ALL of ETCD_APISERVER_CA_KEY, ETCD_APISERVER_CA_CERT, ETCD_APISERVER_SERVER_KEY, ETCD_APISERVER_SERVER_CERT, ETCD_APISERVER_CLIENT_KEY and ETCD_APISERVER_CLIENT_CERT are missing, mTLS between etcd server and kube-apiserver is not enabled."
+      echo "WARNING: ALL of ETCD_APISERVER_CA_CERT_PATH, ETCD_APISERVER_CLIENT_KEY_PATH and ETCD_APISERVER_CLIENT_CERT_PATH are missing, mTLS between etcd server and kube-apiserver is not enabled."
+  # If flags are partially set, something odd is happening.
   else
-      echo "ERROR: Some of ETCD_APISERVER_CA_KEY, ETCD_APISERVER_CA_CERT, ETCD_APISERVER_SERVER_KEY, ETCD_APISERVER_SERVER_CERT, ETCD_APISERVER_CLIENT_KEY and ETCD_APISERVER_CLIENT_CERT are missing, mTLS between etcd server and kube-apiserver cannot be enabled. Please provide all mTLS credential."
+      echo "ERROR: Some of ETCD_APISERVER_CA_CERT_PATH, ETCD_APISERVER_CLIENT_KEY_PATH and ETCD_APISERVER_CLIENT_CERT_PATH are missing, mTLS between etcd server and kube-apiserver cannot be enabled. Please provide all mTLS credential."
+      echo "\tETCD_APISERVER_CA_CERT_PATH=${ETCD_APISERVER_CA_CERT_PATH:-}\tETCD_APISERVER_CLIENT_KEY_PATH=${ETCD_APISERVER_CLIENT_KEY_PATH:-}\tETCD_APISERVER_CLIENT_CERT_PATH=${ETCD_APISERVER_CLIENT_CERT_PATH}"
       exit 1
   fi
 
@@ -131,6 +135,13 @@ function start-kube-apiserver {
   fi
   if [[ -n "${SERVICE_CLUSTER_IP_RANGE:-}" ]]; then
     params+=" --service-cluster-ip-range=${SERVICE_CLUSTER_IP_RANGE}"
+  fi
+
+  local dynamic_certificate_delivery_mount=""
+  local dynamic_certificate_delivery_volume=""
+  if [[ -n "${ENABLE_KCP_DYNAMIC_CERTIFICATE_DELIVERY:-}" && -n "${DCD_APISERVER_MOUNT_DIR:-}" ]]; then
+    dynamic_certificate_delivery_mount='{"name": "dynamic-pki", "mountPath": "'${DCD_APISERVER_MOUNT_DIR}'"},'
+    dynamic_certificate_delivery_volume='{"name": "dynamic-pki", "hostPath": {"path": "'${DCD_APISERVER_MOUNT_DIR}'", "type": "Directory"}},'
   fi
 
   local token_signing_plugin_socket_mount=""
@@ -502,6 +513,8 @@ EOF
   sed -i -e "s@{{audit_webhook_config_volume}}@${audit_webhook_config_volume}@g" "${src_file}"
   sed -i -e "s@{{webhook_exec_auth_plugin_mount}}@${webhook_exec_auth_plugin_mount}@g" "${src_file}"
   sed -i -e "s@{{webhook_exec_auth_plugin_volume}}@${webhook_exec_auth_plugin_volume}@g" "${src_file}"
+  sed -i -e "s@{{dynamic_certificate_delivery_mount}}@${dynamic_certificate_delivery_mount}@g" "${src_file}"
+  sed -i -e "s@{{dynamic_certificate_delivery_volume}}@${dynamic_certificate_delivery_volume}@g" "${src_file}"
   sed -i -e "s@{{token_signing_plugin_socket_mount}}@${token_signing_plugin_socket_mount}@g" "${src_file}"
   sed -i -e "s@{{token_signing_plugin_socket_volume}}@${token_signing_plugin_socket_volume}@g" "${src_file}"
   sed -i -e "s@{{konnectivity_socket_mount}}@${default_konnectivity_socket_mnt}@g" "${src_file}"

@@ -7,6 +7,7 @@ readonly CA_CERT_BUNDLE_PATH=/foo/bar
 readonly APISERVER_SERVER_CERT_PATH=/foo/bar
 readonly APISERVER_SERVER_KEY_PATH=/foo/bar
 readonly APISERVER_CLIENT_CERT_PATH=/foo/bar
+readonly APISERVER_CLIENT_KEY_PATH=/foo/bar
 readonly CLOUD_CONFIG_MOUNT="{\"name\": \"cloudconfigmount\",\"mountPath\": \"/etc/gce.conf\", \"readOnly\": true},"
 readonly CLOUD_CONFIG_VOLUME="{\"name\": \"cloudconfigmount\",\"hostPath\": {\"path\": \"/etc/gce.conf\", \"type\": \"FileOrCreate\"}},"
 readonly DOCKER_REGISTRY="k8s.gcr.io"
