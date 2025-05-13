@@ -2832,18 +2832,47 @@ function log-proto {
 }
 
 function config-ip-envoy {
-  if [[ "${PREPARE_ENVOY_INGRESS_IPTABLES:-false}" != "true" ]]; then
+  # Exit if neither IPv4 nor IPv6 Envoy ingress preparation is enabled.
+  if [[ "${PREPARE_ENVOY_INGRESS_IPTABLES:-false}" != "true" ]] && \
+     [[ "${PREPARE_ENVOY_INGRESS_IP6TABLES:-false}" != "true" ]]; then
+    echo "Envoy ingress iptables preparation disabled. Skipping."
     return
   fi
 
   echo "Prepare envoy ingress iptables in configure helper"
 
-  packet_mark=123
-  iptables -t mangle -I PREROUTING -m mark     --mark $packet_mark -j CONNMARK --save-mark
-  iptables -t mangle -I OUTPUT     -m connmark --mark $packet_mark -j CONNMARK --restore-mark
+  # Create a new routing table envoy.tproxy for Envoy ingress.
   echo -e '100\tenvoy.tproxy' >> /etc/iproute2/rt_tables
-  ip rule add fwmark $packet_mark lookup envoy.tproxy
-  ip route add local 0.0.0.0/0 dev lo table envoy.tproxy
+
+  # Packet mark (123) for Envoy TPROXY, must match Envoy's Original Source filter config.
+  # Ref: http://google3/cloud/kubernetes/distro/components/envoy/v1/manifest.yaml;l=124;rcl=758010839
+  # Ref: https://www.envoyproxy.io/docs/envoy/latest/configuration/listeners/listener_filters/original_src_filter#ip-version-support
+  local -r packet_mark=123
+
+  # These rules use packet marking and a custom routing table ('envoy.tproxy')
+  # to direct traffic to Envoy while preserving the original source IP.
+
+  # Configure IPv4 TPROXY rules for Envoy if enabled.
+   if [[ "${PREPARE_ENVOY_INGRESS_IPTABLES:-false}" == "true" ]]; then
+    echo "Configure IPv4 TPROXY rules for Envoy ingress"
+    iptables -t mangle -I PREROUTING -m mark     --mark $packet_mark -j CONNMARK --save-mark
+    iptables -t mangle -I OUTPUT     -m connmark --mark $packet_mark -j CONNMARK --restore-mark
+    ip rule add fwmark $packet_mark lookup envoy.tproxy
+    ip route add local 0.0.0.0/0 dev lo table envoy.tproxy
+  fi
+
+  # Configure IPv6 TPROXY rules for Envoy if enabled.
+  if [[ "${PREPARE_ENVOY_INGRESS_IP6TABLES:-false}" == "true" ]]; then
+    echo "Configure IPv6 TPROXY rules for Envoy ingress"
+    ip6tables -t mangle -I PREROUTING -m mark     --mark $packet_mark -j CONNMARK --save-mark
+    ip6tables -t mangle -I OUTPUT     -m connmark --mark $packet_mark -j CONNMARK --restore-mark
+    ip -6 rule add fwmark $packet_mark lookup envoy.tproxy
+    ip -6 route add local ::/0 dev lo table envoy.tproxy
+    ip -6 route add default dev eth0
+  fi
+
+  # Configure NAT REDIRECT rules for PSC IPv4 CIDR forwarding if enabled.
+  # Redirects traffic from specific PSC source ranges to local Envoy ports.
   if [[ "${ENABLE_PSC_NAT_IPV4_CIDR_FORWARDING:-true}" == "true" ]]; then
     iptables -t nat -A PREROUTING -p tcp --dport 443  -s 192.168.0.0/20  -j REDIRECT --to-port 7443
     iptables -t nat -A PREROUTING -p tcp --dport 8132 -s 192.168.0.0/20  -j REDIRECT --to-port 7444
