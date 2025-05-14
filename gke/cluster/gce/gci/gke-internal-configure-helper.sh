@@ -1010,7 +1010,7 @@ function gke-setup-gcfs {
 Description=Google Container File System service
 After=network.target
 [Service]
-Type=simple
+Type=notify
 LimitNOFILE=infinity
 # More aggressive Go garbage collection setting (go/fast/19).
 Environment=GOGC=10
@@ -1037,7 +1037,9 @@ EOF
 [Unit]
 Description=GCFS snapshotter
 After=network.target
+After=gcfsd.service
 Before=containerd.service
+Wants=gcfsd.service
 # Disable restart rate limiting
 StartLimitIntervalSec=0
 [Service]
