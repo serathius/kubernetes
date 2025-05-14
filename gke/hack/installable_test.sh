@@ -33,7 +33,7 @@ SUFFIX="$(od -vAn -N4 -tu4 < /dev/urandom | tr -d ' \n')"
 
 pushd  "${REPO_ROOT}/gke/cluster/gce/gci"
 gcloud builds submit --config "${REPO_ROOT}/gke/hack/installable_cloudbuild.yaml" \
-  --substitutions="_OUTPUT_IMAGE_FAMILY_=${OUTPUT_IMAGE_FAMILY}",_COS_FAMILY_="${COS_FAMILY},_SUFFIX_=${SUFFIX}" .
+  --substitutions=_OUTPUT_IMAGE_FAMILY_="${OUTPUT_IMAGE_FAMILY}",_COS_FAMILY_="${COS_FAMILY}",_SUFFIX_="${SUFFIX}" .
 popd
 
 # Best effort to cleanup deprecated images from this family. This command returns images that are

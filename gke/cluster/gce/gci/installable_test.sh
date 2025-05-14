@@ -23,20 +23,22 @@ python3 installable/installable_test.py -v
 
 python3 installable/installable_e2e_test.py -v
 
-source "$(dirname $0)/gke-internal-configure-helper.sh"
+source "$(dirname "${BASH_SOURCE[0]}")"/gke-internal-configure-helper.sh
 
 echo "Testing installable scripts..."
-KUBE_BIN="$(dirname $0)/installable"
+# read by process-installables
+KUBE_BIN="$(dirname "${BASH_SOURCE[0]}")"/installable
+export KUBE_BIN
 
 KUBE_HOME=$(mktemp -d)
 echo "Testing empty RENDERED_INSTALLABLES"
 process-installables
-rm -rf $KUBE_HOME
+rm -rf "${KUBE_HOME}"
 echo "OK"
 
 KUBE_HOME=$(mktemp -d)
 readonly RENDERED_INSTALLABLES='{}'
 echo "Testing RENDERED_INSTALLABLES=${RENDERED_INSTALLABLES}"
 process-installables
-rm -rf $KUBE_HOME
+rm -rf "${KUBE_HOME}"
 echo "OK"
