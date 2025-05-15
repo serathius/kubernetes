@@ -820,6 +820,37 @@ function create-node-pki {
   fi
 }
 
+function prepare-master-dynamic-certificate-delivery {
+  # Sets the same paths as create-master-pki but sources them from the
+  # k8s-pki kube-env vars. All of these are needed by the kube-apiserver.
+  echo "Loading Dynamic Certificate Delivery vars set by k8s-pki component"
+
+  CA_CERT_BUNDLE_PATH=${DCD_CLUSTER_CA_BUNDLE_PATH}
+
+  # shellcheck disable=SC2153
+  APISERVER_SERVER_CERT_PATH=${DCD_APISERVER_SERVER_CERT_PATH}
+  # shellcheck disable=SC2153
+  APISERVER_SERVER_KEY_PATH=${DCD_APISERVER_SERVER_KEY_PATH}
+  # shellcheck disable=SC2153
+  APISERVER_CLIENT_CERT_PATH=${DCD_APISERVER_CLIENT_CERT_PATH}
+  # shellcheck disable=SC2153
+  APISERVER_CLIENT_KEY_PATH=${DCD_APISERVER_CLIENT_KEY_PATH}
+
+  # Empty if IP/Cred rotation isn't in progress.
+  OLD_MASTER_CERT_PATH=${DCD_APISERVER_OLD_SERVER_CERT_PATH}
+  OLD_MASTER_KEY_PATH=${DCD_APISERVER_OLD_SERVER_KEY_PATH}
+
+  # Aggregation CA
+  REQUESTHEADER_CA_CERT_PATH=${DCD_APISERVER_REQUESTHEADER_CA_PATH}
+  PROXY_CLIENT_CERT_PATH=${DCD_APISERVER_PROXY_CLIENT_CERT_PATH}
+  PROXY_CLIENT_KEY_PATH=${DCD_APISERVER_PROXY_CLIENT_KEY_PATH}
+
+  # mTLS to etcd
+  ETCD_APISERVER_CA_CERT_PATH=${DCD_ETCD_APISERVER_CA_CERT_PATH}
+  ETCD_APISERVER_CLIENT_CERT_PATH=${DCD_ETCD_APISERVER_CLIENT_CERT_PATH}
+  ETCD_APISERVER_CLIENT_KEY_PATH=${DCD_ETCD_APISERVER_CLIENT_KEY_PATH}
+}
+
 function create-master-pki {
   echo "Creating master pki files"
 
@@ -3045,16 +3076,16 @@ function main() {
     log-wrap 'MountMasterPD' mount-master-pd
     log-wrap 'CreateNodePKI' create-node-pki
     log-wrap 'CreateMasterPKI' create-master-pki
-    if [[ "${ENABLE_KCP_DYNAMIC_CERTIFICATE_DELIVERY:-}" == "true" && -n "${K8S_PKI_GCS_PATH:-}" ]]; then
-      echo "Running k8s_pki to configure pki"
-      "${KUBE_HOME}"/bin/k8s_pki once --gke_token_url "${TOKEN_URL}" --gke_token_body "${TOKEN_BODY_UNQUOTED}"
-    fi
     log-wrap 'CreateMasterAuth' create-master-auth
     # must be called before 'start-kube-addons'
     log-wrap 'DownloadComponentData' download-component-data
     log-wrap 'EnsureMasterBootstrapKubectlAuth' ensure-master-bootstrap-kubectl-auth
     log-wrap 'CreateMasterEtcdAuth' create-master-etcd-auth
     log-wrap 'CreateMasterEtcdApiserverAuth' create-master-etcd-apiserver-auth
+    if [[ "${ENABLE_KCP_DYNAMIC_CERTIFICATE_DELIVERY:-}" == "true" ]]; then
+      # If DCD is enabled, overwrites various kube-apiserver PKI paths.
+      log-wrap 'PrepareMasterDCD' prepare-master-dynamic-certificate-delivery
+    fi
     log-wrap 'OverridePVRecycler' override-pv-recycler
     log-wrap 'GKEMasterStart' gke-master-start
   else

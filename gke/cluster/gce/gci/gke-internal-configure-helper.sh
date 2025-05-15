@@ -63,6 +63,12 @@ function write-kube-apiserver-internal-cert-key {
   fi
 }
 
+function dcd-overwrite-kube-apiserver-internal-cert-paths {
+  echo "Loading Dynamic Cert Delivery internal kube-apiserver cert vars."
+  KUBE_APISERVER_SERVER_INTERNAL_CERT_PATH=${DCD_KUBE_APISERVER_SERVER_INTERNAL_CERT_PATH}
+  KUBE_APISERVER_SERVER_INTERNAL_KEY_PATH=${DCD_KUBE_APISERVER_SERVER_INTERNAL_KEY_PATH}
+}
+
 # Add entry to hostfile to redirect internal name to master internal IP.
 function setup-kube-apiserver-internal-address-redirect {
   if [[ "${KUBE_APISERVER_TLS_VERIFY_ENABLED:-}" == "true" ]]; then
@@ -207,6 +213,11 @@ function gke-internal-master-start {
   compute-master-manifest-variables
 
   write-kube-apiserver-internal-cert-key
+  if [[ "${ENABLE_KCP_DYNAMIC_CERTIFICATE_DELIVERY:-}" = "true" ]]; then
+    # If DCD is enabled, overwrites the "internal" kube-apiserver serving cert
+    # paths to ones set by DCD.
+    dcd-overwrite-kube-apiserver-internal-cert-paths
+  fi
   setup-kube-apiserver-internal-address-redirect
 
   start_internal_cluster_autoscaler
