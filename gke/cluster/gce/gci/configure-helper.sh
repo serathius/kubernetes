@@ -1704,7 +1704,7 @@ function start-kubelet {
 
   # POD_SYSCTLS is set in function configure-node-sysctls.
   local kubelet_opts="${KUBELET_ARGS} ${KUBELET_CONFIG_FILE_ARG:-} --pod-sysctls='${POD_SYSCTLS:-}' ${kubelet_cgroup_driver:-} ${kubelet_image_service_endpoint:-}"
-  kubelet_opts="${kubelet_opts} --pod-infra-container-image=${KUBE_DOCKER_REGISTRY}/${GKE_CONTAINERD_INFRA_CONTAINER}"
+  kubelet_opts="${kubelet_opts}"
   if [[ -n "${KUBELET_VERSION:-}" ]]; then
     kubelet_opts="${kubelet_opts} --version=${KUBELET_VERSION}"
   fi
