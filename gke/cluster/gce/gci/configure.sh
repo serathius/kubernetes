@@ -1193,8 +1193,7 @@ function install-kube-binary-config {
   # TODO(awly): include the binary and license in the OS image.
   install-exec-auth-plugin
 
-  if [[ "${KUBERNETES_MASTER:-}" == "false" ]] && \
-     [[ "${ENABLE_NODE_PROBLEM_DETECTOR:-}" == "standalone" ]]; then
+  if [[ "${KUBERNETES_MASTER:-}" == "false" ]]; then
     install-node-problem-detector
     install-npd-custom-plugins
   fi

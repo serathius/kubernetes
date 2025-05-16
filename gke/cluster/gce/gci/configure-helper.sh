@@ -2519,15 +2519,15 @@ EOF
     update-prometheus-to-sd-parameters ${event_exporter_yaml}
   fi
   if [[ "${ENABLE_NODE_PROBLEM_DETECTOR:-}" == "daemonset" ]]; then
-    setup-addon-manifests "addons" "node-problem-detector"
+    echo "node-problem-detector in daemonset mode is not supported" >&2
+    exit 1
   fi
-  if [[ "${ENABLE_NODE_PROBLEM_DETECTOR:-}" == "standalone" ]]; then
-    # Setup role binding(s) for standalone node problem detector.
-    if [[ -n "${NODE_PROBLEM_DETECTOR_TOKEN:-}" ]]; then
-      setup-addon-manifests "addons" "node-problem-detector/standalone"
-    fi
-    setup-addon-manifests "addons" "node-problem-detector/kubelet-user-standalone" "node-problem-detector"
+  # Setup role binding(s) for standalone node problem detector.
+  if [[ -n "${NODE_PROBLEM_DETECTOR_TOKEN:-}" ]]; then
+    setup-addon-manifests "addons" "node-problem-detector/standalone"
   fi
+  setup-addon-manifests "addons" "node-problem-detector/kubelet-user-standalone" "node-problem-detector"
+
   if echo "${ADMISSION_CONTROL:-}" | grep -q "LimitRanger"; then
     setup-addon-manifests "admission-controls" "limit-range" "gce"
   fi
@@ -3148,15 +3148,17 @@ function main() {
     if [[ "${KUBE_PROXY_DAEMONSET:-}" != "true" ]] && [[ "${KUBE_PROXY_DISABLE:-}" != "true" ]]; then
       log-wrap 'CreateKubeproxyUserKubeconfig' create-kubeproxy-user-kubeconfig
     fi
-    if [[ "${ENABLE_NODE_PROBLEM_DETECTOR:-}" == "standalone" ]]; then
-      if [[ -n "${NODE_PROBLEM_DETECTOR_TOKEN:-}" ]]; then
-        log-wrap 'CreateNodeProblemDetectorKubeconfig' create-node-problem-detector-kubeconfig "${KUBERNETES_MASTER_NAME}"
-      elif [[ -f "/var/lib/kubelet/kubeconfig" ]]; then
-        log-wrap 'CreateNodeProblemDetectorKubeconfigFromKubelet' create-node-problem-detector-kubeconfig-from-kubelet
-      else
-        echo "Either NODE_PROBLEM_DETECTOR_TOKEN or /var/lib/kubelet/kubeconfig must be set"
-        exit 1
-      fi
+    if [[ "${ENABLE_NODE_PROBLEM_DETECTOR:-}" == "daemonset" ]]; then
+      echo "node-problem-detector in daemonset mode is not supported" >&2
+      exit 1
+    fi
+    if [[ -n "${NODE_PROBLEM_DETECTOR_TOKEN:-}" ]]; then
+      log-wrap 'CreateNodeProblemDetectorKubeconfig' create-node-problem-detector-kubeconfig "${KUBERNETES_MASTER_NAME}"
+    elif [[ -f "/var/lib/kubelet/kubeconfig" ]]; then
+      log-wrap 'CreateNodeProblemDetectorKubeconfigFromKubelet' create-node-problem-detector-kubeconfig-from-kubelet
+    else
+      echo "Either NODE_PROBLEM_DETECTOR_TOKEN or /var/lib/kubelet/kubeconfig must be set" >&2
+      exit 1
     fi
   fi
 
@@ -3234,12 +3236,10 @@ function main() {
     if [[ "${KUBE_PROXY_DAEMONSET:-}" != "true" ]] && [[ "${KUBE_PROXY_DISABLE:-}" != "true" ]]; then
       log-wrap 'StartKubeProxy' start-kube-proxy
     fi
-    if [[ "${ENABLE_NODE_PROBLEM_DETECTOR:-}" == "standalone" ]]; then
-      if [[ -e "${KUBE_HOME}/bin/gke-internal-configure-helper.sh" ]]; then
-          log-wrap 'GKEConfigureNodeProblemDetector' gke-configure-node-problem-detector
-      fi
-      log-wrap 'StartNodeProblemDetector' start-node-problem-detector
+    if [[ -e "${KUBE_HOME}/bin/gke-internal-configure-helper.sh" ]]; then
+        log-wrap 'GKEConfigureNodeProblemDetector' gke-configure-node-problem-detector
     fi
+    log-wrap 'StartNodeProblemDetector' start-node-problem-detector
     if [ -n "${GPU_PARTITION_SIZE:-}" ] || [ -n "${MAX_TIME_SHARED_CLIENTS_PER_GPU:-}" ] ||
      [ -n "${MAX_SHARED_CLIENTS_PER_GPU:-}" ] || [ -n "${GPU_SHARING_STRATEGY:-}" ]; then
       log-wrap 'GKECreateGPUConfig' gke-create-gpu-config
