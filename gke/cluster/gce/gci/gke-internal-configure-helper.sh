@@ -2,11 +2,18 @@
 
 # Functions and vars copied from configure.sh
 # --- BEGIN ---
-CURL_FLAGS='--fail --silent --show-error --retry 5 --retry-delay 3 --connect-timeout 10 --retry-connrefused'
+CURL_FLAGS=(
+  '--fail'
+  '--silent'
+  '--show-error'
+  '--retry' '5'
+  '--retry-delay' '3'
+  '--connect-timeout' '10'
+  '--retry-connrefused'
+)
 GCE_METADATA_INTERNAL="http://metadata.google.internal/computeMetadata/v1/instance"
 function get-credentials {
-  # shellcheck disable=SC2086
-  curl ${CURL_FLAGS} \
+  curl "${CURL_FLAGS[@]}" \
     -H "Metadata-Flavor: Google" \
     "${GCE_METADATA_INTERNAL}/service-accounts/default/token" \
   | python3 -c 'import sys; import json; print(json.loads(sys.stdin.read())["access_token"])'
@@ -64,7 +71,8 @@ function setup-kube-apiserver-internal-address-redirect {
       exit 1
     fi
 
-    local internal_ip=$(ifconfig eth0 | grep 'inet ' | awk '{print $2}')
+    local internal_ip
+    internal_ip=$(ifconfig eth0 | grep 'inet ' | awk '{print $2}')
     echo "Master IPv4 internal IP is ${internal_ip}"
     echo "${internal_ip} ${KUBE_APISERVER_INTERNAL_ADDRESS}" >>/etc/hosts
   fi
@@ -78,10 +86,10 @@ function start_internal_cluster_autoscaler {
 }
 
 function add_vpa_admission_webhook_host {
-  original_ipv6_loopback_line=`grep "^::1[[:space:]]" /etc/hosts`
-  tmp_file=`mktemp`
-  grep -v "^::1[[:space:]]" /etc/hosts >${tmp_file}
-  cat ${tmp_file} >/etc/hosts
+  original_ipv6_loopback_line=$(grep "^::1[[:space:]]" /etc/hosts)
+  tmp_file=$(mktemp)
+  grep -v "^::1[[:space:]]" /etc/hosts >"${tmp_file}"
+  cat "${tmp_file}" >/etc/hosts
   if [[ -n "${original_ipv6_loopback_line:-}" ]]; then
     echo "${original_ipv6_loopback_line} vpa.admissionwebhook.localhost" >>/etc/hosts
   else
@@ -106,14 +114,14 @@ function start_pod_autoscaler {
     setup-addon-manifests "addons" "pod-autoscaler"
 
     for component in admission-controller recommender updater; do
-      setup_pod_autoscaler_component ${component} ${manifests_dir}
+      setup_pod_autoscaler_component "${component}" "${manifests_dir}"
     done
   elif [[ "${ENABLE_UNIFIED_AUTOSCALING:-}" == "true" ]]; then
     cp "${manifests_dir}/internal-kuba-rbac.yaml" "${manifests_dir}/pod-autoscaler"
     setup-addon-manifests "addons" "pod-autoscaler"
 
     echo "Start Kubernetes Adapter for Unified Autoscaler (KUBA)"
-    setup_pod_autoscaler_component "recommender" ${manifests_dir}
+    setup_pod_autoscaler_component "recommender" "${manifests_dir}"
   fi
 }
 
@@ -121,7 +129,7 @@ function base64_decode_or_die {
   local variable_name=$1
   local out_file=$2
   if [[ -n "${!variable_name}" ]]; then
-    if ! base64 -d - <<<${!variable_name} >${out_file}; then
+    if ! base64 -d - <<<"${!variable_name}" >"${out_file}"; then
       echo "==error base 64 decoding ${variable_name}=="
       echo "==the value of the variable is ${!variable_name}=="
       exit 1
@@ -135,7 +143,7 @@ function base64_decode_or_die {
 function setup_pod_autoscaler_component {
   local component=$1
   local manifests_dir=$2
-  create-static-auth-kubeconfig-for-component vpa-${component}
+  create-static-auth-kubeconfig-for-component "vpa-${component}"
 
   # Prepare manifest
   local src_file="${manifests_dir}/internal-vpa-${component}.manifest"
@@ -187,10 +195,11 @@ function setup_master_prom_to_sd_monitor_component {
 function create-static-auth-kubeconfig-for-component {
   local component=$1
   echo "Creating token for component ${component}"
-  local token="$(secure_random 32)"
+  local token
+  token="$(secure_random 32)"
   append_or_replace_prefixed_line /etc/srv/kubernetes/known_tokens.csv "${token}," "system:${component},uid:system:${component}${AUTH_COMPONENTS_GROUP:+,$AUTH_COMPONENTS_GROUP}"
-  create-kubeconfig ${component} ${token}
-  echo -n ${token} > /etc/srv/kubernetes/${component}/token
+  create-kubeconfig "${component}" "${token}"
+  echo -n "${token}" > /etc/srv/kubernetes/"${component}"/token
 }
 
 function gke-internal-master-start {
@@ -301,23 +310,24 @@ function gke-configure-node-sysctls {
   # sysctl-monitor.
   #
   # The directory was created in configure.sh.
-  sudo sysctl -a > "${KUBE_HOME}/npd-custom-plugins/configs/init-sysctls.conf"
+  sysctl -a > "${KUBE_HOME}/npd-custom-plugins/configs/init-sysctls.conf"
 }
 
 function detect_mtu {
   local MTU=1460
   if [[ "${DETECT_MTU:-}" == "true" ]];then
-    local default_nic=$(ip route get 8.8.8.8 | sed -nr "s/.*dev ([^\ ]+).*/\1/p")
+    local default_nic
+    default_nic=$(ip route get 8.8.8.8 | sed -nr "s/.*dev ([^\ ]+).*/\1/p")
     if [ -f "/sys/class/net/$default_nic/mtu" ]; then
-      MTU=$(cat /sys/class/net/$default_nic/mtu)
+      MTU=$(cat "/sys/class/net/$default_nic/mtu")
     fi
   fi
-  echo $MTU
-
+  echo "$MTU"
 }
 
 function _gke_cni_template {
-  local MTU="$(detect_mtu)"
+  local MTU
+  MTU="$(detect_mtu)"
   cat <<EOF
 {
   "name": "k8s-pod-network",
@@ -389,11 +399,9 @@ function install-gsm-certificate() {
   local -r curl_headers="Authorization: Bearer ${token}"
   local -r api_url="${GSM_ENDPOINT}/v1/${cert_url}"
   local -r payload_file="/tmp/gsm-payload.json"
-  # shellcheck disable=SC2206
-  local -r gsm_curl_flags=($CURL_FLAGS -H "${curl_headers}" -Lo "${payload_file}")
+  local -r gsm_curl_flags=("${CURL_FLAGS[@]}" -H "${curl_headers}" -Lo "${payload_file}")
   local curl_error http_code
 
-  # shellcheck disable=SC2086
   if ! curl_error=$(curl "${gsm_curl_flags[@]}" "${api_url}" 2>&1); then
     http_code=$(echo "${curl_error}" | sed -nE 's/^.*([0-9]{3})$/\1/p')
     if (( http_code >= 400 && http_code <= 499 )); then
@@ -409,7 +417,6 @@ function install-gsm-certificate() {
   mv "${payload_file}" "${metadata_file}"
   chmod 444 "${metadata_file}"
 
-   # shellcheck disable=SC2086
   if ! curl_error=$(curl "${gsm_curl_flags[@]}" "$api_url:access" 2>&1); then
     http_code=$(echo "$curl_error" | sed -nE 's/^.*([0-9]{3})$/\1/p')
     if (( http_code >= 400 && http_code <= 499 )); then
@@ -576,7 +583,7 @@ function gke-setup-containerd {
     systemdCgroup="true"
   fi
   # Reuse docker group for containerd.
-  local -r containerd_gid="$(cat /etc/group | grep ^docker: | cut -d: -f 3)"
+  local -r containerd_gid="$(grep -m 1 ^docker: /etc/group | cut -d: -f 3)"
   # Create directories for cdi and give the correct permissions
   local -r CDI_ETC_HOME="/etc/cdi"
   mkdir -p "${CDI_ETC_HOME}"
@@ -791,7 +798,8 @@ EOF
 function configure-smt {
   declare -r smt_op="${GVISOR_ENABLE_SMT:-}"
   declare -r smt_path="/sys/devices/system/cpu/smt/control"
-  local smt_state=$(cat ${smt_path})
+  local smt_state
+  smt_state=$(cat ${smt_path})
   echo "SMT in initial state: ${smt_state}"
   if [[ "${smt_op}" == "true" ]]; then
     echo "Enabling SMT for node."
@@ -813,10 +821,10 @@ function setup-gke-addon-registry {
   local -r gke_addon_registry_override="${GKE_ADDON_REGISTRY_OVERRIDE:-}"
   if [[ -n $gke_addon_registry_override ]] ; then
     # some .manifest files are in yaml format, while others are in json
-    find "${manifests_dir}" -name \*.yaml -or -name \*.yaml.in -or -name \*.manifest | \
-      xargs sed -ri "s@(image:\s.*)gke.gcr.io@\1${gke_addon_registry_override}@"
-    find "${manifests_dir}" -name \*.manifest -or -name \*.json | \
-      xargs sed -ri "s@(image\":\s+\")gke.gcr.io@\1${gke_addon_registry_override}@"
+    find "${manifests_dir}" \( -name \*.yaml -or -name \*.yaml.in -or -name \*.manifest \) -print0 | \
+      xargs -0 sed -ri "s@(image:\s.*)gke.gcr.io@\1${gke_addon_registry_override}@"
+    find "${manifests_dir}" \( -name \*.manifest -or -name \*.json \) -print0 | \
+      xargs -0 sed -ri "s@(image\":\s+\")gke.gcr.io@\1${gke_addon_registry_override}@"
   fi
 }
 
@@ -1050,10 +1058,10 @@ function gke-create-gpu-config {
 
   python3 "${dir}/generate-gpu-config.py" \
     --gpu-partition-size="${gpu_partition_size}" \
-    --max-time-shared-clients-per-gpu=${max_time_shared_clients_per_gpu} \
-    --max-shared-clients-per-gpu=${max_shared_clients_per_gpu} \
-    --gpu-sharing-strategy=${gpu_sharing_strategy} \
-    --file-path=${gpu_config_file}
+    --max-time-shared-clients-per-gpu="${max_time_shared_clients_per_gpu}" \
+    --max-shared-clients-per-gpu="${max_shared_clients_per_gpu}" \
+    --gpu-sharing-strategy="${gpu_sharing_strategy}" \
+    --file-path="${gpu_config_file}"
 
   # Setup all GPUs to EXCLUSIVE mode (https://docs.nvidia.com/deploy/mps/index.html#topic_3_3_1_2).
   # Setup systemd service to start MPS control daemon.

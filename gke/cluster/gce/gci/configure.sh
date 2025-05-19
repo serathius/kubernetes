@@ -26,7 +26,9 @@ set -o pipefail
 ### Hardcoded constants
 
 DEFAULT_CNI_VERSION='v1.6.2-gke.5'
+# shellcheck disable=SC2034 # used by cni_hash_var which interpolates the platform
 DEFAULT_CNI_HASH_LINUX_AMD64='0ea72a0e6cd0ba9095e9a631e88c2fee854824f336bd552e6873dcb4994f98f50eb6d1325ec3d3c2cf2440a07f6347d344e9642313df4c33e7520c4fa016d6de'
+# shellcheck disable=SC2034 # used by cni_hash_var which interpolates the platform
 DEFAULT_CNI_HASH_LINUX_ARM64='0707b19dec9390b5d71fa421c311d5bde7382b03d2e43966337b7ef4546c28fd00a17887a4cac31dcebe0f67bed571c140a0fac2dd043285a3f54c8440d5f1a4'
 
 DEFAULT_NPD_VERSION='v0.8.20-71-gf6bb4f7b-gke.0'
@@ -84,7 +86,15 @@ KUBE_DOCKER_REGISTRY="${KUBE_DOCKER_REGISTRY:-gke.gcr.io}"
 CONFIGURE_PGA="${CONFIGURE_PGA:-true}"
 
 # Standard curl flags.
-CURL_FLAGS='--fail --silent --show-error --retry 5 --retry-delay 3 --connect-timeout 10 --retry-connrefused'
+CURL_FLAGS=(
+  '--fail'
+  '--silent'
+  '--show-error'
+  '--retry' '5'
+  '--retry-delay' '3'
+  '--connect-timeout' '10'
+  '--retry-connrefused'
+)
 
 # This version needs to be the same as in gke/cluster/gce/gci/configure-helper.sh
 GKE_CONTAINERD_INFRA_CONTAINER="pause:3.8@sha256:880e63f94b145e46f1b1082bb71b85e21f16b99b180b9996407d61240ceb9830"
@@ -118,8 +128,7 @@ function get-metadata-value {
   local default="${2:-}"
 
   local status
-  # shellcheck disable=SC2086
-  curl ${CURL_FLAGS} \
+  curl "${CURL_FLAGS[@]}" \
     -H 'Metadata-Flavor: Google' \
     "http://metadata/computeMetadata/v1/${1}" \
   || status="$?"
@@ -144,8 +153,7 @@ function download-kube-env {
     else
       local meta_path="http://metadata.google.internal/computeMetadata/v1/instance/attributes/kube-env"
       echo "Downloading kube-env via GCE metadata from ${meta_path} to ${kube_env_path}"
-      # shellcheck disable=SC2086
-      retry-forever 10 curl ${CURL_FLAGS} \
+      retry-forever 10 curl "${CURL_FLAGS[@]}" \
         -H "X-Google-Metadata-Request: True" \
         -o "${kube_env_path}" \
         "${meta_path}"
@@ -173,7 +181,7 @@ function download-kube-env-hurl {
   local -r kube_env_hms_path=$(get-metadata-value "instance/attributes/kube-env-path")
 
   echo "Downloading kube-env via hurl from ${kube_env_hms_path} to ${kube_env_path}"
-  retry-forever 30 ${KUBE_HOME}/bin/hurl --hms_address $endpoint \
+  retry-forever 30 "${KUBE_HOME}/bin/hurl" --hms_address "$endpoint" \
     --dst "${kube_env_path}" \
     "${kube_env_hms_path}"
   chmod 600 "${kube_env_path}"
@@ -186,8 +194,7 @@ function download-kubelet-config {
   (
     umask 077
     local -r tmp_kubelet_config="/tmp/kubelet-config.yaml"
-    # shellcheck disable=SC2086
-    retry-forever 10 curl ${CURL_FLAGS} \
+    retry-forever 10 curl "${CURL_FLAGS[@]}" \
       -H "X-Google-Metadata-Request: True" \
       -o "${tmp_kubelet_config}" \
       http://metadata.google.internal/computeMetadata/v1/instance/attributes/kubelet-config
@@ -204,7 +211,7 @@ function download-kube-master-certs-hurl {
   local -r kube_master_certs_hms_path=$(get-metadata-value "instance/attributes/kube-master-certs-path")
 
   echo "Downloading kube-master-certs via hurl from ${kube_master_certs_hms_path} to ${tmp_kube_master_certs_path}"
-  retry-forever 30 ${KUBE_HOME}/bin/hurl --hms_address $endpoint \
+  retry-forever 30 "${KUBE_HOME}"/bin/hurl --hms_address "$endpoint" \
     --dst "${tmp_kube_master_certs_path}" \
     "${kube_master_certs_hms_path}"
 
@@ -236,16 +243,14 @@ function validate-hash {
 # Get default service account credentials of the VM.
 GCE_METADATA_INTERNAL="http://metadata.google.internal/computeMetadata/v1/instance"
 function get-credentials {
-  # shellcheck disable=SC2086
-  curl ${CURL_FLAGS} \
+  curl "${CURL_FLAGS[@]}" \
     -H "Metadata-Flavor: Google" \
     "${GCE_METADATA_INTERNAL}/service-accounts/default/token" \
   | python3 -c 'import sys; import json; print(json.loads(sys.stdin.read())["access_token"])'
 }
 
 function valid-storage-scope {
-  # shellcheck disable=SC2086
-  curl ${CURL_FLAGS} \
+  curl "${CURL_FLAGS[@]}" \
     -H "Metadata-Flavor: Google" \
     "${GCE_METADATA_INTERNAL}/service-accounts/default/scopes" \
   | grep -E "auth/devstorage|auth/cloud-platform"
@@ -413,12 +418,13 @@ function disable_aufs() {
 function detect_mtu {
   local MTU=1460
   if [[ "${DETECT_MTU:-}" == "true" ]];then
-    local default_nic=$(ip route get 8.8.8.8 | sed -nr "s/.*dev ([^\ ]+).*/\1/p")
+    local default_nic
+    default_nic=$(ip route get 8.8.8.8 | sed -nr "s/.*dev ([^\ ]+).*/\1/p")
     if [ -f "/sys/class/net/$default_nic/mtu" ]; then
-      MTU=$(cat /sys/class/net/$default_nic/mtu)
+      MTU=$(cat "/sys/class/net/$default_nic/mtu")
     fi
   fi
-  echo $MTU
+  echo "$MTU"
 }
 
 # This function cofigures docker. It has no conditional logic.
@@ -439,7 +445,8 @@ function assemble-docker-flags {
   # The same option cannot be configured by both, even if it is a list option and can be repeated in the command line multiple times.
   # This is why we are not simply configuring everything in daemon.json.
 
-  local MTU="$(detect_mtu)"
+  local MTU
+  MTU="$(detect_mtu)"
 
   # options to be set on COS, registry-mirror is pre-configured on COS
   local os_specific_options="\"live-restore\": true,\
@@ -640,7 +647,7 @@ function preload-pause-image {
     for img in $(ctr -n=k8s.io images list -q | grep "${pause_sha}"); do
       echo "pause image ${img} of the same version is preloaded, retagging"
       if [[ "${pause_image}" != "${img}" ]]; then
-        ctr -n=k8s.io image tag --force ${img} ${pause_image}
+        ctr -n=k8s.io image tag --force "${img}" "${pause_image}"
         pin-docker-image "pause"
       fi
       return
@@ -781,7 +788,7 @@ function install-hurl {
   echo "install-hurl: Installing hurl from ${hurl_gcs_url} ... "
   FORCE_USE_CREDENTIAL=true download-or-bust "${hurl_hash}" "${hurl_gcs_url}"
   if [[ -f "${KUBE_HOME}/${hurl_bin}" ]]; then
-    chmod a+x ${KUBE_HOME}/${hurl_bin}
+    chmod a+x "${KUBE_HOME}/${hurl_bin}"
     mv "${KUBE_HOME}/${hurl_bin}" "${KUBE_BIN}/${hurl_bin}"
     echo "install-hurl: hurl installed to ${KUBE_BIN}/${hurl_bin}"
     record-preload-info "${hurl_bin}" "${hurl_preload_digest}"
@@ -791,6 +798,7 @@ function install-hurl {
 
 function install-k8s-pki {
     local -r k8s_pki_url="${STORAGE_ENDPOINT}/${K8S_PKI_GCS_PATH}"
+    # shellcheck disable=SC2153 # we use both capital and lowercase spelling intentionally
     local -r k8s_pki_hash="${K8S_PKI_HASH}"
 
     if is-preloaded "k8s_pki" "${k8s_pki_hash}"; then
@@ -869,7 +877,7 @@ function install-riptide {
 
 function source-gke-internal-configure-helper {
   if [[ "${GKE_INTERNAL_HELPER_SOURCED:-}" != "true" ]]; then
-    source ${KUBE_BIN}/gke-internal-configure-helper.sh
+    source "${KUBE_BIN}"/gke-internal-configure-helper.sh
   fi
   GKE_INTERNAL_HELPER_SOURCED="true"
 }
@@ -972,7 +980,7 @@ function detect-reboot-needed {
       echo "skip reboot attempt due to the journalctl error"
       return
     fi
-    if [[ $(($REBOOT_HISTORY)) -gt ${MAX_BOOT_COUNT} ]]; then
+    if [[ ${REBOOT_HISTORY} -gt ${MAX_BOOT_COUNT} ]]; then
       echo "best effort reboot attempt ${REBOOT_HISTORY} exceed ${MAX_BOOT_COUNT}! stop rebooting!"
     else
       # write to a persistent file after reboot for NPD reporting event
@@ -1224,19 +1232,21 @@ function setup-shm-healthcheck-binaries() {
 function configure-pga-if-needed() {
   echo "Detecting connectivity to ${STORAGE_ENDPOINT}..."
   local status=0
-  curl --ipv4 -L --connect-timeout 10 --retry 3  --retry-connrefused ${STORAGE_ENDPOINT} || status="$?"
+  curl --ipv4 -L --connect-timeout 10 --retry 3  --retry-connrefused "${STORAGE_ENDPOINT}" || status="$?"
   # connection is refused(7) or timeout(28).
   if [[ "${status}" == "7" || "${status}" == "28" ]]; then
     status=0
     local pga_ip
-    pga_ip=`curl ${PGA_ENDPOINT} -w '%{remote_ip}' --connect-timeout 10 -s -o /dev/null` || status="$?"
+    pga_ip=$(curl "${PGA_ENDPOINT}" -w '%{remote_ip}' --connect-timeout 10 -s -o /dev/null) || status="$?"
     registry_domain="$(echo "${KUBE_DOCKER_REGISTRY}" | cut -d '/' -f 1)"
     if [[ "${status}" == "0" ]]; then
       echo "Configure /etc/hosts to use private google access"
-      echo "$pga_ip ${STORAGE_ENDPOINT#https://}" >> /etc/hosts
-      echo "$pga_ip ${registry_domain}" >> /etc/hosts
-      # continue pga support for domain gke.gcr.io
-      echo "$pga_ip gke.gcr.io" >> /etc/hosts
+      {
+        echo "$pga_ip ${STORAGE_ENDPOINT#https://}"
+        echo "$pga_ip ${registry_domain}"
+        # continue pga support for domain gke.gcr.io
+        echo "$pga_ip gke.gcr.io"
+      } >> /etc/hosts
     fi
   fi
 }
@@ -1468,7 +1478,7 @@ detect_host_info
 # When configure.sh is sourced by the preload script, $0 and $BASH_SOURCE are
 # different. $BASH_SOURCE still contains the path of configure.sh, while $0 is
 # the path of the preload script.
-if [[ "$0" != "$BASH_SOURCE" && "${IS_PRELOADER:-"false"}" == "true" ]]; then
+if [[ "$0" != "${BASH_SOURCE[0]}" && "${IS_PRELOADER:-"false"}" == "true" ]]; then
   # preload common components
   preload
   echo "Running in preloader instead of VM bootsrapping. Skipping installation steps as preloader script will source configure.sh and call all non-common functions."

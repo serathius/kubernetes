@@ -5,7 +5,7 @@ set -euo pipefail
 if [[ -n "${RUNFILES_DIR:-}" ]]; then
   cd "${RUNFILES_DIR}/${TEST_WORKSPACE}/gke/cluster/gce/gci"
 else
-  cd "$(dirname $0)"
+  cd "$(dirname "${BASH_SOURCE[0]}")"
 fi
 
 source gke-internal-configure-helper.sh

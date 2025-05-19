@@ -33,9 +33,18 @@ METADATA_SERVER_IP="${METADATA_SERVER_IP:-169.254.169.254}"
 KUBE_DOCKER_REGISTRY="${KUBE_DOCKER_REGISTRY:-gke.gcr.io}"
 
 # Standard curl flags.
-CURL_FLAGS='--fail --silent --show-error --retry 5 --retry-delay 3 --connect-timeout 10 --retry-connrefused'
+CURL_FLAGS=(
+  '--fail'
+  '--silent'
+  '--show-error'
+  '--retry' '5'
+  '--retry-delay' '3'
+  '--connect-timeout' '10'
+  '--retry-connrefused'
+)
 
 # This version needs to be the same as in gke/cluster/gce/gci/configure.sh
+# shellcheck disable=SC2034 # Read by gke-setup-containerd in gke-internal-configure-helper.sh
 GKE_CONTAINERD_INFRA_CONTAINER="pause:3.8@sha256:880e63f94b145e46f1b1082bb71b85e21f16b99b180b9996407d61240ceb9830"
 
 readonly KUBELET_MANIFESTS_PATH="/etc/kubernetes/manifests"
@@ -190,7 +199,7 @@ function config-ip-firewall {
     # Calico adds iptables rules that accepts all traffic. Make it a PREROUTING
     # rule to get earlier in the chain and ensure the metadata server is
     # blocked.
-    iptables -t mangle -A PREROUTING -d ${METADATA_SERVER_IP}/32 -j DROP
+    iptables -t mangle -A PREROUTING -d "${METADATA_SERVER_IP}"/32 -j DROP
   fi
 
   # Flush iptables nat table
@@ -226,9 +235,9 @@ function config-ip-firewall {
       iptables -w -t nat -I PREROUTING -p tcp ! -i eth0 -d "${METADATA_SERVER_IP}" --dport 8082 -m comment --comment "metadata-concealment: bridge traffic to metadata server goes to metadata proxy" -j DNAT --to-destination 169.254.169.252:991
     fi
   fi
-  iptables -w -t mangle -I OUTPUT -s ${METADATA_SERVER_IP} -j DROP
-  iptables -w -t mangle -I OUTPUT -s ${METADATA_SERVER_IP} -p udp --sport 53 -j ACCEPT
-  iptables -w -t mangle -I OUTPUT -s ${METADATA_SERVER_IP} -p tcp --sport 53 -j ACCEPT
+  iptables -w -t mangle -I OUTPUT -s "${METADATA_SERVER_IP}" -j DROP
+  iptables -w -t mangle -I OUTPUT -s "${METADATA_SERVER_IP}" -p udp --sport 53 -j ACCEPT
+  iptables -w -t mangle -I OUTPUT -s "${METADATA_SERVER_IP}" -p tcp --sport 53 -j ACCEPT
 
   # Log all metadata access not from approved processes.
   case "${METADATA_SERVER_FIREWALL_MODE:-off}" in
@@ -377,7 +386,8 @@ function safe-format-and-mount-local-ssd() {
   device="$1"
   mountpoint="$2"
 
-  local fstype=$(udevadm info --query=property --name="${device}" | { grep ID_FS_TYPE || :; } | sed "s/ID_FS_TYPE=//")
+  local fstype
+  fstype=$(udevadm info --query=property --name="${device}" | { grep ID_FS_TYPE || :; } | sed "s/ID_FS_TYPE=//")
   if [[ "${fstype}" == "LVM2_member" || "${fstype}" == "linux_raid_member" ]]; then
     echo "${device} contains a ${fstype} file system. Skip formatting and mounting."
     return
@@ -544,7 +554,8 @@ function ensure-local-ssds() {
   local i=0
   for ssd in "${LOCAL_SSDS_ID_PATH_PREFIX}"-nvme-ssd-*; do
       if [ -e "${ssd}" ]; then
-        local devicenum=$(echo "${ssd}" | sed -e 's/\/dev\/disk\/by-id\/google-local-nvme-ssd-\([0-9]*\)/\1/')
+        local devicenum
+        devicenum=$(echo "${ssd}" | sed -e 's/\/dev\/disk\/by-id\/google-local-nvme-ssd-\([0-9]*\)/\1/')
         if [[ "${i}" -lt "${nvmeblocknum}" ]]; then
           mount-ext "${ssd}" "${devicenum}" "nvme" "block"
         else
@@ -1670,13 +1681,13 @@ function create-master-etcd-apiserver-auth {
 function detect_mtu {
   local MTU=1460
   if [[ "${DETECT_MTU:-}" == "true" ]];then
-    local default_nic=$(ip route get 8.8.8.8 | sed -nr "s/.*dev ([^\ ]+).*/\1/p")
+    local default_nic
+    default_nic=$(ip route get 8.8.8.8 | sed -nr "s/.*dev ([^\ ]+).*/\1/p")
     if [ -f "/sys/class/net/$default_nic/mtu" ]; then
-      MTU=$(cat /sys/class/net/$default_nic/mtu)
+      MTU=$(cat /sys/class/net/"$default_nic"/mtu)
     fi
   fi
-  echo $MTU
-
+  echo "$MTU"
 }
 
 # This function assembles the kubelet systemd service file and starts it
@@ -1704,7 +1715,6 @@ function start-kubelet {
 
   # POD_SYSCTLS is set in function configure-node-sysctls.
   local kubelet_opts="${KUBELET_ARGS} ${KUBELET_CONFIG_FILE_ARG:-} --pod-sysctls='${POD_SYSCTLS:-}' ${kubelet_cgroup_driver:-} ${kubelet_image_service_endpoint:-}"
-  kubelet_opts="${kubelet_opts}"
   if [[ -n "${KUBELET_VERSION:-}" ]]; then
     kubelet_opts="${kubelet_opts} --version=${KUBELET_VERSION}"
   fi
@@ -1812,8 +1822,9 @@ function prepare-kube-proxy-manifest-variables {
   local -r src_file=$1;
 
   local -r kubeconfig="--kubeconfig=/var/lib/kube-proxy/kubeconfig"
-  local kube_docker_registry=${KUBE_DOCKER_REGISTRY}
-  local kube_proxy_docker_tag=$(cat /home/kubernetes/kube-docker-files/kube-proxy.docker_tag)
+  local -r kube_docker_registry=${KUBE_DOCKER_REGISTRY}
+  local kube_proxy_docker_tag
+  kube_proxy_docker_tag=$(cat /home/kubernetes/kube-docker-files/kube-proxy.docker_tag)
   if [[ -n "${KUBELET_VERSION:-}" ]]; then
     # Docker tags cannot contain '+', make CI versions a valid docker tag.
     kube_proxy_docker_tag=${KUBELET_VERSION/+/_}
@@ -1940,7 +1951,7 @@ function wait-till-etcd-ready {
   fi
 
   echo "Wait till etcd ready"
-  until curl ${CURL_FLAGS} "http://127.0.0.1:${MASTER_HEALTHCHECK_PORT}?view=${view}"; do
+  until curl "${CURL_FLAGS[@]}" "http://127.0.0.1:${MASTER_HEALTHCHECK_PORT}?view=${view}"; do
     echo "Attempt ${attempts}: etcd not healthy, retrying in 2 seconds"
     ((attempts+=1))
 
@@ -1962,11 +1973,14 @@ function wait-till-etcd-ready {
 #   DOCKER_REGISTRY
 #   FLEXVOLUME_HOSTPATH_MOUNT
 #   FLEXVOLUME_HOSTPATH_VOLUME
+# TODO: eventually replaced by components ...
+# shellcheck disable=SC2034 # "unused" variables used by manifests
 function compute-master-manifest-variables {
   CLOUD_CONFIG_OPT=""
   CLOUD_CONFIG_VOLUME=""
   CLOUD_CONFIG_MOUNT=""
   if [[ -f /etc/gce.conf ]]; then
+
     CLOUD_CONFIG_OPT="--cloud-config=/etc/gce.conf"
     CLOUD_CONFIG_VOLUME="{\"name\": \"cloudconfigmount\",\"hostPath\": {\"path\": \"/etc/gce.conf\", \"type\": \"FileOrCreate\"}},"
     CLOUD_CONFIG_MOUNT="{\"name\": \"cloudconfigmount\",\"mountPath\": \"/etc/gce.conf\", \"readOnly\": true},"
@@ -2131,7 +2145,7 @@ function download-component-data {
     localPath="${DELAYED_COMPONENTS_MANIFESTS_DIRECTORY}"
   fi
 
-  cat > $attribute_config <<EOF
+  cat > "${attribute_config}" <<EOF
 attributes:
 - attributePath: $(get-metadata-value "instance/attributes/google-container-manifest-path")
   localPath: "${localPath}"
@@ -2141,14 +2155,14 @@ attributes:
   processKind: "${extrasProcessKind}"
 EOF
 
-  retry-forever 30 ${KUBE_HOME}/bin/hurl --hms_address $endpoint --attribute_config $attribute_config
+  retry-forever 30 "${KUBE_HOME}"/bin/hurl --hms_address "${endpoint}" --attribute_config "${attribute_config}"
   # setup addons
   setup-addon-manifests "addons" "gce-extras"
 
   if [[ "${ORDERED_COMPONENTS_START:-false}" == "true" ]]; then
     echo "Ordered bootstrap: run level 0 - moving manifests from ${localPath} to ${KUBELET_MANIFESTS_PATH}:"
 
-    for file in ${localPath}/*; do
+    for file in "${localPath}"/*; do
       runLevel=$(python3 -c "
 import sys, yaml
 object = yaml.safe_load(open(sys.argv[1]))
@@ -2178,8 +2192,7 @@ function get-metadata-value {
   local default="${2:-}"
 
   local status
-  # shellcheck disable=SC2086
-  curl ${CURL_FLAGS} \
+  curl "${CURL_FLAGS[@]}" \
     -H 'Metadata-Flavor: Google' \
     "http://metadata/computeMetadata/v1/${1}" \
   || status="$?"
@@ -2214,7 +2227,7 @@ function copy-manifests {
   fi
   chown -R root:root "${dst_dir}"
   chmod 755 "${dst_dir}"
-  if [[ "$(ls ${dst_dir})" ]]; then
+  if [[ "$(ls "${dst_dir}")" ]]; then
     chmod 644 "${dst_dir}"/*
   fi
 }
@@ -2543,9 +2556,6 @@ function override-pv-recycler {
     echo "PV_RECYCLER_OVERRIDE_TEMPLATE is not set"
     exit 1
   fi
-
-  PV_RECYCLER_VOLUME="{\"name\": \"pv-recycler-mount\",\"hostPath\": {\"path\": \"${PV_RECYCLER_OVERRIDE_TEMPLATE}\", \"type\": \"FileOrCreate\"}},"
-  PV_RECYCLER_MOUNT="{\"name\": \"pv-recycler-mount\",\"mountPath\": \"${PV_RECYCLER_OVERRIDE_TEMPLATE}\", \"readOnly\": true},"
 
   cat > "${PV_RECYCLER_OVERRIDE_TEMPLATE}" <<\EOF
 version: v1
@@ -2936,7 +2946,6 @@ function main() {
   readonly LOCAL_SSDS_ID_PATH_PREFIX="/dev/disk/by-id/google-local"
   readonly LOCAL_SSDS_UUID_MNT_PREFIX="/mnt/disks/by-uuid/google-local-ssds"
   readonly LOCAL_SSDS_UUID_BLOCK_PREFIX="/dev/disk/by-uuid/google-local-ssds"
-  readonly COREDNS_AUTOSCALER="Deployment/coredns"
 
   # Resource requests of master components.
   KUBE_CONTROLLER_MANAGER_CPU_REQUEST="${KUBE_CONTROLLER_MANAGER_CPU_REQUEST:-200m}"
@@ -3017,7 +3026,7 @@ function main() {
     log-wrap 'CreateMasterPKI' create-master-pki
     if [[ "${ENABLE_KCP_DYNAMIC_CERTIFICATE_DELIVERY:-}" == "true" && -n "${K8S_PKI_GCS_PATH:-}" ]]; then
       echo "Running k8s_pki to configure pki"
-      ${KUBE_HOME}/bin/k8s_pki once --gke_token_url ${TOKEN_URL} --gke_token_body ${TOKEN_BODY_UNQUOTED}
+      "${KUBE_HOME}"/bin/k8s_pki once --gke_token_url "${TOKEN_URL}" --gke_token_body "${TOKEN_BODY_UNQUOTED}"
     fi
     log-wrap 'CreateMasterAuth' create-master-auth
     # must be called before 'start-kube-addons'
@@ -3101,7 +3110,7 @@ function main() {
       if [[ -n "${DELAYED_COMPONENTS_MANIFESTS_DIRECTORY:-}" ]]; then
         echo "Ordered bootstrap: run level 2+ - moving remaining manifests from ${DELAYED_COMPONENTS_MANIFESTS_DIRECTORY}"
         log-start 'MoveRunLevel2ComponentsManifests'
-        mv --verbose ${DELAYED_COMPONENTS_MANIFESTS_DIRECTORY}/* ${KUBELET_MANIFESTS_PATH}
+        mv --verbose "${DELAYED_COMPONENTS_MANIFESTS_DIRECTORY}"/* "${KUBELET_MANIFESTS_PATH}"
         log-end 'MoveRunLevel2ComponentsManifests'
       else
         echo "ORDERED_COMPONENTS_START is set to true but DELAYED_COMPONENTS_MANIFESTS_DIRECTORY is not defined"
