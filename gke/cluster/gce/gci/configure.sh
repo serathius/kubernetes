@@ -736,9 +736,7 @@ function install-kube-manifests {
   if [[ -e "${dst_dir}/kubernetes/gci-trusty/gke-internal-configure-helper.sh" ]]; then
     cp "${dst_dir}/kubernetes/gci-trusty/gke-internal-configure-helper.sh" "${KUBE_BIN}/"
   fi
-  if [[ -e "${dst_dir}/kubernetes/gci-trusty/node-registration-checker.sh" ]]; then
-    cp "${dst_dir}/kubernetes/gci-trusty/node-registration-checker.sh" "${KUBE_BIN}/"
-  fi
+  cp "${dst_dir}/kubernetes/gci-trusty/node-registration-checker.sh" "${KUBE_BIN}/"
   cp "${dst_dir}/kubernetes/gci-trusty/networkd-monitor.sh" "${KUBE_BIN}/networkd-monitor.sh"
 
   # Add the installable script to KUBE_BIN so installables can be processed.

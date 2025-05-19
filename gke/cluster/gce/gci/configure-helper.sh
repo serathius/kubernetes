@@ -3075,7 +3075,6 @@ function main() {
       log-wrap 'ConfigureAuthProviderGcp' configure-auth-provider-gcp
     fi
   fi
-  log-wrap 'InstallNodeRegistrationChecker' install-node-registration-checker
   log-wrap 'ProcessInstallables' process-installables
 
   # Note prepare-mounter-rootfs must be called before the kubelet starts, as

@@ -82,6 +82,23 @@ write_files:
       [Install]
       WantedBy=kubernetes.target
 
+  - path: /etc/systemd/system/gke-node-reg-checker.service
+    permissions: '0644'
+    owner: root
+    content: |
+      [Unit]
+      Description=Check node registration with API server
+      After=kube-node-installation.service
+
+      [Service]
+      Type=simple
+      ExecStart=/home/kubernetes/bin/node-registration-checker.sh
+      StandardOutput=journal+console
+      ExecStartPre=/bin/chmod 544 /home/kubernetes/bin/node-registration-checker.sh
+
+      [Install]
+      WantedBy=kubernetes.target
+
   - path: /etc/systemd/system/kube-node-configuration.service
     permissions: '0644'
     owner: root
@@ -153,6 +170,7 @@ runcmd:
       setup-kubernetes-dir.service
       placeholders-presuspend-setup.service
       kube-node-installation.service
+      gke-node-reg-checker.service
       kube-node-configuration.service
       kube-logrotate.timer
       kube-logrotate.service

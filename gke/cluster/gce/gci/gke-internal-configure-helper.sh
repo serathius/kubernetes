@@ -857,9 +857,7 @@ function gke-configure-node-problem-detector {
     custom_plugin_monitors+=",${GKE_NPD_CUSTOM_PLUGINS_CONFIG}"
   fi
 
-  if [[ "${ENABLE_NODE_REGISTRATION_CHECKER:-}" == "true" && -e ${KUBE_HOME}/npd-custom-plugins/configs/node-registration-checker-monitor.json ]]; then
-    local node_registration_checker_config=",${KUBE_HOME}/npd-custom-plugins/configs/node-registration-checker-monitor.json"
-  fi
+  local node_registration_checker_config=",${KUBE_HOME}/npd-custom-plugins/configs/node-registration-checker-monitor.json"
 
   # Configure private CA plugin
   if [[ -n "${CONTAINERD_PRIVATE_CA_GSM_CERT:-}" ]]; then
@@ -1112,39 +1110,6 @@ function deploy-kube-controller-manager-via-kube-up {
 
 function generate-token-for-mastertest {
   [[ "${MASTERTEST_TOKEN_ENABLED:-false}" == "true" ]]
-}
-
-function install-node-registration-checker {
-  if [[ "${KUBERNETES_MASTER:-false}" == "true" ]]; then
-      echo "Skipping installation of Node Registration Checker. This is a master node"
-      return
-  elif [[ "${ENABLE_NODE_REGISTRATION_CHECKER:-false}" == "false"  ]]; then
-      echo "Skipping installation of Node Registration Checker. Node Registration Checker is not enabled for this version"
-      return
-  elif [[ ! -e ${KUBE_BIN}/node-registration-checker.sh ]]; then
-      echo "Skipping installation of Node Registration Checker. Node Registration Checker script is not present"
-      return
-  fi
-
-  chmod 544 "${KUBE_BIN}/node-registration-checker.sh"
-
-  echo "Installing Node Registration Checker service"
-  # Write the systemd service file for node registration checker.
-  cat <<EOF >/etc/systemd/system/gke-node-reg-checker.service
-[Unit]
-Description=Check node registration with API server
-
-[Service]
-Type=simple
-ExecStart=${KUBE_BIN}/node-registration-checker.sh
-StandardOutput=journal+console
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-  systemctl daemon-reload
-  systemctl start gke-node-reg-checker.service
 }
 
 function configure-auth-provider-gcp {
