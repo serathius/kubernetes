@@ -2219,59 +2219,6 @@ function copy-manifests {
   fi
 }
 
-# Fluentd resources are modified using ScalingPolicy CR, which may not be
-# available at this point. Run this as a background process.
-function wait-for-apiserver-and-update-fluentd {
-  local any_overrides=false
-  if [[ -n "${FLUENTD_GCP_MEMORY_LIMIT:-}" ]]; then
-    any_overrides=true
-  fi
-  if [[ -n "${FLUENTD_GCP_CPU_REQUEST:-}" ]]; then
-    any_overrides=true
-  fi
-  if [[ -n "${FLUENTD_GCP_MEMORY_REQUEST:-}" ]]; then
-    any_overrides=true
-  fi
-  if ! $any_overrides; then
-    # Nothing to do here.
-    exit
-  fi
-
-  # Wait until ScalingPolicy CRD is in place.
-  until kubectl get scalingpolicies.scalingpolicy.kope.io
-  do
-    sleep 10
-  done
-
-  # Single-shot, not managed by addon manager. Can be later modified or removed
-  # at will.
-  cat <<EOF | kubectl apply -f -
-apiVersion: scalingpolicy.kope.io/v1alpha1
-kind: ScalingPolicy
-metadata:
-  name: fluentd-gcp-scaling-policy
-  namespace: kube-system
-spec:
-  containers:
-  - name: fluentd-gcp
-    resources:
-      requests:
-      - resource: cpu
-        base: ${FLUENTD_GCP_CPU_REQUEST:-}
-      - resource: memory
-        base: ${FLUENTD_GCP_MEMORY_REQUEST:-}
-      limits:
-      - resource: memory
-        base: ${FLUENTD_GCP_MEMORY_LIMIT:-}
-EOF
-}
-
-# Trigger background process that will ultimately update fluentd resource
-# requirements.
-function start-fluentd-resource-update {
-  wait-for-apiserver-and-update-fluentd &
-}
-
 # VolumeSnapshot CRDs and controller are installed by cluster addon manager,
 # which may not be available at this point. Run this as a background process.
 function wait-for-volumesnapshot-crd-and-controller {
@@ -2311,27 +2258,6 @@ function start-volumesnapshot-crd-and-controller {
   wait-for-volumesnapshot-crd-and-controller &
 }
 
-# Update {{ fluentd_container_runtime_service }} with actual container runtime name,
-# and {{ container_runtime_endpoint }} with actual container runtime
-# endpoint.
-function update-container-runtime {
-  local -r file="$1"
-  local -r container_runtime_endpoint="${CONTAINER_RUNTIME_ENDPOINT:-unix:///run/containerd/containerd.sock}"
-  sed -i \
-    -e "s@{{ *fluentd_container_runtime_service *}}@${FLUENTD_CONTAINER_RUNTIME_SERVICE:-${CONTAINER_RUNTIME_NAME:-containerd}}@g" \
-    -e "s@{{ *container_runtime_endpoint *}}@${container_runtime_endpoint#unix://}@g" \
-    "${file}"
-}
-
-# Remove configuration in yaml file if node journal is not enabled.
-function update-node-journal {
-  local -r configmap_yaml="$1"
-  if [[ "${ENABLE_NODE_JOURNAL:-}" != "true" ]]; then
-    # Removes all lines between two patterns (throws away node-journal)
-    sed -i -e "/# BEGIN_NODE_JOURNAL/,/# END_NODE_JOURNAL/d" "${configmap_yaml}"
-  fi
-}
-
 # Updates parameters in yaml file for prometheus-to-sd configuration, or
 # removes component if it is disabled.
 function update-prometheus-to-sd-parameters {
@@ -2355,40 +2281,6 @@ function update-daemon-set-prometheus-to-sd-parameters {
   fi
 }
 
-# Updates parameters in yaml file for event-exporter configuration
-function update-event-exporter {
-    local -r stackdriver_resource_model="${LOGGING_STACKDRIVER_RESOURCE_TYPES:-old}"
-    sed -i -e "s@{{ exporter_sd_resource_model }}@${stackdriver_resource_model}@g" "$1"
-    sed -i -e "s@{{ exporter_sd_endpoint }}@${STACKDRIVER_ENDPOINT:-}@g" "$1"
-}
-
-# Sets up the manifests of Fluentd configmap and yamls for k8s addons.
-function setup-fluentd {
-  local -r dst_dir="$1"
-  local -r fluentd_gcp_yaml="${dst_dir}/fluentd-gcp/fluentd-gcp-ds.yaml"
-  local -r fluentd_gcp_scaler_yaml="${dst_dir}/fluentd-gcp/scaler-deployment.yaml"
-  # Ingest logs against new resources like "k8s_container" and "k8s_node" if
-  # LOGGING_STACKDRIVER_RESOURCE_TYPES is "new".
-  # Ingest logs against old resources like "gke_container" and "gce_instance" if
-  # LOGGING_STACKDRIVER_RESOURCE_TYPES is "old".
-  if [[ "${LOGGING_STACKDRIVER_RESOURCE_TYPES:-old}" == "new" ]]; then
-    local -r fluentd_gcp_configmap_yaml="${dst_dir}/fluentd-gcp/fluentd-gcp-configmap.yaml"
-    fluentd_gcp_configmap_name="fluentd-gcp-config"
-  else
-    local -r fluentd_gcp_configmap_yaml="${dst_dir}/fluentd-gcp/fluentd-gcp-configmap-old.yaml"
-    fluentd_gcp_configmap_name="fluentd-gcp-config-old"
-  fi
-  sed -i -e "s@{{ fluentd_gcp_configmap_name }}@${fluentd_gcp_configmap_name}@g" "${fluentd_gcp_yaml}"
-  fluentd_gcp_yaml_version="${FLUENTD_GCP_YAML_VERSION:-v3.2.0}"
-  sed -i -e "s@{{ fluentd_gcp_yaml_version }}@${fluentd_gcp_yaml_version}@g" "${fluentd_gcp_yaml}"
-  sed -i -e "s@{{ fluentd_gcp_yaml_version }}@${fluentd_gcp_yaml_version}@g" "${fluentd_gcp_scaler_yaml}"
-  fluentd_gcp_version="${FLUENTD_GCP_VERSION:-1.6.17}"
-  sed -i -e "s@{{ fluentd_gcp_version }}@${fluentd_gcp_version}@g" "${fluentd_gcp_yaml}"
-  update-daemon-set-prometheus-to-sd-parameters "${fluentd_gcp_yaml}"
-  start-fluentd-resource-update "${fluentd_gcp_yaml}"
-  update-container-runtime "${fluentd_gcp_configmap_yaml}"
-  update-node-journal "${fluentd_gcp_configmap_yaml}"
-}
 
 # Sets up the manifests of kube-dns for k8s addons.
 function setup-kube-dns-manifest {
@@ -2512,11 +2404,8 @@ EOF
   fi
   if [[ "${ENABLE_NODE_LOGGING:-}" == "true" ]] && \
      [[ "${LOGGING_DESTINATION:-}" == "gcp" ]]; then
-    setup-addon-manifests "addons" "fluentd-gcp"
-    setup-fluentd ${dst_dir}
-    local -r event_exporter_yaml="${dst_dir}/fluentd-gcp/event-exporter.yaml"
-    update-event-exporter ${event_exporter_yaml}
-    update-prometheus-to-sd-parameters ${event_exporter_yaml}
+    echo "fluentd-gcp addon is not available any longer"
+    exit 1
   fi
   if [[ "${ENABLE_NODE_PROBLEM_DETECTOR:-}" == "daemonset" ]]; then
     echo "node-problem-detector in daemonset mode is not supported" >&2
