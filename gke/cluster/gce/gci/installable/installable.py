@@ -170,7 +170,28 @@ class Ctr:
       capture_output=True,
     )
 
+  def remove_container_if_exist(self, container_name: str):
+    cmd = ['ctr', '-n', INSTALLABLE_NAMESPACE, 'snapshot', 'delete', container_name]
+    result = subprocess.run(
+      args=cmd,
+      check=False, # Don't raise error if nothing to remove
+      stdout=sys.stdout,
+      stderr=sys.stderr,
+    )
+    if result.returncode == 0:
+      LOGGER.warning(f'Hung ctr snapshot {container_name} exists. Cleaning it up.')
+    cmd = ['ctr', '-n', INSTALLABLE_NAMESPACE, 'container', 'delete', container_name]
+    result =subprocess.run(
+      args=cmd,
+      check=False, # Don't raise error if nothing to remove
+      stdout=sys.stdout,
+      stderr=sys.stderr,
+    )
+    if result.returncode == 0:
+      LOGGER.warning(f'Hung ctr container {container_name} exists. Cleaning it up.')
+
   def run(self, container_name: str, url: str, ctr_args: list, container_args: list) -> subprocess.CompletedProcess:
+    self.remove_container_if_exist(container_name)
     cmd = ['ctr', '-n', INSTALLABLE_NAMESPACE, 'run', '--rm']
     cmd.extend(ctr_args)
     cmd.extend([url, container_name])
