@@ -74,11 +74,11 @@ build-env:
     # For source, see: http://google3/cloud/kubernetes/distro/images/base/BUILD
     # For instructions on updating `go-runner` and creating a new
     # `gke-distroless/go-runner` release, see: http://go/gke-security-compliance#updating-gke-distrolessgo-runner
-    go-runner: "gke.gcr.io/gke-distroless/go-runner:gke_distroless_20250307.00_p0@sha256:0b5261750ee903fbe1259edfc532483110c7d5b6792c323d39324aa8d6628fc4"
+    go-runner: "gke.gcr.io/gke-distroless/go-runner:gke_distroless_20250507.00_p0@sha256:1f68e6657f4630e0e537a4624d1d5ee347a62ab0e67b05790af9dd26f821b710"
     # The kube-proxy base image to use.
     kube-proxy-base: "gke.gcr.io/distroless-iptables:v0.6.5-gke.0@sha256:57daee05c23070fd8d90cc1d08af53937c1c82cff9bb20346c5f1d0eb67b5645"
     # The setcap image to use.
-    setcap: "gcr.io/gke-release/gke-distroless/setcap:gke_distroless_20250307.00_p0@sha256:9619393fac8895b4a1c1a6afee047db3907f5548aea0154eed8c1211131b441c"
+    setcap: "gcr.io/gke-release/gke-distroless/setcap:gke_distroless_20250507.00_p0@sha256:38e36fad38ddf91479fc78cdab0c091e66658c4a2b0b47c889c74d910794aa4a"
 
 compile:
   # This is the VERSION field that is supplied at Golang compilation time. This
