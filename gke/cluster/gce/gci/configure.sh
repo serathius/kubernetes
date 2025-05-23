@@ -161,10 +161,10 @@ function download-kube-env {
 
     # Convert the yaml format file into a shell-style file.
     eval "$(python3 -c '''
-import pipes,sys,yaml
+import sys, yaml, shlex
 items = yaml.load(sys.stdin, Loader=yaml.BaseLoader).items()
 for k, v in items:
-    print("readonly {var}={value}".format(var=k, value=pipes.quote(str(v))))
+  print("readonly {var}={value}".format(var=k, value=shlex.quote(str(v))))
 ''' < "${kube_env_path}" > "${KUBE_HOME}/kube-env")"
 
     # Leave kube-env if we are a master
@@ -217,10 +217,10 @@ function download-kube-master-certs-hurl {
 
   # Convert the yaml format file into a shell-style file.
   eval "$(python3 -c '''
-import pipes,sys,yaml
+import shlex,sys,yaml
 items = yaml.load(sys.stdin, Loader=yaml.BaseLoader).items()
 for k, v in items:
-    print("readonly {var}={value}".format(var=k, value=pipes.quote(str(v))))
+    print("readonly {var}={value}".format(var=k, value=shlex.quote(str(v))))
 ''' < "${tmp_kube_master_certs_path}" > "${kube_master_certs_path}")"
 
   # Remove the temp certs and strip perms for other users
