@@ -63,13 +63,14 @@ function detailed-curl {
   set +e # we need the return codes
   if time curl  -v -L "${CURL_TIMEOUT[@]}" --silent --show-error -o /dev/null --ipv4  "${1}"; then
     log "Connection succeeded to ${1}"
+    set -e # re-enable errexit
     return 0
   else
     log "Failed connecting to ${1}. Here is a breakdown of the connection time:"
     curl -w "${CURL_FORMAT}" -L "${CURL_TIMEOUT[@]}"  --silent --show-error -o /dev/null --ipv4 "${1}"
+    set -e # re-enable errexit
     return $?
   fi
-  set -e # re-enable errexit
 }
 # curls an URL and extracts a JSON field(if provided)
 # $1 = URL
@@ -250,10 +251,11 @@ function check-service-account {
  log 2 "${CLOUD_MONARCH_ENDPOINT} returned HTTP CODE: ${HTTP_MONITORING_RESPONSE_CODE}"
 }
 ### END of Checks
+# shellcheck disable=SC2059 # we factor out printf formats into variables intentionally
 function summary-report {
   #printf formats
-  local row_format="%-10s %-8s %-10s\n"
-  local divider_format="%30s\n"
+  local -r row_format="%-10s %-8s %-10s\n"
+  local -r divider_format="%30s\n"
   local SA_NAME
   log "Retrieving service account e-mail..."
   SA_NAME=$(retrieve-metadata-entry  "instance/service-accounts/default/email")
