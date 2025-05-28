@@ -48,7 +48,7 @@ get_gpu_driver_version_from_metadata() {
 
   local original_ifs="$IFS"
   IFS=,; for label in $LABELS; do
-    IFS==; read -r LABEL VALUE <<< "$label"
+    IFS='='; read -r LABEL VALUE <<< "$label"
     if [[ "${LABEL}" == "cloud.google.com/gke-gpu-driver-version" ]]; then
       log "Found GPU driver version: $VALUE"
       GPU_DRIVER_VERSION=$VALUE
