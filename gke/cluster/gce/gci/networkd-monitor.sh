@@ -20,7 +20,7 @@
 # file provided by the systemd service.
 
 while true; do
-  2>&1 systemctl status systemd-networkd>/dev/null
+  systemctl status systemd-networkd >/dev/null 2>&1
   if [[ $? -ne 0 ]]; then
     echo "$(date) systemd-networkd has stopped, restarting..."
     echo "Dumping journalctl logs systemd-networkd..."
