@@ -31,7 +31,7 @@ function configure-etcd-params {
   # If flags are partially set, something odd is happening.
   else
       echo "ERROR: Some of ETCD_APISERVER_CA_CERT_PATH, ETCD_APISERVER_CLIENT_KEY_PATH and ETCD_APISERVER_CLIENT_CERT_PATH are missing, mTLS between etcd server and kube-apiserver cannot be enabled. Please provide all mTLS credential."
-      echo "\tETCD_APISERVER_CA_CERT_PATH=${ETCD_APISERVER_CA_CERT_PATH:-}\tETCD_APISERVER_CLIENT_KEY_PATH=${ETCD_APISERVER_CLIENT_KEY_PATH:-}\tETCD_APISERVER_CLIENT_CERT_PATH=${ETCD_APISERVER_CLIENT_CERT_PATH}"
+      echo "ETCD_APISERVER_CA_CERT_PATH='${ETCD_APISERVER_CA_CERT_PATH:-}' ETCD_APISERVER_CLIENT_KEY_PATH='${ETCD_APISERVER_CLIENT_KEY_PATH:-}' ETCD_APISERVER_CLIENT_CERT_PATH='${ETCD_APISERVER_CLIENT_CERT_PATH}'"
       exit 1
   fi
 
