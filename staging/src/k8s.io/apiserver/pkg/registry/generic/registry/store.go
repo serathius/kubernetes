@@ -1663,15 +1663,19 @@ func (e *Store) startObservingCount(period time.Duration, objectCountTracker flo
 	klog.V(2).InfoS("Monitoring resource count at path", "resource", resourceName, "path", "<storage-prefix>/"+prefix)
 	stopCh := make(chan struct{})
 	go wait.JitterUntil(func() {
-		count, err := e.Storage.Count(prefix)
+		stats, err := e.Storage.Count(prefix)
 		if err != nil {
 			klog.V(5).InfoS("Failed to update storage count metric", "err", err)
-			count = -1
+			stats.Count = -1
 		}
 
-		metrics.UpdateObjectCount(e.DefaultQualifiedResource, count)
+		metrics.UpdateObjectCount(e.DefaultQualifiedResource, stats.Count)
+		fmt.Printf("DUPA update stats, resource: %q, stats: %+v\n", resourceName, stats)
 		if objectCountTracker != nil {
-			objectCountTracker.Set(resourceName, count)
+			objectCountTracker.Set(resourceName, flowcontrolrequest.StoreStats{
+				Count: stats.Count,
+				Size:  stats.Size,
+			})
 		}
 	}, period, resourceCountPollPeriodJitter, true, stopCh)
 	return func() { close(stopCh) }

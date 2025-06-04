@@ -20,8 +20,8 @@ nodes:
       extraArgs:
         "v": "3"
         "enable-priority-and-fairness": "true"
-        "max-requests-inflight": "10"
-        "max-mutating-requests-inflight": "10"
+        "max-requests-inflight": "800"
+        "max-mutating-requests-inflight": "0"
   - |
     kind: InitConfiguration
     patches:

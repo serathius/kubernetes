@@ -58,7 +58,12 @@ func (we *WorkEstimate) MaxSeats() int {
 
 // objectCountGetterFunc represents a function that gets the total
 // number of objects for a given resource.
-type objectCountGetterFunc func(string) (int64, error)
+type objectCountGetterFunc func(string) (StoreStats, error)
+
+type StoreStats struct {
+	Count int64
+	Size  int64
+}
 
 // watchCountGetterFunc represents a function that gets the total
 // number of watchers potentially interested in a given request.

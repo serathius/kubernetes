@@ -8,9 +8,9 @@ spec:
   - name: kube-apiserver
     resources:
       requests:
-        cpu: 1
-        memory: 8048Mi
+        cpu: 20
+        memory: 64096Mi
       limits:
-        cpu: 1
-        memory: 8048Mi
+        cpu: 20
+        memory: 64096Mi
 
