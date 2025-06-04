@@ -34,6 +34,7 @@ KUBE_HOME=$(mktemp -d)
 echo "Testing empty RENDERED_INSTALLABLES"
 process-installables
 rm -rf "${KUBE_HOME}"
+rm /tmp/processed-installables
 echo "OK"
 
 KUBE_HOME=$(mktemp -d)
@@ -41,4 +42,5 @@ readonly RENDERED_INSTALLABLES='{}'
 echo "Testing RENDERED_INSTALLABLES=${RENDERED_INSTALLABLES}"
 process-installables
 rm -rf "${KUBE_HOME}"
+rm /tmp/processed-installables
 echo "OK"

@@ -1183,7 +1183,7 @@ function process-installables {
     flags+=("--preloader")
   else
     flags+=("--preload-info-file=${preload_info_file}")
-    flags+=("--record-file=${KUBE_HOME}/processed-installables")
+    flags+=("--record-file=/tmp/processed-installables")
   fi
 
   if [[ "${ARTIFACT_DOWNLOAD_RESTRICTED:-}" == "true" ]]; then
