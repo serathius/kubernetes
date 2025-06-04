@@ -1698,14 +1698,6 @@ function start-kubelet {
   local kubelet_bin="${KUBE_HOME}/bin/kubelet"
   local -r kubelet_env_file="/etc/default/kubelet"
 
-  local kubelet_cgroup_driver=""
-  # Default to systemd cgroup driver for cgroupv2
-  # TODO(b/203597173): Consider if this needs to be disabled for gvisor
-  if [[ "${CGROUP_CONFIG-}" == "cgroup2fs" ]]; then
-    kubelet_cgroup_driver="--cgroup-driver=systemd"
-  fi
-
-
   if [[ "${ENABLE_GCFS:-""}" == "true" ]]; then
     # Use Riptide-snapshotter as image service proxy on Riptide nodes.
     # This is needed for image pull secret support on Riptide nodes.
@@ -1714,7 +1706,7 @@ function start-kubelet {
   fi
 
   # POD_SYSCTLS is set in function configure-node-sysctls.
-  local kubelet_opts="${KUBELET_ARGS} ${KUBELET_CONFIG_FILE_ARG:-} --pod-sysctls='${POD_SYSCTLS:-}' ${kubelet_cgroup_driver:-} ${kubelet_image_service_endpoint:-}"
+  local kubelet_opts="${KUBELET_ARGS} ${KUBELET_CONFIG_FILE_ARG:-} --pod-sysctls='${POD_SYSCTLS:-}' ${kubelet_image_service_endpoint:-}"
   if [[ -n "${KUBELET_VERSION:-}" ]]; then
     kubelet_opts="${kubelet_opts} --version=${KUBELET_VERSION}"
   fi
