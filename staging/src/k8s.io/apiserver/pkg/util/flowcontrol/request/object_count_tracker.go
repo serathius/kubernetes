@@ -55,7 +55,7 @@ var (
 type StorageObjectCountTracker interface {
 	// Set is invoked to update the current number of total
 	// objects for the given resource
-	Set(string, int64)
+	Set(string, StoreStats)
 
 	// Get returns the total number of objects for the given resource.
 	// The following errors are returned:
@@ -63,7 +63,7 @@ type StorageObjectCountTracker interface {
 	//    failures ObjectCountStaleErr is returned.
 	//  - if the given resource is not being tracked then
 	//    ObjectCountNotFoundErr is returned.
-	Get(string) (int64, error)
+	Get(string) (StoreStats, error)
 
 	// RunUntil starts all the necessary maintenance.
 	RunUntil(stopCh <-chan struct{})
@@ -82,7 +82,7 @@ func NewStorageObjectCountTracker() StorageObjectCountTracker {
 // timestampedCount stores the count of a given resource with a last updated
 // timestamp so we can prune it after it goes stale for certain threshold.
 type timestampedCount struct {
-	count         int64
+	StoreStats
 	lastUpdatedAt time.Time
 }
 
@@ -95,8 +95,8 @@ type objectCountTracker struct {
 	counts map[string]*timestampedCount
 }
 
-func (t *objectCountTracker) Set(groupResource string, count int64) {
-	if count <= -1 {
+func (t *objectCountTracker) Set(groupResource string, stats StoreStats) {
+	if stats.Count <= -1 {
 		// a value of -1 indicates that the 'Count' call failed to contact
 		// the storage layer, in most cases this error can be transient.
 		// we will continue to work with the count that is in the cache
@@ -114,18 +114,18 @@ func (t *objectCountTracker) Set(groupResource string, count int64) {
 	defer t.lock.Unlock()
 
 	if item, ok := t.counts[groupResource]; ok {
-		item.count = count
+		item.StoreStats = stats
 		item.lastUpdatedAt = now
 		return
 	}
 
 	t.counts[groupResource] = &timestampedCount{
-		count:         count,
+		StoreStats:    stats,
 		lastUpdatedAt: now,
 	}
 }
 
-func (t *objectCountTracker) Get(groupResource string) (int64, error) {
+func (t *objectCountTracker) Get(groupResource string) (StoreStats, error) {
 	staleThreshold := t.clock.Now().Add(-staleTolerationThreshold)
 
 	t.lock.RLock()
@@ -133,11 +133,11 @@ func (t *objectCountTracker) Get(groupResource string) (int64, error) {
 
 	if item, ok := t.counts[groupResource]; ok {
 		if item.lastUpdatedAt.Before(staleThreshold) {
-			return item.count, ObjectCountStaleErr
+			return item.StoreStats, ObjectCountStaleErr
 		}
-		return item.count, nil
+		return item.StoreStats, nil
 	}
-	return 0, ObjectCountNotFoundErr
+	return StoreStats{}, ObjectCountNotFoundErr
 }
 
 // RunUntil runs all the necessary maintenance.

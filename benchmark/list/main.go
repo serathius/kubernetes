@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -31,7 +32,6 @@ import (
 	"k8s.io/kubectl/pkg/util/slice"
 )
 
-var objectCount = 1
 var listers = 100
 var testDuration = 20 * time.Second
 
@@ -52,7 +52,7 @@ func main() {
 		fmt.Printf("failed to read kube config: %s\n", err)
 		os.Exit(1)
 	}
-	config.QPS = 200
+	config.QPS = 1000
 	config.Burst = 1
 	switch *contentType {
 	case "json":
@@ -89,6 +89,8 @@ func main() {
 		switch *resource {
 		case "configmap":
 			createConfigmaps(clientset, *objectSize, *objectCount, *namespaces)
+		case "secret":
+			createSecrets(clientset, *objectSize, *objectCount, *namespaces)
 		case "pod":
 			createPods(clientset, *objectSize, *objectCount)
 		case "cr":
@@ -159,7 +161,7 @@ func main() {
 	}
 
 	switch *resource {
-	case "configmap":
+	case "configmap", "secret":
 		params := []string{}
 		if resourceVersion != "" {
 			params = append(params, fmt.Sprintf("resourceVersion=%s", resourceVersion))
@@ -170,6 +172,9 @@ func main() {
 		if continueToken != "" {
 			params = append(params, fmt.Sprintf("continue=%s", continueToken))
 		}
+		// params = append(params, "pretty=1")
+		// params = append(params, "labelSelector=app%3D0")
+		// params = append(params, "limit=100")
 		paramStr := strings.Join(params, "&")
 		httpClients := make([]*http.Client, *clients)
 		for i := 0; i < *clients; i++ {
@@ -179,7 +184,7 @@ func main() {
 				os.Exit(1)
 			}
 		}
-		list(httpClients, config, *qps, serverURL, paramStr, *namespaces)
+		list(httpClients, *resource+"s", config, *qps, serverURL, paramStr, *namespaces)
 	case "pod":
 		listPods(clientset, opts)
 	case "cr":
@@ -224,6 +229,29 @@ func createConfigmaps(clientset kubernetes.Interface, objectSize, objectCount, n
 	}
 	wg.Wait()
 	fmt.Printf("Created configmaps\n")
+}
+
+func createSecrets(clientset kubernetes.Interface, objectSize, objectCount, namespaces int) {
+	var wg sync.WaitGroup
+	for i := 0; i < namespaces; i++ {
+		namespace := fmt.Sprintf("%d", i)
+		_, err := clientset.CoreV1().Namespaces().Create(context.TODO(), randomNamespace(namespace), metav1.CreateOptions{})
+		if err != nil {
+			panic(err)
+		}
+		for j := 0; j < objectCount; j++ {
+			wg.Add(1)
+			go func(j int) {
+				defer wg.Done()
+				_, err := clientset.CoreV1().Secrets(namespace).Create(context.TODO(), randomSecret(j, objectSize), metav1.CreateOptions{})
+				if err != nil {
+					panic(err)
+				}
+			}(j)
+		}
+	}
+	wg.Wait()
+	fmt.Printf("Created secrets\n")
 }
 
 func createPods(clientset kubernetes.Interface, objectSize, objectCount int) {
@@ -290,9 +318,10 @@ func listCRs(clientset *dynamic.DynamicClient, opts metav1.ListOptions) {
 	wg.Wait()
 }
 
-func list(clients []*http.Client, config *rest.Config, qps float32, serverURL *url.URL, params string, namespaces int) {
+func list(clients []*http.Client, resource string, config *rest.Config, qps float32, serverURL *url.URL, params string, namespaces int) {
 	var wg sync.WaitGroup
-	rateLimiter := rate.NewLimiter(rate.Limit(qps), 10)
+	takeN := int(math.Ceil(float64(qps) / 500))
+	rateLimiter := rate.NewLimiter(rate.Limit(qps), takeN)
 	var mu sync.Mutex
 	latencies := []int64{}
 	var latencySum int64
@@ -302,58 +331,62 @@ func list(clients []*http.Client, config *rest.Config, qps float32, serverURL *u
 	defer cancel()
 	index := 0
 	for time.Since(start) < testDuration {
-		err := rateLimiter.Wait(ctx)
+		err := rateLimiter.WaitN(ctx, takeN)
 		if err != nil {
 			continue
 		}
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			path := fmt.Sprintf("/api/v1/namespaces/%d/configmaps", i%namespaces)
-			if params != "" {
-				path = fmt.Sprintf("%s?%s", path, params)
-			}
+		for j := 0; j < takeN; j++ {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				path := fmt.Sprintf("/api/v1/namespaces/%d/%s", i%namespaces, resource)
+				if params != "" {
+					path = fmt.Sprintf("%s?%s", path, params)
+				}
 
-			url, err := url.Parse(path)
-			if err != nil {
-				panic(err)
-			}
-			url.Host = serverURL.Host
-			url.Scheme = serverURL.Scheme
-			req, err := http.NewRequestWithContext(ctx, "GET", url.String(), nil)
-			if err != nil {
-				panic(fmt.Sprintf("Got error creating a request: %v\n", err))
-			}
-			req.Header.Set("Accept", config.ContentType)
-			start := time.Now()
-			resp, err := clients[i%len(clients)].Do(req)
-			if err != nil {
-				fmt.Printf("Error: %v\n", err)
-				return
-			}
-			defer resp.Body.Close()
-			if resp.StatusCode == http.StatusTooManyRequests {
-				fmt.Print("Too many requests\n")
-				return
-			}
-			if resp.StatusCode < http.StatusOK || resp.StatusCode > http.StatusPartialContent {
-				panic(fmt.Sprintf("Got bad status code: %v\n", resp.Status))
-			}
-			if resp.Header.Get("Content-Type") != config.ContentType {
-				panic(fmt.Sprintf("Got bad content type: %q, expected %q\n", resp.Header.Get("Content-Type"), config.ContentType))
-			}
-			written, err := io.Copy(io.Discard, resp.Body)
-			if err != nil {
-				return
-			}
-			latency := time.Since(start)
-			mu.Lock()
-			latencySum += int64(latency)
-			latencies = append(latencies, int64(latency))
-			sizeSum += written
-			mu.Unlock()
-		}(index)
-		index++
+				url, err := url.Parse(path)
+				if err != nil {
+					panic(err)
+				}
+				url.Host = serverURL.Host
+				url.Scheme = serverURL.Scheme
+				reqCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
+				defer cancel()
+				req, err := http.NewRequestWithContext(reqCtx, "GET", url.String(), nil)
+				if err != nil {
+					panic(fmt.Sprintf("Got error creating a request: %v\n", err))
+				}
+				req.Header.Set("Accept", config.ContentType)
+				start := time.Now()
+				resp, err := clients[i%len(clients)].Do(req)
+				if err != nil {
+					fmt.Printf("Error: %v\n", err)
+					return
+				}
+				defer resp.Body.Close()
+				if resp.StatusCode == http.StatusTooManyRequests {
+					fmt.Print("Too many requests\n")
+					return
+				}
+				if resp.StatusCode < http.StatusOK || resp.StatusCode > http.StatusPartialContent {
+					panic(fmt.Sprintf("Got bad status code: %v\n", resp.Status))
+				}
+				if resp.Header.Get("Content-Type") != config.ContentType {
+					panic(fmt.Sprintf("Got bad content type: %q, expected %q\n", resp.Header.Get("Content-Type"), config.ContentType))
+				}
+				written, err := io.Copy(io.Discard, resp.Body)
+				if err != nil {
+					return
+				}
+				latency := time.Since(start)
+				mu.Lock()
+				latencySum += int64(latency)
+				latencies = append(latencies, int64(latency))
+				sizeSum += written
+				mu.Unlock()
+			}(index)
+			index++
+		}
 	}
 	wg.Wait()
 	fmt.Printf("QPS: %.2f\n", float64(len(latencies))/testDuration.Seconds())
@@ -412,6 +445,21 @@ func randomConfigmap(name string, objectSize int) *v1.ConfigMap {
 			"random": rand.String(objectSize),
 		},
 		BinaryData: nil,
+	}
+}
+
+func randomSecret(i int, objectSize int) *v1.Secret {
+	return &v1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: fmt.Sprintf("%d", i),
+			Labels: map[string]string{
+				"app": fmt.Sprintf("%d", i%10),
+			},
+		},
+		Immutable: nil,
+		StringData: map[string]string{
+			"random": rand.String(objectSize),
+		},
 	}
 }
 

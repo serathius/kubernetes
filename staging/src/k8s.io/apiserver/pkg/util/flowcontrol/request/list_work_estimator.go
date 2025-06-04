@@ -17,6 +17,7 @@ limitations under the License.
 package request
 
 import (
+	"fmt"
 	"math"
 	"net/http"
 
@@ -51,12 +52,14 @@ func (e *listWorkEstimator) estimate(r *http.Request, flowSchemaName, priorityLe
 
 	requestInfo, ok := apirequest.RequestInfoFrom(r.Context())
 	if !ok {
+		fmt.Printf("DUPA Unknown request, seats: %d\n", maxSeats)
 		// no RequestInfo should never happen, but to be on the safe side
 		// let's return maximumSeats
 		return WorkEstimate{InitialSeats: maxSeats}
 	}
 
 	if requestInfo.Name != "" {
+		fmt.Printf("DUPA Name, key: %q, seats: %d\n", key(requestInfo), minSeats)
 		// Requests with metadata.name specified are usually executed as get
 		// requests in storage layer so their width should be 1.
 		// Example of such list requests:
@@ -68,6 +71,7 @@ func (e *listWorkEstimator) estimate(r *http.Request, flowSchemaName, priorityLe
 	query := r.URL.Query()
 	listOptions := metav1.ListOptions{}
 	if err := metav1.Convert_url_Values_To_v1_ListOptions(&query, &listOptions, nil); err != nil {
+		fmt.Printf("DUPA convert failed, key: %q, seats: %d\n", key(requestInfo), maxSeats)
 		klog.ErrorS(err, "Failed to convert options while estimating work for the list request")
 
 		// This request is destined to fail in the validation layer,
@@ -78,6 +82,7 @@ func (e *listWorkEstimator) estimate(r *http.Request, flowSchemaName, priorityLe
 	// For watch requests, we want to adjust the cost only if they explicitly request
 	// sending initial events.
 	if requestInfo.Verb == "watch" {
+		fmt.Printf("DUPA watch, key: %q\n", key(requestInfo))
 		if listOptions.SendInitialEvents == nil || !*listOptions.SendInitialEvents {
 			return WorkEstimate{InitialSeats: e.config.MinimumSeats}
 		}
@@ -85,18 +90,20 @@ func (e *listWorkEstimator) estimate(r *http.Request, flowSchemaName, priorityLe
 	// TODO: Check whether watchcache is enabled.
 	result, err := delegator.ShouldDelegateListMeta(&listOptions, delegator.CacheWithoutSnapshots{})
 	if err != nil {
+		fmt.Printf("DUPA error delegator, key: %q\n", key(requestInfo))
 		return WorkEstimate{InitialSeats: maxSeats}
 	}
 	listFromStorage := result.ShouldDelegate
 	isListFromCache := requestInfo.Verb == "watch" || !listFromStorage
 
-	numStored, err := e.countGetterFn(key(requestInfo))
+	stored, err := e.countGetterFn(key(requestInfo))
 	switch {
 	case err == ObjectCountStaleErr:
 		// object count going stale is indicative of degradation, so we should
 		// be conservative here and allocate maximum seats to this list request.
 		// NOTE: if a CRD is removed, its count will go stale first and then the
 		// pruner will eventually remove the CRD from the cache.
+		fmt.Printf("DUPA stale, key: %q, seats: %d\n", key(requestInfo), maxSeats)
 		return WorkEstimate{InitialSeats: maxSeats}
 	case err == ObjectCountNotFoundErr:
 		// there are multiple scenarios in which we can see this error:
@@ -111,16 +118,18 @@ func (e *listWorkEstimator) estimate(r *http.Request, flowSchemaName, priorityLe
 		// when aggregated API calls are overestimated, we allocate the minimum
 		// possible seats (see #109106 as an example when being more conservative
 		// led to problems).
+		fmt.Printf("DUPA not found, key: %q, seats: %d\n", key(requestInfo), minSeats)
 		return WorkEstimate{InitialSeats: minSeats}
 	case err != nil:
 		// we should never be here since Get returns either ObjectCountStaleErr or
 		// ObjectCountNotFoundErr, return maximumSeats to be on the safe side.
+		fmt.Printf("DUPA unexpected error, key: %q, seats: %d\n", key(requestInfo), maxSeats)
 		klog.ErrorS(err, "Unexpected error from object count tracker")
 		return WorkEstimate{InitialSeats: maxSeats}
 	}
 
-	limit := numStored
-	if listOptions.Limit > 0 && listOptions.Limit < numStored {
+	limit := stored.Count
+	if listOptions.Limit > 0 && listOptions.Limit < stored.Count {
 		limit = listOptions.Limit
 	}
 
@@ -130,9 +139,9 @@ func (e *listWorkEstimator) estimate(r *http.Request, flowSchemaName, priorityLe
 	case isListFromCache:
 		// TODO: For resources that implement indexes at the watchcache level,
 		//  we need to adjust the cost accordingly
-		estimatedObjectsToBeProcessed = numStored
+		estimatedObjectsToBeProcessed = stored.Count
 	case listOptions.FieldSelector != "" || listOptions.LabelSelector != "":
-		estimatedObjectsToBeProcessed = numStored + limit
+		estimatedObjectsToBeProcessed = stored.Count + limit
 	default:
 		estimatedObjectsToBeProcessed = 2 * limit
 	}
@@ -141,7 +150,14 @@ func (e *listWorkEstimator) estimate(r *http.Request, flowSchemaName, priorityLe
 	// will be processed by the list request.
 	// we will come up with a different formula for the transformation function and/or
 	// fine tune this number in future iteratons.
-	seats := uint64(math.Ceil(float64(estimatedObjectsToBeProcessed) / e.config.ObjectsPerSeat))
+	averageSize := float64(stored.Size) / float64(stored.Count)
+	maxSize := float64(1024 * 1024)
+	maxSizeSeats := 2.0
+	if stored.Count == 0 {
+		averageSize = float64(maxSize)
+	}
+	originalSeats := uint64(math.Ceil(float64(estimatedObjectsToBeProcessed) * averageSize / maxSize * maxSizeSeats))
+	seats := originalSeats
 
 	// make sure we never return a seat of zero
 	if seats < minSeats {
@@ -150,6 +166,8 @@ func (e *listWorkEstimator) estimate(r *http.Request, flowSchemaName, priorityLe
 	if seats > maxSeats {
 		seats = maxSeats
 	}
+	seats = 33
+	fmt.Printf("DUPA estimated, key: %q, seats: %d\n", key(requestInfo), seats)
 	return WorkEstimate{InitialSeats: seats}
 }
 

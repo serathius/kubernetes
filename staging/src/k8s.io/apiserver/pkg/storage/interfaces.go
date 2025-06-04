@@ -244,7 +244,7 @@ type Interface interface {
 		preconditions *Preconditions, tryUpdate UpdateFunc, cachedExistingObject runtime.Object) error
 
 	// Count returns number of different entries under the key (generally being path prefix).
-	Count(key string) (int64, error)
+	Count(key string) (StoreStats, error)
 
 	// ReadinessCheck checks if the storage is ready for accepting requests.
 	ReadinessCheck() error
@@ -267,6 +267,11 @@ type Interface interface {
 	// GetCurrentResourceVersion gets the current resource version from etcd.
 	// This method issues an empty list request and reads only the ResourceVersion from the object metadata
 	GetCurrentResourceVersion(ctx context.Context) (uint64, error)
+}
+
+type StoreStats struct {
+	Count int64
+	Size int64
 }
 
 // GetOptions provides the options that may be provided for storage get operations.

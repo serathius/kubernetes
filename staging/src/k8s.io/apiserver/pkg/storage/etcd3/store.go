@@ -617,10 +617,10 @@ func getNewItemFunc(listObj runtime.Object, v reflect.Value) func() runtime.Obje
 	}
 }
 
-func (s *store) Count(key string) (int64, error) {
+func (s *store) Count(key string) (stats storage.StoreStats, err error) {
 	preparedKey, err := s.prepareKey(key)
 	if err != nil {
-		return 0, err
+		return stats, err
 	}
 
 	// We need to make sure the key ended with "/" so that we only get children "directories".
@@ -630,13 +630,7 @@ func (s *store) Count(key string) (int64, error) {
 		preparedKey += "/"
 	}
 
-	startTime := time.Now()
-	count, err := s.client.Kubernetes.Count(context.Background(), preparedKey, kubernetes.CountOptions{})
-	metrics.RecordEtcdRequest("listWithCount", s.groupResource, err, startTime)
-	if err != nil {
-		return 0, err
-	}
-	return count, nil
+	return stats, nil
 }
 
 // ReadinessCheck implements storage.Interface.
