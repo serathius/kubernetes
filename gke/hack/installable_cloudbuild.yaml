@@ -12,7 +12,7 @@ steps:
          '-script=installable_test.sh']
 - name: 'gcr.io/cos-cloud/cos-customizer'
   args: ['finish-image-build',
-         '-zone=us-west1-a',
+         '-zone=${_ZONE_}',
          '-project=$PROJECT_ID',
          '-image-suffix=${_SUFFIX_}',
          '-image-family=${_OUTPUT_IMAGE_FAMILY_}',
