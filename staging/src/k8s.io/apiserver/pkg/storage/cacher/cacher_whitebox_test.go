@@ -320,7 +320,7 @@ func TestShouldDelegateList(t *testing.T) {
 						if errs := validation.ValidateListOptions(toInternalOpts(opt), false); len(errs) != 0 {
 							continue
 						}
-						if _, _, err = storage.ValidateListOptions(keyPrefix, storage.APIObjectVersioner{}, toStorageOpts(opt)); err != nil {
+						if _, err = storage.ValidateListOptions(keyPrefix, storage.APIObjectVersioner{}, toStorageOpts(opt)); err != nil {
 							continue
 						}
 						_, found := testCases[opt]
@@ -339,7 +339,7 @@ func TestShouldDelegateList(t *testing.T) {
 			t.Errorf("Invalid LIST request that should not be tested %+v", opt)
 			continue
 		}
-		if _, _, err = storage.ValidateListOptions(keyPrefix, storage.APIObjectVersioner{}, toStorageOpts(opt)); err != nil {
+		if _, err = storage.ValidateListOptions(keyPrefix, storage.APIObjectVersioner{}, toStorageOpts(opt)); err != nil {
 			t.Errorf("Invalid LIST request that should not be tested %+v", opt)
 			continue
 		}
@@ -3373,7 +3373,7 @@ func TestListIndexer(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			pred := storagetesting.CreatePodPredicate(tt.fieldSelector, true, tt.indexFields)
-			_, usedIndex, err := cacher.cacher.listItems(ctx, 0, "/pods/"+tt.requestedNamespace, storage.ListOptions{Predicate: pred, Recursive: tt.recursive})
+			_, usedIndex, err := cacher.cacher.listItems(ctx, "/pods/"+tt.requestedNamespace, storage.ListOptions{Predicate: pred, Recursive: tt.recursive})
 			if err != nil {
 				t.Errorf("Unexpected error: %v", err)
 			}

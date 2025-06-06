@@ -177,7 +177,7 @@ func (c *CacheDelegator) Get(ctx context.Context, key string, opts storage.GetOp
 }
 
 func (c *CacheDelegator) GetList(ctx context.Context, key string, opts storage.ListOptions, listObj runtime.Object) error {
-	_, _, err := storage.ValidateListOptions(c.cacher.resourcePrefix, c.cacher.versioner, opts)
+	_, err := storage.ValidateListOptions(c.cacher.resourcePrefix, c.cacher.versioner, opts)
 	if err != nil {
 		return err
 	}
@@ -207,14 +207,6 @@ func (c *CacheDelegator) GetList(ctx context.Context, key string, opts storage.L
 			return c.storage.GetList(ctx, key, opts, listObj)
 		}
 	}
-	if result.ConsistentRead {
-		listRV, err = c.storage.GetCurrentResourceVersion(ctx)
-		if err != nil {
-			return err
-		}
-		// Setting resource version for consistent read in cache based on current ResourceVersion in etcd.
-		opts.ResourceVersion = strconv.FormatInt(int64(listRV), 10)
-	}
 	err = c.cacher.GetList(ctx, key, opts, listObj)
 	success := "true"
 	fallback := "false"
@@ -226,7 +218,6 @@ func (c *CacheDelegator) GetList(ctx context.Context, key string, opts storage.L
 			if storage.IsTooLargeResourceVersion(err) {
 				fallback = "true"
 				// Reset resourceVersion during fallback from consistent read.
-				opts.ResourceVersion = ""
 				err = c.storage.GetList(ctx, key, opts, listObj)
 			}
 			if err != nil {

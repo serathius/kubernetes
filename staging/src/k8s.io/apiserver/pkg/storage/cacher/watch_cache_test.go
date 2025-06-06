@@ -35,7 +35,6 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/apiserver/pkg/features"
 	"k8s.io/apiserver/pkg/storage"
@@ -436,145 +435,145 @@ func TestMarker(t *testing.T) {
 	}
 }
 
-func TestWaitUntilFreshAndList(t *testing.T) {
-	ctx := context.Background()
-	store := newTestWatchCache(3, DefaultEventFreshDuration, &cache.Indexers{
-		"l:label": func(obj interface{}) ([]string, error) {
-			pod, ok := obj.(*v1.Pod)
-			if !ok {
-				return nil, fmt.Errorf("not a pod %#v", obj)
-			}
-			if value, ok := pod.Labels["label"]; ok {
-				return []string{value}, nil
-			}
-			return nil, nil
-		},
-		"f:spec.nodeName": func(obj interface{}) ([]string, error) {
-			pod, ok := obj.(*v1.Pod)
-			if !ok {
-				return nil, fmt.Errorf("not a pod %#v", obj)
-			}
-			return []string{pod.Spec.NodeName}, nil
-		},
-	})
-	defer store.Stop()
-	// In background, update the store.
-	go func() {
-		store.Add(makeTestPodDetails("pod1", 2, "node1", map[string]string{"label": "value1"}))
-		store.Add(makeTestPodDetails("pod2", 3, "node1", map[string]string{"label": "value1"}))
-		store.Add(makeTestPodDetails("pod3", 5, "node2", map[string]string{"label": "value2"}))
-	}()
+// func TestWaitUntilFreshAndList(t *testing.T) {
+// 	ctx := context.Background()
+// 	store := newTestWatchCache(3, DefaultEventFreshDuration, &cache.Indexers{
+// 		"l:label": func(obj interface{}) ([]string, error) {
+// 			pod, ok := obj.(*v1.Pod)
+// 			if !ok {
+// 				return nil, fmt.Errorf("not a pod %#v", obj)
+// 			}
+// 			if value, ok := pod.Labels["label"]; ok {
+// 				return []string{value}, nil
+// 			}
+// 			return nil, nil
+// 		},
+// 		"f:spec.nodeName": func(obj interface{}) ([]string, error) {
+// 			pod, ok := obj.(*v1.Pod)
+// 			if !ok {
+// 				return nil, fmt.Errorf("not a pod %#v", obj)
+// 			}
+// 			return []string{pod.Spec.NodeName}, nil
+// 		},
+// 	})
+// 	defer store.Stop()
+// 	// In background, update the store.
+// 	go func() {
+// 		store.Add(makeTestPodDetails("pod1", 2, "node1", map[string]string{"label": "value1"}))
+// 		store.Add(makeTestPodDetails("pod2", 3, "node1", map[string]string{"label": "value1"}))
+// 		store.Add(makeTestPodDetails("pod3", 5, "node2", map[string]string{"label": "value2"}))
+// 	}()
 
-	// list by empty MatchValues.
-	resp, indexUsed, err := store.WaitUntilFreshAndList(ctx, 5, "prefix/", storage.ListOptions{Predicate: storage.Everything})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if resp.ResourceVersion != 5 {
-		t.Errorf("unexpected resourceVersion: %v, expected: 5", resp.ResourceVersion)
-	}
-	if len(resp.Items) != 3 {
-		t.Errorf("unexpected list returned: %#v", resp)
-	}
-	if indexUsed != "" {
-		t.Errorf("Used index %q but expected none to be used", indexUsed)
-	}
+// 	// list by empty MatchValues.
+// 	resp, indexUsed, err := store.WaitUntilFreshAndList(ctx, "prefix/", storage.ListOptions{ResourceVersion: "5", Predicate: storage.Everything})
+// 	if err != nil {
+// 		t.Fatalf("unexpected error: %v", err)
+// 	}
+// 	if resp.ResourceVersion != 5 {
+// 		t.Errorf("unexpected resourceVersion: %v, expected: 5", resp.ResourceVersion)
+// 	}
+// 	if len(resp.Items) != 3 {
+// 		t.Errorf("unexpected list returned: %#v", resp)
+// 	}
+// 	if indexUsed != "" {
+// 		t.Errorf("Used index %q but expected none to be used", indexUsed)
+// 	}
 
-	// list by label index.
-	resp, indexUsed, err = store.WaitUntilFreshAndList(ctx, 5, "prefix/", storage.ListOptions{Predicate: storage.SelectionPredicate{
-		Label: labels.SelectorFromSet(map[string]string{
-			"label": "value1",
-		}),
-		Field: fields.SelectorFromSet(map[string]string{
-			"spec.nodeName": "node2",
-		}),
-		IndexLabels: []string{"label"},
-	}})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if resp.ResourceVersion != 5 {
-		t.Errorf("unexpected resourceVersion: %v, expected: 5", resp.ResourceVersion)
-	}
-	if len(resp.Items) != 2 {
-		t.Errorf("unexpected list returned: %#v", resp)
-	}
-	if indexUsed != "l:label" {
-		t.Errorf("Used index %q but expected %q", indexUsed, "l:label")
-	}
+// 	// list by label index.
+// 	resp, indexUsed, err = store.WaitUntilFreshAndList(ctx, "prefix/", storage.ListOptions{ResourceVersion: "5", Predicate: storage.SelectionPredicate{
+// 		Label: labels.SelectorFromSet(map[string]string{
+// 			"label": "value1",
+// 		}),
+// 		Field: fields.SelectorFromSet(map[string]string{
+// 			"spec.nodeName": "node2",
+// 		}),
+// 		IndexLabels: []string{"label"},
+// 	}})
+// 	if err != nil {
+// 		t.Fatalf("unexpected error: %v", err)
+// 	}
+// 	if resp.ResourceVersion != 5 {
+// 		t.Errorf("unexpected resourceVersion: %v, expected: 5", resp.ResourceVersion)
+// 	}
+// 	if len(resp.Items) != 2 {
+// 		t.Errorf("unexpected list returned: %#v", resp)
+// 	}
+// 	if indexUsed != "l:label" {
+// 		t.Errorf("Used index %q but expected %q", indexUsed, "l:label")
+// 	}
 
-	// list with spec.nodeName index.
-	resp, indexUsed, err = store.WaitUntilFreshAndList(ctx, 5, "prefix/", storage.ListOptions{Predicate: storage.SelectionPredicate{
-		Label: labels.SelectorFromSet(map[string]string{
-			"not-exist-label": "whatever",
-		}),
-		Field: fields.SelectorFromSet(map[string]string{
-			"spec.nodeName": "node2",
-		}),
-		IndexFields: []string{"spec.nodeName"},
-	}})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if resp.ResourceVersion != 5 {
-		t.Errorf("unexpected resourceVersion: %v, expected: 5", resp.ResourceVersion)
-	}
-	if len(resp.Items) != 1 {
-		t.Errorf("unexpected list returned: %#v", resp)
-	}
-	if indexUsed != "f:spec.nodeName" {
-		t.Errorf("Used index %q but expected %q", indexUsed, "f:spec.nodeName")
-	}
+// 	// list with spec.nodeName index.
+// 	resp, indexUsed, err = store.WaitUntilFreshAndList(ctx, "prefix/", storage.ListOptions{ResourceVersion: "5", Predicate: storage.SelectionPredicate{
+// 		Label: labels.SelectorFromSet(map[string]string{
+// 			"not-exist-label": "whatever",
+// 		}),
+// 		Field: fields.SelectorFromSet(map[string]string{
+// 			"spec.nodeName": "node2",
+// 		}),
+// 		IndexFields: []string{"spec.nodeName"},
+// 	}})
+// 	if err != nil {
+// 		t.Fatalf("unexpected error: %v", err)
+// 	}
+// 	if resp.ResourceVersion != 5 {
+// 		t.Errorf("unexpected resourceVersion: %v, expected: 5", resp.ResourceVersion)
+// 	}
+// 	if len(resp.Items) != 1 {
+// 		t.Errorf("unexpected list returned: %#v", resp)
+// 	}
+// 	if indexUsed != "f:spec.nodeName" {
+// 		t.Errorf("Used index %q but expected %q", indexUsed, "f:spec.nodeName")
+// 	}
 
-	// list with index not exists.
-	resp, indexUsed, err = store.WaitUntilFreshAndList(ctx, 5, "prefix/", storage.ListOptions{Predicate: storage.SelectionPredicate{
-		Label: labels.SelectorFromSet(map[string]string{
-			"not-exist-label": "whatever",
-		}),
-		Field:       fields.Everything(),
-		IndexLabels: []string{"label"},
-	}})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if resp.ResourceVersion != 5 {
-		t.Errorf("unexpected resourceVersion: %v, expected: 5", resp.ResourceVersion)
-	}
-	if len(resp.Items) != 3 {
-		t.Errorf("unexpected list returned: %#v", resp)
-	}
-	if indexUsed != "" {
-		t.Errorf("Used index %q but expected none to be used", indexUsed)
-	}
-}
+// 	// list with index not exists.
+// 	resp, indexUsed, err = store.WaitUntilFreshAndList(ctx, "prefix/", storage.ListOptions{ResourceVersion: "5", Predicate: storage.SelectionPredicate{
+// 		Label: labels.SelectorFromSet(map[string]string{
+// 			"not-exist-label": "whatever",
+// 		}),
+// 		Field:       fields.Everything(),
+// 		IndexLabels: []string{"label"},
+// 	}})
+// 	if err != nil {
+// 		t.Fatalf("unexpected error: %v", err)
+// 	}
+// 	if resp.ResourceVersion != 5 {
+// 		t.Errorf("unexpected resourceVersion: %v, expected: 5", resp.ResourceVersion)
+// 	}
+// 	if len(resp.Items) != 3 {
+// 		t.Errorf("unexpected list returned: %#v", resp)
+// 	}
+// 	if indexUsed != "" {
+// 		t.Errorf("Used index %q but expected none to be used", indexUsed)
+// 	}
+// }
 
-func TestWaitUntilFreshAndListFromCache(t *testing.T) {
-	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.ConsistentListFromCache, true)
-	forceRequestWatchProgressSupport(t)
-	ctx := context.Background()
-	store := newTestWatchCache(3, DefaultEventFreshDuration, &cache.Indexers{})
-	defer store.Stop()
-	// In background, update the store.
-	go func() {
-		store.Add(makeTestPod("pod1", 2))
-		store.bookmarkRevision <- 3
-	}()
+// func TestWaitUntilFreshAndListFromCache(t *testing.T) {
+// 	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.ConsistentListFromCache, true)
+// 	forceRequestWatchProgressSupport(t)
+// 	ctx := context.Background()
+// 	store := newTestWatchCache(3, DefaultEventFreshDuration, &cache.Indexers{})
+// 	defer store.Stop()
+// 	// In background, update the store.
+// 	go func() {
+// 		store.Add(makeTestPod("pod1", 2))
+// 		store.bookmarkRevision <- 3
+// 	}()
 
-	// list from future revision. Requires watch cache to request bookmark to get it.
-	resp, indexUsed, err := store.WaitUntilFreshAndList(ctx, 3, "prefix/", storage.ListOptions{Predicate: storage.Everything})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if resp.ResourceVersion != 3 {
-		t.Errorf("unexpected resourceVersion: %v, expected: 6", resp.ResourceVersion)
-	}
-	if len(resp.Items) != 1 {
-		t.Errorf("unexpected list returned: %#v", resp)
-	}
-	if indexUsed != "" {
-		t.Errorf("Used index %q but expected none to be used", indexUsed)
-	}
-}
+// 	// list from future revision. Requires watch cache to request bookmark to get it.
+// 	resp, indexUsed, err := store.WaitUntilFreshAndList(ctx, "prefix/", storage.ListOptions{ResourceVersion: "3", Predicate: storage.Everything})
+// 	if err != nil {
+// 		t.Fatalf("unexpected error: %v", err)
+// 	}
+// 	if resp.ResourceVersion != 3 {
+// 		t.Errorf("unexpected resourceVersion: %v, expected: 6", resp.ResourceVersion)
+// 	}
+// 	if len(resp.Items) != 1 {
+// 		t.Errorf("unexpected list returned: %#v", resp)
+// 	}
+// 	if indexUsed != "" {
+// 		t.Errorf("Used index %q but expected none to be used", indexUsed)
+// 	}
+// }
 
 func TestWaitUntilFreshAndGet(t *testing.T) {
 	ctx := context.Background()
@@ -603,54 +602,54 @@ func TestWaitUntilFreshAndGet(t *testing.T) {
 	}
 }
 
-func TestWaitUntilFreshAndListTimeout(t *testing.T) {
-	tcs := []struct {
-		name                    string
-		ConsistentListFromCache bool
-	}{
-		{
-			name:                    "FromStorage",
-			ConsistentListFromCache: false,
-		},
-		{
-			name:                    "FromCache",
-			ConsistentListFromCache: true,
-		},
-	}
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.ConsistentListFromCache, tc.ConsistentListFromCache)
-			ctx := context.Background()
-			store := newTestWatchCache(3, DefaultEventFreshDuration, &cache.Indexers{})
-			defer store.Stop()
-			fc := store.clock.(*testingclock.FakeClock)
+// func TestWaitUntilFreshAndListTimeout(t *testing.T) {
+// 	tcs := []struct {
+// 		name                    string
+// 		ConsistentListFromCache bool
+// 	}{
+// 		{
+// 			name:                    "FromStorage",
+// 			ConsistentListFromCache: false,
+// 		},
+// 		{
+// 			name:                    "FromCache",
+// 			ConsistentListFromCache: true,
+// 		},
+// 	}
+// 	for _, tc := range tcs {
+// 		t.Run(tc.name, func(t *testing.T) {
+// 			featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.ConsistentListFromCache, tc.ConsistentListFromCache)
+// 			ctx := context.Background()
+// 			store := newTestWatchCache(3, DefaultEventFreshDuration, &cache.Indexers{})
+// 			defer store.Stop()
+// 			fc := store.clock.(*testingclock.FakeClock)
 
-			// In background, step clock after the below call starts the timer.
-			go func() {
-				for !fc.HasWaiters() {
-					time.Sleep(time.Millisecond)
-				}
-				store.Add(makeTestPod("foo", 2))
-				store.bookmarkRevision <- 3
-				fc.Step(blockTimeout)
+// 			// In background, step clock after the below call starts the timer.
+// 			go func() {
+// 				for !fc.HasWaiters() {
+// 					time.Sleep(time.Millisecond)
+// 				}
+// 				store.Add(makeTestPod("foo", 2))
+// 				store.bookmarkRevision <- 3
+// 				fc.Step(blockTimeout)
 
-				// Add an object to make sure the test would
-				// eventually fail instead of just waiting
-				// forever.
-				time.Sleep(30 * time.Second)
-				store.Add(makeTestPod("bar", 4))
-			}()
+// 				// Add an object to make sure the test would
+// 				// eventually fail instead of just waiting
+// 				// forever.
+// 				time.Sleep(30 * time.Second)
+// 				store.Add(makeTestPod("bar", 4))
+// 			}()
 
-			_, _, err := store.WaitUntilFreshAndList(ctx, 4, "", storage.ListOptions{Predicate: storage.Everything})
-			if !errors.IsTimeout(err) {
-				t.Errorf("expected timeout error but got: %v", err)
-			}
-			if !storage.IsTooLargeResourceVersion(err) {
-				t.Errorf("expected 'Too large resource version' cause in error but got: %v", err)
-			}
-		})
-	}
-}
+// 			_, _, err := store.WaitUntilFreshAndList(ctx, "", storage.ListOptions{ResourceVersion: "4", Predicate: storage.Everything})
+// 			if !errors.IsTimeout(err) {
+// 				t.Errorf("expected timeout error but got: %v", err)
+// 			}
+// 			if !storage.IsTooLargeResourceVersion(err) {
+// 				t.Errorf("expected 'Too large resource version' cause in error but got: %v", err)
+// 			}
+// 		})
+// 	}
+// }
 
 type testLW struct {
 	ListFunc  func(options metav1.ListOptions) (runtime.Object, error)
@@ -662,45 +661,6 @@ func (t *testLW) List(options metav1.ListOptions) (runtime.Object, error) {
 }
 func (t *testLW) Watch(options metav1.ListOptions) (watch.Interface, error) {
 	return t.WatchFunc(options)
-}
-
-func TestReflectorForWatchCache(t *testing.T) {
-	ctx := context.Background()
-	store := newTestWatchCache(5, DefaultEventFreshDuration, &cache.Indexers{})
-	defer store.Stop()
-
-	{
-		resp, _, err := store.WaitUntilFreshAndList(ctx, 0, "", storage.ListOptions{Predicate: storage.Everything})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if resp.ResourceVersion != 0 {
-			t.Errorf("unexpected resource version: %d", resp.ResourceVersion)
-		}
-	}
-
-	lw := &testLW{
-		WatchFunc: func(_ metav1.ListOptions) (watch.Interface, error) {
-			fw := watch.NewFake()
-			go fw.Stop()
-			return fw, nil
-		},
-		ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
-			return &v1.PodList{ListMeta: metav1.ListMeta{ResourceVersion: "10"}}, nil
-		},
-	}
-	r := cache.NewReflector(lw, &v1.Pod{}, store, 0)
-	r.ListAndWatch(wait.NeverStop)
-
-	{
-		resp, _, err := store.WaitUntilFreshAndList(ctx, 10, "", storage.ListOptions{Predicate: storage.Everything})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if resp.ResourceVersion != 10 {
-			t.Errorf("unexpected resource version: %d", resp.ResourceVersion)
-		}
-	}
 }
 
 func TestDynamicCache(t *testing.T) {

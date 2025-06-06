@@ -331,42 +331,100 @@ type DeleteOptions struct {
 	IgnoreStoreReadError bool
 }
 
-func ValidateListOptions(keyPrefix string, versioner Versioner, opts ListOptions) (withRev int64, continueKey string, err error) {
-	if opts.Recursive && len(opts.Predicate.Continue) > 0 {
-		continueKey, continueRV, err := DecodeContinue(opts.Predicate.Continue, keyPrefix)
-		if err != nil {
-			return 0, "", apierrors.NewBadRequest(fmt.Sprintf("invalid continue token: %v", err))
+func ValidateListOptions(keyPrefix string, versioner Versioner, opts ListOptions) (*ListSemantic, error) {
+	// Mirrors apimachinery/pkg/apis/meta/internalversion/validation/validation.go
+	if opts.ResourceVersionMatch != "" {
+		if len(opts.ResourceVersion) == 0 {
+			return nil, apierrors.NewBadRequest("resourceVersionMatch cannot be specified without resourceVersion")
 		}
-		if len(opts.ResourceVersion) > 0 && opts.ResourceVersion != "0" {
-			return 0, "", apierrors.NewBadRequest("specifying resource version is not allowed when using continue")
+		// Allow this case
+		// if len(opts.Predicate.Continue) > 0 {
+		// 	return nil, apierrors.NewBadRequest("resourceVersionMatch is not allowed when using continue")
+		// }
+		if opts.ResourceVersionMatch != metav1.ResourceVersionMatchExact && opts.ResourceVersionMatch != metav1.ResourceVersionMatchNotOlderThan {
+			return nil, apierrors.NewBadRequest(fmt.Sprintf("unknown ResourceVersionMatch value: %v", opts.ResourceVersionMatch))
+		}
+		if opts.ResourceVersionMatch == metav1.ResourceVersionMatchExact && opts.ResourceVersion == "0" {
+			return nil, apierrors.NewBadRequest("resourceVersion cannot be 0 when resourceVersionMatch is set to Exact")
+		}
+	}
+	var continueKey string
+	if len(opts.Predicate.Continue) > 0 {
+		if !opts.Recursive {
+			return nil, apierrors.NewBadRequest("continue is not supported for non-recursive lists")
+		}
+		var continueRV int64
+		var err error
+		continueKey, continueRV, err = DecodeContinue(opts.Predicate.Continue, keyPrefix)
+		if err != nil {
+			return nil, apierrors.NewBadRequest(fmt.Sprintf("invalid continue token: %v", err))
 		}
 		// If continueRV > 0, the LIST request needs a specific resource version.
 		// continueRV==0 is invalid.
 		// If continueRV < 0, the request is for the latest resource version.
 		if continueRV > 0 {
-			withRev = continueRV
+			return &ListSemantic{
+				Consistency:     ResourceVersionExact,
+				ResourceVersion: uint64(continueRV),
+				ContinueKey:     continueKey,
+			}, nil
 		}
-		return withRev, continueKey, nil
 	}
 	if len(opts.ResourceVersion) == 0 {
-		return withRev, "", nil
+		return &ListSemantic{Consistency: ResourceVersionQuorum, ContinueKey: continueKey}, nil
+	}
+	if opts.ResourceVersion == "0" {
+		return &ListSemantic{Consistency: ResourceVersionAny, ContinueKey: continueKey}, nil
 	}
 	parsedRV, err := versioner.ParseResourceVersion(opts.ResourceVersion)
 	if err != nil {
-		return withRev, "", apierrors.NewBadRequest(fmt.Sprintf("invalid resource version: %v", err))
+		return nil, apierrors.NewBadRequest(fmt.Sprintf("invalid resource version: %v", err))
 	}
 	switch opts.ResourceVersionMatch {
 	case metav1.ResourceVersionMatchNotOlderThan:
 		// The not older than constraint is checked after we get a response from etcd,
 		// and returnedRV is then set to the revision we get from the etcd response.
+		return &ListSemantic{
+			Consistency:     ResourceVersionNotOlderThan,
+			ResourceVersion: parsedRV,
+			ContinueKey:     continueKey,
+		}, nil
 	case metav1.ResourceVersionMatchExact:
-		withRev = int64(parsedRV)
-	case "": // legacy case
+		return &ListSemantic{
+			Consistency:     ResourceVersionExact,
+			ResourceVersion: parsedRV,
+			ContinueKey:     continueKey,
+		}, nil
+	case "":
+		// legacy case
 		if opts.Recursive && opts.Predicate.Limit > 0 && parsedRV > 0 {
-			withRev = int64(parsedRV)
+			return &ListSemantic{
+				Consistency:     ResourceVersionExact,
+				ResourceVersion: parsedRV,
+				ContinueKey:     continueKey,
+			}, nil
 		}
+		return &ListSemantic{
+			Consistency:     ResourceVersionNotOlderThan,
+			ResourceVersion: parsedRV,
+			ContinueKey:     continueKey,
+		}, nil
 	default:
-		return withRev, "", fmt.Errorf("unknown ResourceVersionMatch value: %v", opts.ResourceVersionMatch)
+		return nil, fmt.Errorf("unknown ResourceVersionMatch value: %v", opts.ResourceVersionMatch)
 	}
-	return withRev, "", nil
 }
+
+type ListSemantic struct {
+	Consistency     Consistency
+	ResourceVersion uint64
+	ContinueKey     string
+}
+
+type Consistency string
+
+var (
+	ResourceVersionExact        Consistency = "ResourceVersionExact"
+	ResourceVersionNotOlderThan Consistency = "ResourceVersionNotOlderThan"
+	ResourceVersionAny          Consistency = "ResourceVersionAny"
+	ResourceVersionQuorum       Consistency = "ResourceVersionQuorum"
+)

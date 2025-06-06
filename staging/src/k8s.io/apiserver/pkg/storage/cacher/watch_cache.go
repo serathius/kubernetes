@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -496,51 +495,35 @@ func (s sortableStoreElements) Swap(i, j int) {
 
 // WaitUntilFreshAndList returns list of pointers to `storeElement` objects along
 // with their ResourceVersion and the name of the index, if any, that was used.
-func (w *watchCache) WaitUntilFreshAndList(ctx context.Context, resourceVersion uint64, key string, opts storage.ListOptions) (resp listResp, index string, err error) {
-	if delegator.ConsistentReadSupported() && w.notFresh(resourceVersion) {
-		w.waitingUntilFresh.Add()
-		err = w.waitUntilFreshAndBlock(ctx, resourceVersion)
-		w.waitingUntilFresh.Remove()
-	} else {
-		err = w.waitUntilFreshAndBlock(ctx, resourceVersion)
-	}
-
-	defer w.RUnlock()
-	if err != nil {
-		return listResp{}, "", err
-	}
-	return w.list(ctx, resourceVersion, key, opts)
-}
-
-// NOTICE: Structure follows the shouldDelegateList function in
-// staging/src/k8s.io/apiserver/pkg/storage/cacher/delegator.go
-func (w *watchCache) list(ctx context.Context, resourceVersion uint64, key string, opts storage.ListOptions) (resp listResp, index string, err error) {
-	switch opts.ResourceVersionMatch {
-	case metav1.ResourceVersionMatchExact:
-		return w.listExactRV(key, "", resourceVersion)
-	case metav1.ResourceVersionMatchNotOlderThan:
-	case "":
-		// Continue
-		if len(opts.Predicate.Continue) > 0 {
-			continueKey, continueRV, err := storage.DecodeContinue(opts.Predicate.Continue, key)
-			if err != nil {
-				return listResp{}, "", errors.NewBadRequest(fmt.Sprintf("invalid continue token: %v", err))
-			}
-			if continueRV > 0 {
-				return w.listExactRV(key, continueKey, uint64(continueRV))
-			} else {
-				// Continue with negative RV is a consistent read - already handled via waitUntilFreshAndBlock.
-				// Don't pass matchValues as they don't support continueKey
-				return w.listLatestRV(key, continueKey, nil)
-			}
+func (w *watchCache) WaitUntilFreshAndList(ctx context.Context, key string, semantic storage.ListSemantic, predicate storage.SelectionPredicate) (listResp, string, error) {
+	switch semantic.Consistency {
+	case storage.ResourceVersionExact, storage.ResourceVersionNotOlderThan:
+		var err error
+		if delegator.ConsistentReadSupported() && w.notFresh(semantic.ResourceVersion) {
+			w.waitingUntilFresh.Add()
+			err = w.waitUntilFreshAndBlock(ctx, semantic.ResourceVersion)
+			w.waitingUntilFresh.Remove()
+		} else {
+			err = w.waitUntilFreshAndBlock(ctx, semantic.ResourceVersion)
 		}
-		// Legacy exact match
-		if opts.Predicate.Limit > 0 && len(opts.ResourceVersion) > 0 && opts.ResourceVersion != "0" {
-			return w.listExactRV(key, "", resourceVersion)
+		defer w.RUnlock()
+		if err != nil {
+			return listResp{}, "", err
 		}
-		// Consistent Read - already handled via waitUntilFreshAndBlock
+		fallthrough
+	case storage.ResourceVersionExact:
+		return w.listExactRV(key, semantic.ContinueKey, uint64(semantic.ResourceVersion))
+	case storage.ResourceVersionNotOlderThan:
+		return w.listLatestRV(key, semantic.ContinueKey, predicate.MatcherIndex(ctx))
+	case storage.ResourceVersionAny:
+		w.RLock()
+		defer w.RUnlock()
+		return w.listLatestRV(key, semantic.ContinueKey, predicate.MatcherIndex(ctx))
+	case storage.ResourceVersionQuorum:
+		return listResp{}, "", fmt.Errorf("Unknown")
+	default:
+		return listResp{}, "", fmt.Errorf("Unknown")
 	}
-	return w.listLatestRV(key, "", opts.Predicate.MatcherIndex(ctx))
 }
 
 func (w *watchCache) listExactRV(key, continueKey string, resourceVersion uint64) (resp listResp, index string, err error) {

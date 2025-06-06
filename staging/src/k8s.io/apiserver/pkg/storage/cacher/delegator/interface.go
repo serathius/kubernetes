@@ -17,6 +17,8 @@ limitations under the License.
 package delegator
 
 import (
+	"fmt"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apiserver/pkg/features"
 	"k8s.io/apiserver/pkg/storage"
@@ -38,34 +40,27 @@ func ShouldDelegateListMeta(opts *metav1.ListOptions, cache Helper) (Result, err
 }
 
 func ShouldDelegateList(opts storage.ListOptions, cache Helper) (Result, error) {
-	// see https://kubernetes.io/docs/reference/using-api/api-concepts/#semantics-for-get-and-list
-	switch opts.ResourceVersionMatch {
-	case metav1.ResourceVersionMatchExact:
+	semantic, err := storage.ValidateListOptions("", storage.APIObjectVersioner{}, opts)
+	if err != nil {
+		return Result{}, err
+	}
+
+	switch semantic.Consistency {
+	case storage.ResourceVersionExact:
 		return cache.ShouldDelegateExactRV(opts.ResourceVersion, opts.Recursive)
-	case metav1.ResourceVersionMatchNotOlderThan:
+	case storage.ResourceVersionNotOlderThan:
 		return Result{ShouldDelegate: false}, nil
-	case "":
-		// Continue
-		if len(opts.Predicate.Continue) > 0 {
-			return cache.ShouldDelegateContinue(opts.Predicate.Continue, opts.Recursive)
-		}
-		// Legacy exact match
-		if opts.Predicate.Limit > 0 && len(opts.ResourceVersion) > 0 && opts.ResourceVersion != "0" {
-			return cache.ShouldDelegateExactRV(opts.ResourceVersion, opts.Recursive)
-		}
-		// Consistent Read
-		if opts.ResourceVersion == "" {
-			return cache.ShouldDelegateConsistentRead()
-		}
+	case storage.ResourceVersionAny:
 		return Result{ShouldDelegate: false}, nil
+	case storage.ResourceVersionQuorum:
+		return cache.ShouldDelegateConsistentRead()
 	default:
-		return Result{ShouldDelegate: true}, nil
+		return Result{}, fmt.Errorf("Unknown")
 	}
 }
 
 type Helper interface {
 	ShouldDelegateExactRV(rv string, recursive bool) (Result, error)
-	ShouldDelegateContinue(continueToken string, recursive bool) (Result, error)
 	ShouldDelegateConsistentRead() (Result, error)
 }
 
@@ -81,14 +76,6 @@ type Result struct {
 type CacheWithoutSnapshots struct{}
 
 var _ Helper = CacheWithoutSnapshots{}
-
-func (c CacheWithoutSnapshots) ShouldDelegateContinue(continueToken string, recursive bool) (Result, error) {
-	return Result{
-		ShouldDelegate: true,
-		// Continue with negative RV is considered a consistent read, however token cannot be parsed without keyPrefix unavailable in staging/src/k8s.io/apiserver/pkg/util/flow_control/request/list_work_estimator.go.
-		ConsistentRead: false,
-	}, nil
-}
 
 func (c CacheWithoutSnapshots) ShouldDelegateExactRV(rv string, recursive bool) (Result, error) {
 	return Result{

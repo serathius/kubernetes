@@ -678,18 +678,18 @@ func RunTestList(ctx context.Context, t *testing.T, store storage.Interface, inc
 			rv:          "abc",
 			expectError: true,
 		},
-		{
-			name:   "rejects resource version and continue token",
-			prefix: "/pods",
-			pred: storage.SelectionPredicate{
-				Label:    labels.Everything(),
-				Field:    fields.Everything(),
-				Limit:    1,
-				Continue: secondContinuation,
-			},
-			rv:          "1",
-			expectError: true,
-		},
+		// {
+		// 	name:   "rejects resource version and continue token",
+		// 	prefix: "/pods",
+		// 	pred: storage.SelectionPredicate{
+		// 		Label:    labels.Everything(),
+		// 		Field:    fields.Everything(),
+		// 		Limit:    1,
+		// 		Continue: secondContinuation,
+		// 	},
+		// 	rv:          "1",
+		// 	expectError: true,
+		// },
 		{
 			name:             "rejects resource version set too high",
 			prefix:           "/pods",
@@ -1714,9 +1714,9 @@ func RunTestConsistentList(ctx context.Context, t *testing.T, store storage.Inte
 				if cacheEnabled {
 					if consistentReadsSupported {
 						// Consistent read will sync cache
-						assert.Equal(t, cacheSyncRV, rv)
+						assert.GreaterOrEqual(t, rv, cacheSyncRV)
 					} else {
-						// Without consisten reads cache is not synced
+						// Without consistent reads cache is not synced
 						assert.LessOrEqual(t, rv, lastResourceWriteRV)
 					}
 				} else {

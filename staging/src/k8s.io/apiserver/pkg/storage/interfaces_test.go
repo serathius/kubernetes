@@ -42,23 +42,11 @@ func TestPreconditionsCheckWithNilObject(t *testing.T) {
 
 func TestValidateListOptions(t *testing.T) {
 	testCases := []struct {
-		name                string
-		opts                ListOptions
-		expectedError       string
-		expectedRev         int64
-		expectedContinueKey string
+		name          string
+		opts          ListOptions
+		expectedError string
+		expectedList  ListSemantic
 	}{
-		{
-			name: "specifying resource version when using continue",
-			opts: ListOptions{
-				Recursive:       true,
-				ResourceVersion: "200",
-				Predicate: SelectionPredicate{
-					Continue: encodeContinueOrDie("meta.k8s.io/v1", 100, "continue"),
-				},
-			},
-			expectedError: "specifying resource version is not allowed when using continue",
-		},
 		{
 			name: "invalid resource version",
 			opts: ListOptions{
@@ -83,8 +71,11 @@ func TestValidateListOptions(t *testing.T) {
 					Continue: encodeContinueOrDie("meta.k8s.io/v1", 100, "continue"),
 				},
 			},
-			expectedRev:         100,
-			expectedContinueKey: "continue",
+			expectedList: ListSemantic{
+				Consistency:     ResourceVersionExact,
+				ResourceVersion: 100,
+				ContinueKey:     "continue",
+			},
 		},
 		{
 			name: "use continueRV with empty rv",
@@ -95,8 +86,11 @@ func TestValidateListOptions(t *testing.T) {
 					Continue: encodeContinueOrDie("meta.k8s.io/v1", 100, "continue"),
 				},
 			},
-			expectedRev:         100,
-			expectedContinueKey: "continue",
+			expectedList: ListSemantic{
+				Consistency:     ResourceVersionExact,
+				ResourceVersion: 100,
+				ContinueKey:     "continue",
+			},
 		},
 		{
 			name: "continueRV = 0",
@@ -118,50 +112,67 @@ func TestValidateListOptions(t *testing.T) {
 					Continue: encodeContinueOrDie("meta.k8s.io/v1", -1, "continue"),
 				},
 			},
-			expectedRev:         0,
-			expectedContinueKey: "continue",
+			expectedList: ListSemantic{
+				Consistency:     ResourceVersionQuorum,
+				ResourceVersion: 0,
+				ContinueKey:     "continue",
+			},
 		},
 		{
-			name:        "default",
-			opts:        ListOptions{},
-			expectedRev: 0,
+			name: "default quorum read",
+			opts: ListOptions{},
+			expectedList: ListSemantic{
+				Consistency: ResourceVersionQuorum,
+			},
 		},
 		{
-			name: "rev resolve to 0 if ResourceVersionMatchNotOlderThan",
+			name: "ResourceVersionMatchNotOlderThan",
 			opts: ListOptions{
 				ResourceVersion:      "200",
 				ResourceVersionMatch: metav1.ResourceVersionMatchNotOlderThan,
 			},
-			expectedRev: 0,
+			expectedList: ListSemantic{
+				Consistency:     ResourceVersionNotOlderThan,
+				ResourceVersion: 200,
+			},
 		},
 		{
-			name: "specified rev if ResourceVersionMatchExact",
+			name: "ResourceVersionMatchExact",
 			opts: ListOptions{
 				ResourceVersion:      "200",
 				ResourceVersionMatch: metav1.ResourceVersionMatchExact,
 			},
-			expectedRev: 200,
+			expectedList: ListSemantic{
+				Consistency:     ResourceVersionExact,
+				ResourceVersion: 200,
+			},
 		},
 		{
-			name: "rev resolve to 0 if not recursive",
+			name: "not older than if limit unspecified",
+			opts: ListOptions{
+				ResourceVersion: "200",
+				Recursive:       true,
+			},
+			expectedList: ListSemantic{
+				Consistency:     ResourceVersionNotOlderThan,
+				ResourceVersion: 200,
+			},
+		},
+		{
+			name: "not older than if not recursive",
 			opts: ListOptions{
 				ResourceVersion: "200",
 				Predicate: SelectionPredicate{
 					Limit: 1,
 				},
 			},
-			expectedRev: 0,
-		},
-		{
-			name: "rev resolve to 0 if limit unspecified",
-			opts: ListOptions{
-				ResourceVersion: "200",
-				Recursive:       true,
+			expectedList: ListSemantic{
+				Consistency:     ResourceVersionNotOlderThan,
+				ResourceVersion: 200,
 			},
-			expectedRev: 0,
 		},
 		{
-			name: "specified rev if recursive with limit",
+			name: "legacy exact",
 			opts: ListOptions{
 				ResourceVersion: "200",
 				Recursive:       true,
@@ -169,13 +180,16 @@ func TestValidateListOptions(t *testing.T) {
 					Limit: 1,
 				},
 			},
-			expectedRev: 200,
+			expectedList: ListSemantic{
+				Consistency:     ResourceVersionExact,
+				ResourceVersion: 200,
+			},
 		},
 	}
 	for _, tt := range testCases {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
-			withRev, continueKey, err := ValidateListOptions("", APIObjectVersioner{}, tt.opts)
+			semantic, err := ValidateListOptions("", APIObjectVersioner{}, tt.opts)
 			if len(tt.expectedError) > 0 {
 				if err == nil || !strings.Contains(err.Error(), tt.expectedError) {
 					t.Fatalf("expected error: %s, but got: %v", tt.expectedError, err)
@@ -185,11 +199,8 @@ func TestValidateListOptions(t *testing.T) {
 			if err != nil {
 				t.Fatalf("resolveRevForGetList failed: %v", err)
 			}
-			if withRev != tt.expectedRev {
-				t.Errorf("%s: expecting rev = %d, but get %d", tt.name, tt.expectedRev, withRev)
-			}
-			if continueKey != tt.expectedContinueKey {
-				t.Errorf("%s: expecting continueKey = %q, but get %q", tt.name, tt.expectedContinueKey, continueKey)
+			if *semantic != tt.expectedList {
+				t.Errorf("expecting = %+v, but get %+v", tt.expectedList, semantic)
 			}
 		})
 	}

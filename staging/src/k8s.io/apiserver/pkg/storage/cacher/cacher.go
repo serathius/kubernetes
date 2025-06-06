@@ -698,9 +698,9 @@ func computeListLimit(opts storage.ListOptions) int64 {
 	return opts.Predicate.Limit
 }
 
-func (c *Cacher) listItems(ctx context.Context, listRV uint64, key string, opts storage.ListOptions) (listResp, string, error) {
+func (c *Cacher) listItems(ctx context.Context, key string, opts storage.ListOptions) (listResp, string, error) {
 	if !opts.Recursive {
-		obj, exists, readResourceVersion, err := c.watchCache.WaitUntilFreshAndGet(ctx, listRV, key)
+		obj, exists, readResourceVersion, err := c.watchCache.WaitUntilFreshAndGet(ctx, 0, key)
 		if err != nil {
 			return listResp{}, "", err
 		}
@@ -709,7 +709,18 @@ func (c *Cacher) listItems(ctx context.Context, listRV uint64, key string, opts 
 		}
 		return listResp{ResourceVersion: readResourceVersion}, "", nil
 	}
-	return c.watchCache.WaitUntilFreshAndList(ctx, listRV, key, opts)
+	semantic, err := storage.ValidateListOptions(key, c.versioner, opts)
+	if err != nil {
+		return listResp{}, "", err
+	}
+	if semantic.Consistency == storage.ResourceVersionQuorum {
+		semantic.Consistency = storage.ResourceVersionNotOlderThan
+		semantic.ResourceVersion, err = c.storage.GetCurrentResourceVersion(ctx)
+		if err != nil {
+			return listResp{}, "", err
+		}
+	}
+	return c.watchCache.WaitUntilFreshAndList(ctx, key, *semantic, opts.Predicate)
 }
 
 type listResp struct {
@@ -727,7 +738,7 @@ func (c *Cacher) GetList(ctx context.Context, key string, opts storage.ListOptio
 	if opts.Recursive && !strings.HasSuffix(key, "/") {
 		preparedKey += "/"
 	}
-	listRV, err := c.versioner.ParseResourceVersion(opts.ResourceVersion)
+	_, err := c.versioner.ParseResourceVersion(opts.ResourceVersion)
 	if err != nil {
 		return err
 	}
@@ -763,7 +774,7 @@ func (c *Cacher) GetList(ctx context.Context, key string, opts storage.ListOptio
 		return fmt.Errorf("need a pointer to slice, got %v", listVal.Kind())
 	}
 
-	resp, indexUsed, err := c.listItems(ctx, listRV, preparedKey, opts)
+	resp, indexUsed, err := c.listItems(ctx, preparedKey, opts)
 	if err != nil {
 		return err
 	}
@@ -1337,23 +1348,6 @@ func (c *Cacher) ShouldDelegateExactRV(resourceVersion string, recursive bool) (
 		return delegator.Result{}, err
 	}
 	return c.shouldDelegateExactRV(listRV)
-}
-
-func (c *Cacher) ShouldDelegateContinue(continueToken string, recursive bool) (delegator.Result, error) {
-	// Not Recursive is not supported unitl exact RV is implemented for WaitUntilFreshAndGet.
-	if !recursive || c.watchCache.snapshots == nil {
-		return delegator.Result{ShouldDelegate: true}, nil
-	}
-	_, continueRV, err := storage.DecodeContinue(continueToken, c.resourcePrefix)
-	if err != nil {
-		return delegator.Result{}, err
-	}
-	if continueRV > 0 {
-		return c.shouldDelegateExactRV(uint64(continueRV))
-	} else {
-		// Continue with negative RV is a consistent read.
-		return c.ShouldDelegateConsistentRead()
-	}
 }
 
 func (c *Cacher) shouldDelegateExactRV(rv uint64) (delegator.Result, error) {

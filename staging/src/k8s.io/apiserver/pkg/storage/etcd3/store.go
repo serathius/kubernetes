@@ -711,9 +711,19 @@ func (s *store) GetList(ctx context.Context, key string, opts storage.ListOption
 	paging := opts.Predicate.Limit > 0
 	newItemFunc := getNewItemFunc(listObj, v)
 
-	withRev, continueKey, err := storage.ValidateListOptions(keyPrefix, s.versioner, opts)
+	semantic, err := storage.ValidateListOptions(keyPrefix, s.versioner, opts)
 	if err != nil {
 		return err
+	}
+	var withRev int64
+	continueKey := semantic.ContinueKey
+	switch semantic.Consistency {
+	case storage.ResourceVersionAny, storage.ResourceVersionQuorum, storage.ResourceVersionNotOlderThan:
+		// Quorum read
+	case storage.ResourceVersionExact:
+		withRev = int64(semantic.ResourceVersion)
+	default:
+		return fmt.Errorf("Unknown")
 	}
 
 	// loop until we have filled the requested limit from etcd or there are no more results
@@ -747,8 +757,8 @@ func (s *store) GetList(ctx context.Context, key string, opts storage.ListOption
 			return interpretListError(err, len(opts.Predicate.Continue) > 0, continueKey, keyPrefix)
 		}
 		numFetched += len(getResp.Kvs)
-		if err = s.validateMinimumResourceVersion(opts.ResourceVersion, uint64(getResp.Revision)); err != nil {
-			return err
+		if semantic.Consistency == storage.ResourceVersionNotOlderThan && semantic.ResourceVersion > uint64(getResp.Revision) {
+			return storage.NewTooLargeResourceVersionError(uint64(semantic.ResourceVersion), uint64(getResp.Revision), 0)
 		}
 		hasMore = int64(len(getResp.Kvs)) < getResp.Count
 
