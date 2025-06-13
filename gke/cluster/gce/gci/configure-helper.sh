@@ -2921,7 +2921,15 @@ function config-ip-envoy {
     ip6tables -t mangle -I OUTPUT     -m connmark --mark $packet_mark -j CONNMARK --restore-mark
     ip -6 rule add fwmark $packet_mark lookup envoy.tproxy
     ip -6 route add local ::/0 dev lo table envoy.tproxy
-    ip -6 route add default dev eth0
+    if [[ "${KUBERNETES_MASTER:-}" == "true" ]]; then
+      # WORKAROUND: Manually add a default IPv6 route on the master node. In
+      # this release, master nodes are IPv4-only and don't receive this route
+      # via DHCP. This will be unnecessary once masters support IPv6.
+      # See: b/335383972#comment14
+      if [[ -z "$(ip -6 route show default)" ]]; then
+        ip -6 route add default dev lo
+      fi
+    fi
   fi
 
   # Configure NAT REDIRECT rules for PSC IPv4 CIDR forwarding if enabled.
