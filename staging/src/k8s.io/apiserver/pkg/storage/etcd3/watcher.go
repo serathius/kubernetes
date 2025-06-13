@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -414,6 +415,14 @@ func (wc *watchChan) startWatching(watchClosedCh chan struct{}, initialEventsEnd
 				wc.sendError(err)
 				return
 			}
+			if opts.WithObjectSize {
+				labels, err := accessor.Labels(obj)
+				if err != nil {
+					return err
+				}
+				labels["size"] = fmt.Sprint(len(kv.Value))
+			}
+			v.Set(reflect.Append(v, reflect.ValueOf(obj).Elem()))
 			wc.queueEvent(parsedEvent)
 		}
 	}

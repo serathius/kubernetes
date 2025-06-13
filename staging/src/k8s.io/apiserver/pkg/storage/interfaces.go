@@ -318,6 +318,8 @@ type ListOptions struct {
 	// event containing a ResourceVersion after which the server
 	// continues streaming events.
 	SendInitialEvents *bool
+
+	WithObjectSize bool
 }
 
 // DeleteOptions provides the options that may be provided for storage delete operations.

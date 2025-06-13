@@ -733,6 +733,7 @@ func (s *store) GetList(ctx context.Context, key string, opts storage.ListOption
 	if opts.Recursive {
 		metricsOp = "list"
 	}
+	accessor := meta.NewAccessor()
 
 	aggregator := s.listErrAggrFactory()
 	for {
@@ -803,6 +804,13 @@ func (s *store) GetList(ctx context.Context, key string, opts storage.ListOption
 
 			// being unable to set the version does not prevent the object from being extracted
 			if matched, err := opts.Predicate.Matches(obj); err == nil && matched {
+				if opts.WithObjectSize {
+					labels, err := accessor.Labels(obj)
+					if err != nil {
+						return err
+					}
+					labels["size"] = fmt.Sprint(len(kv.Value))
+				}
 				v.Set(reflect.Append(v, reflect.ValueOf(obj).Elem()))
 			}
 
