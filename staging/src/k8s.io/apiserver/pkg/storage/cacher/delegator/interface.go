@@ -111,3 +111,30 @@ func ConsistentReadSupported() bool {
 	requestWatchProgressSupported := etcdfeature.DefaultFeatureSupportChecker.Supports(storage.RequestWatchProgress)
 	return consistentListFromCacheEnabled && requestWatchProgressSupported
 }
+
+func ComputeListMetaLimit(opts *metav1.ListOptions) int64 {
+	return ComputeListLimit(
+		storage.ListOptions{
+			ResourceVersionMatch: opts.ResourceVersionMatch,
+			ResourceVersion:      opts.ResourceVersion,
+			Predicate: storage.SelectionPredicate{
+				Continue: opts.Continue,
+				Limit:    opts.Limit,
+			},
+			Recursive: true,
+		})
+}
+
+// ComputeListLimit determines whether the cacher should
+// apply a limit to an incoming LIST request and returns its value.
+//
+// note that this function doesn't check RVM nor the Continuation token.
+// these parameters are validated by the shouldDelegateList function.
+//
+// as of today, the limit is ignored for requests that set RV == 0
+func ComputeListLimit(opts storage.ListOptions) int64 {
+	if opts.Predicate.Limit <= 0 || opts.ResourceVersion == "0" {
+		return 0
+	}
+	return opts.Predicate.Limit
+}

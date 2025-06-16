@@ -23,9 +23,12 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	apirequest "k8s.io/apiserver/pkg/endpoints/request"
+	"k8s.io/apiserver/pkg/storage"
 	"k8s.io/apiserver/pkg/storage/cacher/delegator"
 	"k8s.io/klog/v2"
 )
+
+const streamingMaxMemoryBytes = 1_000_000
 
 func newListWorkEstimator(countFn statsGetterFunc, config *WorkEstimatorConfig, maxSeatsFn maxSeatsFunc) WorkEstimatorFunc {
 	estimator := &listWorkEstimator{
@@ -91,7 +94,6 @@ func (e *listWorkEstimator) estimate(r *http.Request, flowSchemaName, priorityLe
 	isListFromCache := requestInfo.Verb == "watch" || !listFromStorage
 
 	stats, err := e.statsGetterFn(key(requestInfo))
-	numStored := stats.ObjectCount
 	switch {
 	case err == ObjectCountStaleErr:
 		// object count going stale is indicative of degradation, so we should
@@ -119,39 +121,40 @@ func (e *listWorkEstimator) estimate(r *http.Request, flowSchemaName, priorityLe
 		klog.ErrorS(err, "Unexpected error from object count tracker")
 		return WorkEstimate{InitialSeats: maxSeats}
 	}
+	estimatedMemoryNeeded := estimateRequiredMemory(listOptions, stats, isListFromCache)
+	seats := uint64(math.Ceil(float64(estimatedMemoryNeeded) / e.config.BytesPerSeat))
+	seats = max(seats, minSeats)
+	seats = min(seats, maxSeats)
+	return WorkEstimate{InitialSeats: seats}
+}
 
-	limit := numStored
-	if listOptions.Limit > 0 && listOptions.Limit < numStored {
-		limit = listOptions.Limit
+func estimateRequiredMemory(listOptions metav1.ListOptions, stats storage.Stats, isListFromCache bool) int64 {
+	objectCountWithLimit := stats.ObjectCount
+
+	limit := delegator.ComputeListMetaLimit(&listOptions)
+	if limit > 0 && limit < stats.ObjectCount {
+		objectCountWithLimit = limit
 	}
-
-	var estimatedObjectsToBeProcessed int64
-
+	averageStoredObjectSize := stats.ObjectSize / stats.ObjectCount
+	var readFromEtcdMemory int64
+	var writeResponseMemory int64
 	switch {
 	case isListFromCache:
-		// TODO: For resources that implement indexes at the watchcache level,
-		//  we need to adjust the cost accordingly
-		estimatedObjectsToBeProcessed = numStored
+		// List from cache will uses most memory when writing response.
+		writeResponseMemory = objectCountWithLimit * averageStoredObjectSize
 	case listOptions.FieldSelector != "" || listOptions.LabelSelector != "":
-		estimatedObjectsToBeProcessed = numStored + limit
+		// List from etcd with filter might require load all objects to memory.
+		// TODO: Consider exponential limit halfing number of objects being loaded at once.
+		readFromEtcdMemory = stats.ObjectCount * averageStoredObjectSize
+		writeResponseMemory = objectCountWithLimit * averageStoredObjectSize
 	default:
-		estimatedObjectsToBeProcessed = 2 * limit
+		// List from etcd will load only limited objects into memory.
+		readFromEtcdMemory = objectCountWithLimit * averageStoredObjectSize
+		writeResponseMemory = readFromEtcdMemory
 	}
-
-	// for now, our rough estimate is to allocate one seat to each 100 obejcts that
-	// will be processed by the list request.
-	// we will come up with a different formula for the transformation function and/or
-	// fine tune this number in future iteratons.
-	seats := uint64(math.Ceil(float64(estimatedObjectsToBeProcessed) / e.config.ObjectsPerSeat))
-
-	// make sure we never return a seat of zero
-	if seats < minSeats {
-		seats = minSeats
-	}
-	if seats > maxSeats {
-		seats = maxSeats
-	}
-	return WorkEstimate{InitialSeats: seats}
+	// TODO: Account for content type that doesn't support streaming.
+	writeResponseMemory = min(writeResponseMemory, streamingMaxMemoryBytes)
+	return max(writeResponseMemory, readFromEtcdMemory)
 }
 
 func key(requestInfo *apirequest.RequestInfo) string {

@@ -24,10 +24,11 @@ import (
 
 const (
 	minimumSeats                = 1
-	maximumSeatsLimit           = 10
-	objectsPerSeat              = 100.0
+	maximumCacheSeats           = 10
+	maximumSeatsLimit           = 100
 	watchesPerSeat              = 10.0
 	enableMutatingWorkEstimator = true
+	bytesPerSeat                = 100_000.0
 )
 
 var eventAdditionalDuration = 5 * time.Millisecond
@@ -50,7 +51,7 @@ type WorkEstimatorConfig struct {
 
 // ListWorkEstimatorConfig holds work estimator parameters related to list requests.
 type ListWorkEstimatorConfig struct {
-	ObjectsPerSeat float64 `json:"objectsPerSeat,omitempty"`
+	BytesPerSeat  float64 `json:"bytesPerSeat,omitempty"`
 }
 
 // MutatingWorkEstimatorConfig holds work estimator
@@ -75,7 +76,9 @@ func DefaultWorkEstimatorConfig() *WorkEstimatorConfig {
 
 // defaultListWorkEstimatorConfig creates a new ListWorkEstimatorConfig with default values.
 func defaultListWorkEstimatorConfig() *ListWorkEstimatorConfig {
-	return &ListWorkEstimatorConfig{ObjectsPerSeat: objectsPerSeat}
+	return &ListWorkEstimatorConfig{
+		BytesPerSeat:  bytesPerSeat,
+	}
 }
 
 // defaultMutatingWorkEstimatorConfig creates a new MutatingWorkEstimatorConfig with default values.

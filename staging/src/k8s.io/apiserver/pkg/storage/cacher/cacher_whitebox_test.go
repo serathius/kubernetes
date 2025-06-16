@@ -3182,7 +3182,7 @@ func TestComputeListLimit(t *testing.T) {
 
 	for _, scenario := range scenarios {
 		t.Run(scenario.name, func(t *testing.T) {
-			actualLimit := computeListLimit(scenario.opts)
+			actualLimit := ComputeListLimit(scenario.opts)
 			if actualLimit != scenario.expectedLimit {
 				t.Errorf("computeListLimit returned = %v, expected %v", actualLimit, scenario.expectedLimit)
 			}
