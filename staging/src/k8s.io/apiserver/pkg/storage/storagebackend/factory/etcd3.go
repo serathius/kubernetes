@@ -45,6 +45,7 @@ import (
 	utilnet "k8s.io/apimachinery/pkg/util/net"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/apiserver/pkg/features"
 	genericfeatures "k8s.io/apiserver/pkg/features"
 	"k8s.io/apiserver/pkg/server/egressselector"
 	"k8s.io/apiserver/pkg/storage"
@@ -445,6 +446,19 @@ func newETCD3Storage(c storagebackend.ConfigForResource, newFunc, newListFunc fu
 		return nil, nil, err
 	}
 
+	transformer := c.Transformer
+	if transformer == nil {
+		transformer = identity.NewEncryptCheckTransformer()
+	}
+
+	versioner := storage.APIObjectVersioner{}
+	decoder := etcd3.NewDefaultDecoder(c.Codec, versioner)
+
+	if utilfeature.DefaultFeatureGate.Enabled(features.AllowUnsafeMalformedObjectDeletion) {
+		transformer = etcd3.WithCorruptObjErrorHandlingTransformer(transformer)
+		decoder = etcd3.WithCorruptObjErrorHandlingDecoder(decoder)
+	}
+	store := etcd3.New(client, c.Codec, newFunc, newListFunc, c.Prefix, resourcePrefix, c.GroupResource, transformer, c.LeaseManagerConfig, decoder, versioner)
 	var once sync.Once
 	destroyFunc := func() {
 		// we know that storage destroy funcs are called multiple times (due to reuse in subresources).
@@ -453,18 +467,15 @@ func newETCD3Storage(c storagebackend.ConfigForResource, newFunc, newListFunc fu
 		once.Do(func() {
 			stopCompactor()
 			stopDBSizeMonitor()
+			store.Close()
 			client.Close()
 		})
 	}
-	transformer := c.Transformer
-	if transformer == nil {
-		transformer = identity.NewEncryptCheckTransformer()
+	var storeInterface storage.Interface = store
+	if utilfeature.DefaultFeatureGate.Enabled(features.AllowUnsafeMalformedObjectDeletion) {
+		storeInterface = etcd3.NewStoreWithUnsafeCorruptObjectDeletion(store, c.GroupResource)
 	}
-
-	versioner := storage.APIObjectVersioner{}
-	decoder := etcd3.NewDefaultDecoder(c.Codec, versioner)
-	store := etcd3.New(client, c.Codec, newFunc, newListFunc, c.Prefix, resourcePrefix, c.GroupResource, transformer, c.LeaseManagerConfig, decoder, versioner)
-	return store, destroyFunc, nil
+	return storeInterface, destroyFunc, nil
 }
 
 // startDBSizeMonitorPerEndpoint starts a loop to monitor etcd database size and update the

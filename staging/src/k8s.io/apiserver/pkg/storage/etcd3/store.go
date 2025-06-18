@@ -136,21 +136,7 @@ func (a *abortOnFirstError) Aggregate(key string, err error) bool {
 }
 func (a *abortOnFirstError) Err() error { return a.err }
 
-// New returns an etcd3 implementation of storage.Interface.
-func New(c *kubernetes.Client, codec runtime.Codec, newFunc, newListFunc func() runtime.Object, prefix, resourcePrefix string, groupResource schema.GroupResource, transformer value.Transformer, leaseManagerConfig LeaseManagerConfig, decoder Decoder, versioner storage.Versioner) storage.Interface {
-	if utilfeature.DefaultFeatureGate.Enabled(features.AllowUnsafeMalformedObjectDeletion) {
-		transformer = WithCorruptObjErrorHandlingTransformer(transformer)
-		decoder = WithCorruptObjErrorHandlingDecoder(decoder)
-	}
-	var store storage.Interface
-	store = newStore(c, codec, newFunc, newListFunc, prefix, resourcePrefix, groupResource, transformer, leaseManagerConfig, decoder, versioner)
-	if utilfeature.DefaultFeatureGate.Enabled(features.AllowUnsafeMalformedObjectDeletion) {
-		store = NewStoreWithUnsafeCorruptObjectDeletion(store, groupResource)
-	}
-	return store
-}
-
-func newStore(c *kubernetes.Client, codec runtime.Codec, newFunc, newListFunc func() runtime.Object, prefix, resourcePrefix string, groupResource schema.GroupResource, transformer value.Transformer, leaseManagerConfig LeaseManagerConfig, decoder Decoder, versioner storage.Versioner) *store {
+func New(c *kubernetes.Client, codec runtime.Codec, newFunc, newListFunc func() runtime.Object, prefix, resourcePrefix string, groupResource schema.GroupResource, transformer value.Transformer, leaseManagerConfig LeaseManagerConfig, decoder Decoder, versioner storage.Versioner) *store {
 	// for compatibility with etcd2 impl.
 	// no-op for default prefix of '/registry'.
 	// keeps compatibility with etcd2 impl for custom prefixes that don't start with '/'
@@ -194,7 +180,7 @@ func newStore(c *kubernetes.Client, codec runtime.Codec, newFunc, newListFunc fu
 		newListFunc:    newListFunc,
 	}
 	if utilfeature.DefaultFeatureGate.Enabled(features.SizeBasedListCostEstimate) {
-		sizer := newSizeCache()
+		sizer := newSizeCache(s.getKeys)
 		s.sizer = sizer
 		w.sizer = sizer
 	}
@@ -211,6 +197,12 @@ func newStore(c *kubernetes.Client, codec runtime.Codec, newFunc, newListFunc fu
 // Versioner implements storage.Interface.Versioner.
 func (s *store) Versioner() storage.Versioner {
 	return s.versioner
+}
+
+func (s *store) Close() {
+	if s.sizer != nil {
+		s.sizer.Close()
+	}
 }
 
 // Get implements storage.Interface.Get.
@@ -624,18 +616,17 @@ func getNewItemFunc(listObj runtime.Object, v reflect.Value) func() runtime.Obje
 }
 
 func (s *store) Stats(ctx context.Context) (stats storage.Stats, err error) {
-	startTime := time.Now()
 	if s.sizer != nil {
-		resp, err := s.client.KV.Get(ctx, s.pathPrefix, clientv3.WithPrefix(), clientv3.WithKeysOnly())
-		metrics.RecordEtcdRequest("listOnlyKeys", s.groupResource, err, startTime)
+		keys, err := s.getKeys(ctx)
 		if err != nil {
 			return storage.Stats{}, err
 		}
 		return storage.Stats{
-			ObjectCount:                     resp.Count,
-			EstimatedAverageObjectSizeBytes: s.sizer.AverageObjectSize(resp.Kvs),
+			ObjectCount:                     int64(len(keys)),
+			EstimatedAverageObjectSizeBytes: s.sizer.AverageObjectSize(keys),
 		}, nil
 	}
+	startTime := time.Now()
 	count, err := s.client.Kubernetes.Count(ctx, s.pathPrefix, kubernetes.CountOptions{})
 	metrics.RecordEtcdRequest("listWithCount", s.groupResource, err, startTime)
 	if err != nil {
@@ -644,6 +635,16 @@ func (s *store) Stats(ctx context.Context) (stats storage.Stats, err error) {
 	return storage.Stats{
 		ObjectCount: count,
 	}, nil
+}
+
+func (s *store) getKeys(ctx context.Context) ([]*mvccpb.KeyValue, error) {
+	startTime := time.Now()
+	resp, err := s.client.KV.Get(ctx, s.pathPrefix, clientv3.WithPrefix(), clientv3.WithKeysOnly())
+	metrics.RecordEtcdRequest("listOnlyKeys", s.groupResource, err, startTime)
+	if err != nil {
+		return nil, err
+	}
+	return resp.Kvs, nil
 }
 
 // ReadinessCheck implements storage.Interface.

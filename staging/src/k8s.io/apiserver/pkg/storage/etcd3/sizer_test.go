@@ -24,7 +24,7 @@ import (
 )
 
 func TestSizeCache(t *testing.T) {
-	store := newSizeCache()
+	store := newSizeCache(nil)
 	assert.Equal(t, int64(0), store.AverageObjectSize([]*mvccpb.KeyValue{}))
 
 	store.AddOrUpdate("foo1", 2, 10)
