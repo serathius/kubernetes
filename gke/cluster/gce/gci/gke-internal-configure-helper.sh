@@ -565,11 +565,22 @@ EOF
   fi
 }
 
+function gke-setup-containerd-nofile-infinity {
+  local -r CONTAINERD_DROP_IN="/etc/systemd/system/containerd.service.d"
+  local -r nofile_limit_path="${CONTAINERD_DROP_IN}/50-LimitNOFILE-infinity.conf"
+  echo "Generating containerd system drop in config for nofile limit"
+  cat >> "${nofile_limit_path}" <<EOF
+[Service]
+LimitNOFILE=infinity
+EOF
+}
+
 function gke-setup-containerd-drop-in-systemd-config {
   local -r CONTAINERD_DROP_IN="/etc/systemd/system/containerd.service.d"
   mkdir -p "${CONTAINERD_DROP_IN}"
   gke-setup-containerd-gcfs-dependency
   gke-setup-containerd-memlock-limit
+  gke-setup-containerd-nofile-infinity
 }
 
 function gke-setup-containerd {
