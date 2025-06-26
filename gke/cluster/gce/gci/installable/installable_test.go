@@ -52,6 +52,17 @@ func TestInstallableContainerTests(t *testing.T) {
 	}
 }
 
+func TestInstallableAppPkgTests(t *testing.T) {
+	args := fmt.Sprintf("python3 %s --fake AppPkgTests", testPath)
+	cmd := exec.Command("bash", "-c", args)
+
+	result, err := cmd.CombinedOutput()
+	if err != nil {
+		printOutput(t, result)
+		t.Fatalf("Failed to run %q: %v", cmd.Args, err)
+	}
+}
+
 func printOutput(t *testing.T, result []byte) {
 	t.Helper()
 	t.Log("Results.....")

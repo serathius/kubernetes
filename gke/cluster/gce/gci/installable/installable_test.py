@@ -48,7 +48,50 @@ container_content = """{
   }
 }"""
 
+apppkg_fake_content = """{
+"apiVersion": "installable.gke.io/v1",
+"kind": "AppPkg",
+"metadata":{
+  "name": "gke-exec-auth-plugin"
+},
+"os": "linux",
+"arch": "AMD64",
+"version": "1.0.0",
+"remoteURL": "https://storage.googleapis.com/gke-prod-binaries/gke-exec-auth-plugin",
+"digest": "b63f7abcf5d2c195e01619532286d0d68a259839c117e373aa204ab68cda35daa7c703d093dd9cb5a40868496890eee712d02f9cf453063e964a6632814b3d5a",
+"digestAlgo": "sha512",
+"installPrefix": "/tmp/installables/test/kubernetes/bin/",
+"mode": "755"
+}"""
+
+apppkg_content = """{
+"apiVersion": "installable.gke.io/v1",
+"kind": "AppPkg",
+"metadata":{
+  "name": "gke-exec-auth-plugin"
+},
+"os": "linux",
+"arch": "AMD64",
+"version": "1.0.0",
+"remoteURL": "https://storage.googleapis.com/gke-prod-binaries/gke-exec-auth-plugin/internal/gke-internal-branch-v1-33/f3f058859e54db63fd78adecd073be39db348785/linux_amd64/gke-exec-auth-plugin",
+"digest": "1eacaa2fba8d9b993a1777b676aef18c4ab77a9965a2dab95d7e24115a4958161c1f23bd91a45bb6cb7157683ecd20ed4320b2b6eec2b922af59488b4738d037",
+"digestAlgo": "sha512",
+"installPrefix": "/tmp/installables/test/kubernetes/bin/",
+"mode": "755"
+}"""
+
 garbage = 'this_is_garbage'
+
+
+class FakeGCS(installable.GCS):
+  fake_file = b"AppPkg"
+
+  def download(self, gcs_path, install_prefix):
+    os.makedirs(install_prefix, exist_ok=True)
+    file_path = os.path.join(install_prefix, gcs_path.split('/')[-1])
+    with open(file_path, "wb") as file:
+      file.write(self.fake_file)
+    return file_path
 
 class FakeCtr(installable.Ctr):
   """FakeCtr fakes calls to the ctr executable."""
@@ -75,6 +118,38 @@ class FakeCtr(installable.Ctr):
   def run(self, container_name: str, url: str, ctr_args: list, container_args: list) -> subprocess.CompletedProcess:
     return subprocess.CompletedProcess(args='', returncode=0, stdout='')
 
+class AppPkgTests(unittest.TestCase):
+  def setUp(self):
+    super().setUp()
+    inst = json.loads(apppkg_content)
+    apppkg = installable.parse_installable(inst)
+    if apppkg.is_preloaded():
+      os.remove(os.path.join(apppkg.content["installPrefix"], apppkg.get_url().split('/')[-1]))
+
+  def test_parse(self):
+    """Tests that a given appPkg blob parses into a AppPkg object."""
+    inst = installable.parse_installable(json.loads(apppkg_content))
+    self.assertTrue(isinstance(inst, installable.AppPkg))
+    self.assertEqual(inst.name(), 'gke-exec-auth-plugin')
+
+  def test_preload(self):
+    """Tests the download function of the container."""
+    content = apppkg_content
+    if is_fake():
+      content = apppkg_fake_content
+    inst = json.loads(content)
+    with installable.parse_installable(inst) as obj:
+      installable.process_installable(installable=obj, download=True)
+    apppkg = installable.AppPkg(inst)
+    self.assertTrue(apppkg.is_preloaded())
+
+  def test_bad_digest_algo(self):
+    """Tests that a given appPkg blob parses into a AppPkg object."""
+    badInst = json.loads(apppkg_content)
+    badInst['digestAlgo'] = 'garbage'
+    inst = installable.parse_installable(badInst)
+    with self.assertRaisesRegex(ValueError, 'unsupported hash type garbage'):
+        installable.process_installable(installable=inst, download=True)
 
 class ContainerTests(unittest.TestCase):
   """ContainerTests are tests for the "container" kind."""
@@ -259,15 +334,6 @@ class InstallableTests(unittest.TestCase):
       with installable.parse_installable(json.loads(content)):
         pass
 
-  def test_apppkg_not_supported(self):
-    """Tests that apppkg is not a supported kind."""
-    content = """{"kind":"AppPkg",
-	"apiVersion": "installable.gke.io/v1",
-	"metadata":{"name":"my-apppkg"}}"""
-    with self.assertRaisesRegex(installable.InvalidInstallableError, 'Kind AppPkg is not supported for now'):
-      with installable.parse_installable(json.loads(content)):
-        pass
-
   def test_invalid_kind(self):
     """Tests an invalid kind raises an error."""
     content = """{"kind":"invalid kind",
@@ -390,6 +456,7 @@ if __name__ == '__main__':
     def fake_get_creds() -> str:
       return fake_creds
     installable.get_gce_credentials = fake_get_creds
+    installable.gcs = FakeGCS()
 
   unit_argv = sys.argv[:1] + args
   unittest.main(argv=unit_argv)

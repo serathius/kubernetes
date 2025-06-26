@@ -34,6 +34,7 @@ import os
 import subprocess
 import sys
 import urllib3
+import hashlib
 
 INSTALLABLE_NAMESPACE = "installable.gke.io"
 
@@ -132,6 +133,19 @@ class PreloadError(Exception):
 class GetCredentialError(Exception):
   """Error to mark failure to get credentials."""
 
+def validate_checksum(file_path: str, digest_algo: str, digest: str):
+  hasher = hashlib.new(digest_algo)
+
+  with open(file_path, "rb") as file:
+    # Read the file in chunks so that large files are not loaded into memory.
+    for chunk in iter(lambda: file.read(4096), b""):
+      hasher.update(chunk)
+
+  on_disk_digest = hasher.hexdigest()
+
+  if on_disk_digest != digest:
+    raise ValueError(f"Got {digest_algo} checksum: {on_disk_digest}; want: {digest}")
+
 def get_gce_credentials() -> str:
   """get_gce_credentials returns the credentials by querying the metadata server."""
   service_account_url = 'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token'
@@ -149,6 +163,47 @@ def get_gce_credentials() -> str:
       raise GetCredentialError(f'Failed to get credentials: status: {response.status} reason: {response.reason}')
     data = response.data.decode('utf-8')
     return json.loads(data)['access_token']
+
+class GCS:
+  def download(self, gcs_path: str, install_prefix: str) -> str:
+    if not gcs_path.startswith('https://storage.googleapis.com'):
+      raise ValueError(f"GCS path {gcs_path} must start with https://storage.googleapis.com")
+
+    if not install_prefix:
+      raise ValueError(f"install_prefix cannot be empty.")
+
+    file_name = os.path.join(install_prefix, gcs_path.split('/')[-1])
+
+    retry = urllib3.Retry(
+      total=5,
+      backoff_factor=0.5
+    )
+
+    with urllib3.PoolManager(
+      retries=retry,
+      timeout=urllib3.Timeout(connect=10.0, read=300.0)
+    ) as http:
+      try:
+          credentials = get_gce_credentials()
+
+          headers = {}
+          headers['Authorization'] = f'Bearer {credentials}'
+
+          os.makedirs(install_prefix, exist_ok=True)
+
+          response = http.request('GET', gcs_path, headers=headers)
+          if response.status != 200:
+            raise GetCredentialError(f'Failed to get file from GCS: status: {response.status} reason: {response.reason}')
+
+          with open(file_name, 'wb') as f:
+              f.write(response.data)
+
+          return file_name
+
+      except Exception as e:
+          if os.path.exists(file_name):
+              os.remove(file_name)
+          raise
 
 class Ctr:
 
@@ -227,6 +282,7 @@ class Ctr:
     )
 
 ctr = Ctr()
+gcs = GCS()
 
 class Installable:
   """Installable is the parent class for all installables."""
@@ -263,8 +319,58 @@ class Installable:
   def digest_algo(self) -> str:
     return self.content['digestAlgo']
 
-  def get_url(self):
+  def get_url(self) -> str:
     raise NotImplementedError()
+
+class AppPkg(Installable):
+  """An AppPkg kind installable.
+
+  AppPkg is an installable backed by a file stored in GCS.
+  """
+
+  def download(self):
+    """Downloads the underlying file using gcs."""
+    file_path: str = ""
+    try:
+      file_path = gcs.download(self.get_url(), self.get_install_prefix())
+      validate_checksum(file_path, self.digest_algo(), self.digest())
+      os.chmod(file_path, self.get_mode())
+    except Exception as e:
+      if file_path and os.path.exists(file_path):
+        os.remove(file_path)
+      raise
+
+  def is_preloaded(self) -> bool:
+    """Check if the same file exists on disk."""
+    try:
+      file_path = os.path.join(self.get_install_prefix(), self.get_url().split('/')[-1])
+      validate_checksum(file_path, self.digest_algo(), self.digest())
+      return True
+    except Exception as e:
+      return False
+
+  def get_install_prefix(self) -> str:
+    """Return the installPrefix string for the AppPkg"""
+
+    return self.content['installPrefix']
+
+  def get_mode(self) -> int:
+    """Returns the mode. If not set we use the default 0755."""
+
+    if 'mode' in self.content:
+      return int(self.content['mode'], 8)
+
+    return 0o755
+
+  def get_url(self) -> str:
+    """Return the URL string for this AppPkg."""
+
+    # For AppPkgs, this is of the form: gs://<bucket-name>/path/to/file.
+    return self.content['remoteURL']
+
+  def run(self, is_preloader=False):
+    """Run for AppPkgs is a noop"""
+    return
 
 class Container(Installable):
   """A container kind installable.
@@ -325,9 +431,8 @@ def parse_installable(inst: dict) -> Installable:
   kind = inst['kind'].lower()
   if kind == 'container':
     return Container(inst)
-  # AppPkgs will be removed as they'll require some more work.
   if kind == 'apppkg':
-    raise InvalidInstallableError('Kind AppPkg is not supported for now')
+    return AppPkg(inst)
   raise InvalidInstallableError(f'Unknown installable type: {kind}')
 
 def process_installable(installable: Installable=None, download: bool=False, is_preloader=False):
