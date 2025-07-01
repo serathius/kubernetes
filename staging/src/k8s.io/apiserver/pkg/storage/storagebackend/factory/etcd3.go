@@ -382,20 +382,17 @@ func startCompactorOnce(c storagebackend.TransportConfig, interval time.Duration
 	}
 	key := fmt.Sprintf("%v", c) // gives: {[server1 server2] keyFile certFile caFile}
 	if ref, foundBefore := compactors[key]; !foundBefore || ref.compactor.Interval() > interval {
-		client, err := newETCD3Client(c)
-		if err != nil {
-			return nil, err
-		}
 		if foundBefore {
-			// replace compactor
-			ref.compactor.Stop()
+			ref.compactor.SetInterval(interval)
 		} else {
-			// start new compactor
+			client, err := newETCD3Client(c)
+			if err != nil {
+				return nil, err
+			}
 			ref = &compactorReferenceCounter{}
+			ref.compactor = etcd3.StartCompactor(client.Client, interval)
 			compactors[key] = ref
 		}
-
-		ref.compactor = etcd3.StartCompactor(client.Client, interval)
 	}
 
 	compactors[key].counter++
