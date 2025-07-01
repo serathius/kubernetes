@@ -32,18 +32,18 @@ const (
 
 var (
 	endpointsMapMu sync.Mutex
-	endpointsMap   map[string]*Compactor
+	endpointsMap   map[string]*compactor
 )
 
 func init() {
-	endpointsMap = make(map[string]*Compactor)
+	endpointsMap = make(map[string]*compactor)
 }
 
 // StartCompactor starts a compactor in the background to compact old version of keys that's not needed.
 // By default, we save the most recent 5 minutes data and compact versions > 5minutes ago.
 // It should be enough for slow watchers and to tolerate burst.
 // TODO: We might keep a longer history (12h) in the future once storage API can take advantage of past version of keys.
-func StartCompactor(client *clientv3.Client, compactInterval time.Duration) *Compactor {
+func StartCompactor(client *clientv3.Client, compactInterval time.Duration) Compactor {
 	endpointsMapMu.Lock()
 	defer endpointsMapMu.Unlock()
 
@@ -65,9 +65,9 @@ func StartCompactor(client *clientv3.Client, compactInterval time.Duration) *Com
 	return c
 }
 
-func newCompactor(client *clientv3.Client, compactInterval time.Duration) *Compactor {
+func newCompactor(client *clientv3.Client, compactInterval time.Duration) *compactor {
 	ctx, cancel := context.WithCancel(context.Background())
-	c := &Compactor{
+	c := &compactor{
 		client:   client,
 		interval: compactInterval,
 		cancel:   cancel,
@@ -83,7 +83,13 @@ func newCompactor(client *clientv3.Client, compactInterval time.Duration) *Compa
 	return c
 }
 
-type Compactor struct {
+type Compactor interface {
+	Stop()
+	Interval() time.Duration
+	UpdateMinInterval(interval time.Duration)
+}
+
+type compactor struct {
 	client *clientv3.Client
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -92,22 +98,25 @@ type Compactor struct {
 	interval time.Duration
 }
 
-func (c *Compactor) Stop() {
+func (c *compactor) Stop() {
 	c.cancel()
 	c.client.Close()
 	c.wg.Wait()
 }
 
-func (c *Compactor) Interval() time.Duration {
+func (c *compactor) Interval() time.Duration {
 	c.mux.Lock()
 	defer c.mux.Unlock()
 	return c.interval
 }
 
-func (c *Compactor) SetInterval(interval time.Duration) {
+func (c *compactor) UpdateMinInterval(interval time.Duration) {
+	if interval <= 0 {
+		return
+	}
 	c.mux.Lock()
 	defer c.mux.Unlock()
-	c.interval = interval
+	c.interval = min(c.interval, interval)
 }
 
 // compactor periodically compacts historical versions of keys in etcd.
@@ -115,7 +124,7 @@ func (c *Compactor) SetInterval(interval time.Duration) {
 // In other words, after compaction, it will only contain keys set during last interval.
 // Any API call for the older versions of keys will return error.
 // Interval is the time interval between each compaction. The first compaction happens after "interval".
-func (c *Compactor) runCompactLoop(ctx context.Context) {
+func (c *compactor) runCompactLoop(ctx context.Context) {
 	// Technical definitions:
 	// We have a special key in etcd defined as *compactRevKey*.
 	// compactRevKey's value will be set to the string of last compacted revision.

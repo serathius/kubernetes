@@ -355,9 +355,32 @@ var newETCD3Client = func(c storagebackend.TransportConfig) (*kubernetes.Client,
 	return kubernetes.New(cfg)
 }
 
+func newCompactorReferenceCounter(key string, client *clientv3.Client, interval time.Duration) *compactorReferenceCounter {
+	ref := &compactorReferenceCounter{
+		key:       key,
+		Compactor: etcd3.StartCompactor(client, interval),
+		counter:   1,
+	}
+	compactors[key] = ref
+	return ref
+}
+
 type compactorReferenceCounter struct {
-	compactor *etcd3.Compactor
-	counter   int
+	etcd3.Compactor
+	key     string
+	counter int
+}
+
+func (c *compactorReferenceCounter) Stop() {
+	compactorsMu.Lock()
+	defer compactorsMu.Unlock()
+
+	c.counter--
+	if c.counter == 0 {
+		c.Compactor.Stop()
+		delete(compactors, c.key)
+	}
+
 }
 
 var (
@@ -372,53 +395,40 @@ var (
 // startCompactorOnce start one compactor per transport. If the interval get smaller on repeated calls, the
 // compactor is replaced. A destroy func is returned. If all destroy funcs with the same transport are called,
 // the compactor is stopped.
-func startCompactorOnce(c storagebackend.TransportConfig, interval time.Duration) (func(), error) {
+func startCompactorOnce(c storagebackend.TransportConfig, interval time.Duration) (etcd3.Compactor, error) {
 	compactorsMu.Lock()
 	defer compactorsMu.Unlock()
 
 	if interval == 0 {
 		// short circuit, if the compaction request from apiserver is disabled
-		return func() {}, nil
+		return nil, nil
 	}
 	key := fmt.Sprintf("%v", c) // gives: {[server1 server2] keyFile certFile caFile}
-	if ref, foundBefore := compactors[key]; !foundBefore || ref.compactor.Interval() > interval {
-		if foundBefore {
-			ref.compactor.SetInterval(interval)
-		} else {
-			client, err := newETCD3Client(c)
-			if err != nil {
-				return nil, err
-			}
-			ref = &compactorReferenceCounter{}
-			ref.compactor = etcd3.StartCompactor(client.Client, interval)
-			compactors[key] = ref
+	ref, foundBefore := compactors[key]
+	if foundBefore {
+		ref.UpdateMinInterval(interval)
+		ref.counter++
+	} else if !foundBefore {
+		client, err := newETCD3Client(c)
+		if err != nil {
+			return nil, err
 		}
+		ref = newCompactorReferenceCounter(key, client.Client, interval)
 	}
-
-	compactors[key].counter++
-
-	return func() {
-		compactorsMu.Lock()
-		defer compactorsMu.Unlock()
-
-		ref := compactors[key]
-		ref.counter--
-		if ref.counter == 0 {
-			ref.compactor.Stop()
-			delete(compactors, key)
-		}
-	}, nil
+	return ref, nil
 }
 
 func newETCD3Storage(c storagebackend.ConfigForResource, newFunc, newListFunc func() runtime.Object, resourcePrefix string) (storage.Interface, DestroyFunc, error) {
-	stopCompactor, err := startCompactorOnce(c.Transport, c.CompactionInterval)
+	compactor, err := startCompactorOnce(c.Transport, c.CompactionInterval)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	client, err := newETCD3Client(c.Transport)
 	if err != nil {
-		stopCompactor()
+		if compactor != nil {
+			compactor.Stop()
+		}
 		return nil, nil, err
 	}
 
@@ -449,7 +459,9 @@ func newETCD3Storage(c storagebackend.ConfigForResource, newFunc, newListFunc fu
 		// Hence, we only destroy once.
 		// TODO: fix duplicated storage destroy calls higher level
 		once.Do(func() {
-			stopCompactor()
+			if compactor != nil {
+				compactor.Stop()
+			}
 			stopDBSizeMonitor()
 			store.Close()
 			_ = client.Close()
