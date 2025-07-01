@@ -355,17 +355,15 @@ var newETCD3Client = func(c storagebackend.TransportConfig) (*kubernetes.Client,
 	return kubernetes.New(cfg)
 }
 
-type runningCompactor struct {
-	interval time.Duration
-	cancel   context.CancelFunc
-	client   *clientv3.Client
-	refs     int
+type compactorReferenceCounter struct {
+	compactor *etcd3.Compactor
+	counter   int
 }
 
 var (
 	// compactorsMu guards access to compactors map
 	compactorsMu sync.Mutex
-	compactors   = map[string]*runningCompactor{}
+	compactors   = map[string]*compactorReferenceCounter{}
 	// dbMetricsMonitorsMu guards access to dbMetricsMonitors map
 	dbMetricsMonitorsMu sync.Mutex
 	dbMetricsMonitors   map[string]struct{}
@@ -383,43 +381,33 @@ func startCompactorOnce(c storagebackend.TransportConfig, interval time.Duration
 		return func() {}, nil
 	}
 	key := fmt.Sprintf("%v", c) // gives: {[server1 server2] keyFile certFile caFile}
-	if compactor, foundBefore := compactors[key]; !foundBefore || compactor.interval > interval {
+	if ref, foundBefore := compactors[key]; !foundBefore || ref.compactor.Interval() > interval {
 		client, err := newETCD3Client(c)
 		if err != nil {
 			return nil, err
 		}
-		compactorClient := client.Client
-
 		if foundBefore {
 			// replace compactor
-			compactor.cancel()
-			compactor.client.Close()
+			ref.compactor.Stop()
 		} else {
 			// start new compactor
-			compactor = &runningCompactor{}
-			compactors[key] = compactor
+			ref = &compactorReferenceCounter{}
+			compactors[key] = ref
 		}
 
-		ctx, cancel := context.WithCancel(context.Background())
-
-		compactor.interval = interval
-		compactor.cancel = cancel
-		compactor.client = compactorClient
-
-		etcd3.StartCompactor(ctx, compactorClient, interval)
+		ref.compactor = etcd3.StartCompactor(client.Client, interval)
 	}
 
-	compactors[key].refs++
+	compactors[key].counter++
 
 	return func() {
 		compactorsMu.Lock()
 		defer compactorsMu.Unlock()
 
-		compactor := compactors[key]
-		compactor.refs--
-		if compactor.refs == 0 {
-			compactor.cancel()
-			compactor.client.Close()
+		ref := compactors[key]
+		ref.counter--
+		if ref.counter == 0 {
+			ref.compactor.Stop()
 			delete(compactors, key)
 		}
 	}, nil
