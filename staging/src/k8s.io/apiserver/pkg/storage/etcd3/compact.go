@@ -84,10 +84,12 @@ func newCompactor(client *clientv3.Client, compactInterval time.Duration) *Compa
 }
 
 type Compactor struct {
-	client   *clientv3.Client
+	client *clientv3.Client
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+
+	mux      sync.Mutex
 	interval time.Duration
-	cancel   context.CancelFunc
-	wg       sync.WaitGroup
 }
 
 func (c *Compactor) Stop() {
@@ -97,7 +99,15 @@ func (c *Compactor) Stop() {
 }
 
 func (c *Compactor) Interval() time.Duration {
+	c.mux.Lock()
+	defer c.mux.Unlock()
 	return c.interval
+}
+
+func (c *Compactor) SetInterval(interval time.Duration) {
+	c.mux.Lock()
+	defer c.mux.Unlock()
+	c.interval = interval
 }
 
 // compactor periodically compacts historical versions of keys in etcd.
@@ -150,7 +160,7 @@ func (c *Compactor) runCompactLoop(ctx context.Context) {
 	var err error
 	for {
 		select {
-		case <-time.After(c.interval):
+		case <-time.After(c.Interval()):
 		case <-ctx.Done():
 			return
 		}
