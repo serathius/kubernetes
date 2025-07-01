@@ -32,36 +32,72 @@ const (
 
 var (
 	endpointsMapMu sync.Mutex
-	endpointsMap   map[string]struct{}
+	endpointsMap   map[string]*Compactor
 )
 
 func init() {
-	endpointsMap = make(map[string]struct{})
+	endpointsMap = make(map[string]*Compactor)
 }
 
 // StartCompactor starts a compactor in the background to compact old version of keys that's not needed.
 // By default, we save the most recent 5 minutes data and compact versions > 5minutes ago.
 // It should be enough for slow watchers and to tolerate burst.
 // TODO: We might keep a longer history (12h) in the future once storage API can take advantage of past version of keys.
-func StartCompactor(ctx context.Context, client *clientv3.Client, compactInterval time.Duration) {
+func StartCompactor(client *clientv3.Client, compactInterval time.Duration) *Compactor {
 	endpointsMapMu.Lock()
 	defer endpointsMapMu.Unlock()
 
 	// In one process, we can have only one compactor for one cluster.
 	// Currently we rely on endpoints to differentiate clusters.
 	for _, ep := range client.Endpoints() {
-		if _, ok := endpointsMap[ep]; ok {
+		if c, ok := endpointsMap[ep]; ok {
 			klog.V(4).Infof("compactor already exists for endpoints %v", client.Endpoints())
-			return
+			return c
 		}
 	}
+	if compactInterval == 0 {
+		return nil
+	}
+	c := newCompactor(client, compactInterval)
 	for _, ep := range client.Endpoints() {
-		endpointsMap[ep] = struct{}{}
+		endpointsMap[ep] = c
 	}
+	return c
+}
 
-	if compactInterval != 0 {
-		go compactor(ctx, client, compactInterval)
+func newCompactor(client *clientv3.Client, compactInterval time.Duration) *Compactor {
+	ctx, cancel := context.WithCancel(context.Background())
+	c := &Compactor{
+		client:   client,
+		interval: compactInterval,
+		cancel:   cancel,
 	}
+	for _, ep := range client.Endpoints() {
+		endpointsMap[ep] = c
+	}
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+		c.runCompactLoop(ctx)
+	}()
+	return c
+}
+
+type Compactor struct {
+	client   *clientv3.Client
+	interval time.Duration
+	cancel   context.CancelFunc
+	wg       sync.WaitGroup
+}
+
+func (c *Compactor) Stop() {
+	c.cancel()
+	c.client.Close()
+	c.wg.Wait()
+}
+
+func (c *Compactor) Interval() time.Duration {
+	return c.interval
 }
 
 // compactor periodically compacts historical versions of keys in etcd.
@@ -69,7 +105,7 @@ func StartCompactor(ctx context.Context, client *clientv3.Client, compactInterva
 // In other words, after compaction, it will only contain keys set during last interval.
 // Any API call for the older versions of keys will return error.
 // Interval is the time interval between each compaction. The first compaction happens after "interval".
-func compactor(ctx context.Context, client *clientv3.Client, interval time.Duration) {
+func (c *Compactor) runCompactLoop(ctx context.Context) {
 	// Technical definitions:
 	// We have a special key in etcd defined as *compactRevKey*.
 	// compactRevKey's value will be set to the string of last compacted revision.
@@ -114,14 +150,14 @@ func compactor(ctx context.Context, client *clientv3.Client, interval time.Durat
 	var err error
 	for {
 		select {
-		case <-time.After(interval):
+		case <-time.After(c.interval):
 		case <-ctx.Done():
 			return
 		}
 
-		compactTime, rev, err = compact(ctx, client, compactTime, rev)
+		compactTime, rev, err = compact(ctx, c.client, compactTime, rev)
 		if err != nil {
-			klog.Errorf("etcd: endpoint (%v) compact failed: %v", client.Endpoints(), err)
+			klog.Errorf("etcd: endpoint (%v) compact failed: %v", c.client.Endpoints(), err)
 			continue
 		}
 	}
