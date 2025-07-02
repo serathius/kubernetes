@@ -40,7 +40,7 @@ func TestCompact(t *testing.T) {
 		t.Fatalf("Put failed: %v", err)
 	}
 
-	_, _, err = compact(ctx, client, 0, putResp1.Header.Revision)
+	_, _, _, err = compact(ctx, client, 0, putResp1.Header.Revision)
 	if err != nil {
 		t.Fatalf("compact failed: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestCompactConflict(t *testing.T) {
 	}
 
 	// Compact first. It would do the compaction and return compact time which is incremented by 1.
-	curTime, _, err := compact(ctx, client, 0, putResp.Header.Revision)
+	curTime, _, _, err := compact(ctx, client, 0, putResp.Header.Revision)
 	if err != nil {
 		t.Fatalf("compact failed: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestCompactConflict(t *testing.T) {
 	}
 
 	// Compact again with the same parameters. It won't do compaction but return the latest compact time.
-	curTime2, _, err := compact(ctx, client, 0, putResp.Header.Revision)
+	curTime2, _, _, err := compact(ctx, client, 0, putResp.Header.Revision)
 	if err != nil {
 		t.Fatalf("compact failed: %v", err)
 	}
