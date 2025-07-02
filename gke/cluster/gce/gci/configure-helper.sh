@@ -1274,49 +1274,8 @@ EOF
 EOF
 
     if [[ "${ADMISSION_CONTROL:-}" == *"ImagePolicyWebhook"* ]]; then
-      if [[ -z "${GCP_IMAGE_VERIFICATION_URL:-}" ]]; then
-        1>&2 echo "The ImagePolicyWebhook admission control plugin was requested, but GCP_IMAGE_VERIFICATION_URL was not provided."
-        exit 1
-      fi
-
-      1>&2 echo "ImagePolicyWebhook admission control plugin requested.  Configuring it to point at ${GCP_IMAGE_VERIFICATION_URL}"
-
-      # ImagePolicyWebhook does not use gke-exec-auth-plugin for authenticating
-      # to the webhook endpoint.  Emit its special kubeconfig.
-      ensure-exec-auth-config
-      cat <<EOF >/etc/srv/kubernetes/gcp_image_review.kubeconfig
-clusters:
-  - name: gcp-image-review-server
-    cluster:
-      server: ${GCP_IMAGE_VERIFICATION_URL}
-users:
-  - name: kube-apiserver
-    user:
-      exec:
-        apiVersion: "client.authentication.k8s.io/v1beta1"
-        command: /usr/bin/gke-exec-auth-plugin
-        args:
-        - --mode=vm-token
-current-context: webhook
-contexts:
-- context:
-    cluster: gcp-image-review-server
-    user: kube-apiserver
-  name: webhook
-EOF
-
-      # Append config for ImagePolicyWebhook to the shared admission controller
-      # configuration file.
-      cat <<EOF >>/etc/srv/kubernetes/admission_controller_config.yaml
-- name: ImagePolicyWebhook
-  configuration:
-    imagePolicy:
-      kubeConfigFile: /etc/srv/kubernetes/gcp_image_review.kubeconfig
-      allowTTL: 30
-      denyTTL: 30
-      retryBackoff: 500
-      defaultAllow: true
-EOF
+      1>&2 echo "ImagePolicyWebhook admission control plugin is not supported."
+      exit 1
     fi
 
     # If GKE exec auth for webhooks has been requested, then
