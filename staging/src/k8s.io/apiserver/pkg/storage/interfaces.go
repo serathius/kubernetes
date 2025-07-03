@@ -271,6 +271,8 @@ type Interface interface {
 	// SetKeysFunc allows to override the function used to get keys from storage.
 	// This allows to replace default function that fetches keys from storage with one using cache.
 	SetKeysFunc(KeysFunc)
+
+	CompactRevision() int64
 }
 
 // KeysFunc is a function prototype to fetch keys from storage.
