@@ -35,6 +35,7 @@ function generate_namespaced() {
 
   local vm_name
   vm_name="sysctl-test-vm-$(uuidgen)"
+  local vm_hostname="nic0.${vm_name}.${zone}.c.${project}.internal.gcpnode.com"
 
   msg "Starting ${vm_name}..."
   gcloud compute instances create "${vm_name}" \
@@ -46,25 +47,27 @@ function generate_namespaced() {
   echo "Waiting for ${vm_name} to start..."
   sleep 60
 
+  # If you fail to scp/ssh to the GCE VM with the hostname, replace hostname with the flag "-o ProxyCommand='corp-ssh-helper %h %p'"
+  # Reference: go/gce-ssh-beyondcorp-comments
   msg "Copying generate_namespaced.py script to ${vm_name}"
   gcloud compute scp "${git_root}/gke/cluster/gce/gci/sysctl-internal/update-namespaced-sysctls/generate_namespaced.py" "${vm_name}:/tmp" \
     --project="${project}" \
     --zone="${zone}" \
-    --scp-flag "-o ProxyCommand=corp-ssh-helper %h %p"
+    --scp-flag "-o Hostname=${vm_hostname}"
 
   msg "Running generate_namespaced.py script on ${vm_name}"
   gcloud compute ssh "${vm_name}" \
     --project="${project}" \
     --zone="${zone}" \
     --command="python3 /tmp/generate_namespaced.py --out-file=/tmp/namespaced_sysctsl.yaml" \
-    -- -o ProxyCommand='corp-ssh-helper %h %p'
+    -- -o Hostname="${vm_hostname}"
 
   local local_out_path="/tmp/namespaced_sysctls_${vm_name}.yaml"
   msg "Copying generate_namespaced.py output to ${local_out_path}"
   gcloud compute scp "${vm_name}:/tmp/namespaced_sysctsl.yaml" "${local_out_path}" \
     --project="${project}" \
     --zone="${zone}" \
-    --scp-flag "-o ProxyCommand=corp-ssh-helper %h %p"
+    --scp-flag "-o Hostname=${vm_hostname}"
 
   msg "Deleting ${vm_name}"
   gcloud compute instances delete "${vm_name}" \
