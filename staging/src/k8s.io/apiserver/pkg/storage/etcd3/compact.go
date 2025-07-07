@@ -18,6 +18,7 @@ package etcd3
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"sync"
 	"time"
@@ -79,6 +80,10 @@ func newCompactor(client *clientv3.Client, compactInterval time.Duration) *compa
 	go func() {
 		defer c.wg.Done()
 		c.runCompactLoop(ctx)
+	}()
+	go func() {
+		defer c.wg.Done()
+		c.runWatchLoop(ctx)
 	}()
 	return c
 }
@@ -234,4 +239,66 @@ func compact(ctx context.Context, client *clientv3.Client, expectVersion, rev in
 	}
 	klog.V(4).Infof("etcd: compacted rev (%d), endpoints (%v)", rev, client.Endpoints())
 	return currentVersion, currentRev, rev, nil
+}
+
+func (c *compactor) runWatchLoop(ctx context.Context) {
+	for {
+		select {
+		case <-time.After(time.Second):
+		case <-ctx.Done():
+			return
+		}
+		compactRev, currentRev, err := c.getCompactRev(ctx)
+		if err != nil {
+			klog.Errorf("etcd: endpoint (%v): %v", c.client.Endpoints(), err)
+			continue
+		}
+		if compactRev != 0 {
+			c.updateCompactRevision(compactRev)
+		}
+		watch := c.client.Watch(ctx, compactRevKey, clientv3.WithRev(currentRev))
+		for resp := range watch {
+			compactRev, err := c.fromWatchResponse(resp)
+			if err != nil {
+				klog.Errorf("etcd: endpoint (%v): %v", c.client.Endpoints(), err)
+				continue
+			}
+			if compactRev != 0 {
+				c.updateCompactRevision(compactRev)
+			}
+		}
+	}
+}
+
+func (c *compactor) getCompactRev(ctx context.Context) (compactRev int64, currentRev int64, err error) {
+	resp, err := c.client.Get(ctx, compactRevKey)
+	if err != nil {
+		return compactRev, currentRev, fmt.Errorf("get %q failed: %v", compactRevKey, err)
+	}
+	if len(resp.Kvs) != 0 {
+		compactRev, err = strconv.ParseInt(string(resp.Kvs[0].Value), 10, 64)
+		if err != nil {
+			return compactRev, currentRev, fmt.Errorf("failed to parse compact revision: %v", err)
+		}
+	}
+	if resp.Header == nil {
+		return compactRev, currentRev, fmt.Errorf("empty response header")
+	}
+	currentRev = resp.Header.Revision
+	return compactRev, currentRev, nil
+}
+
+func (c *compactor) fromWatchResponse(resp clientv3.WatchResponse) (compactRev int64, err error) {
+	if resp.Err() != nil {
+		return compactRev, resp.Err()
+	}
+	if len(resp.Events) == 0 {
+		return compactRev, nil
+	}
+	lastEvent := resp.Events[len(resp.Events)-1]
+	compactRev, err = strconv.ParseInt(string(lastEvent.Kv.Value), 10, 64)
+	if err != nil {
+		return compactRev, fmt.Errorf("failed to parse compact revision: %v", err)
+	}
+	return compactRev, nil
 }
