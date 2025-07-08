@@ -137,8 +137,8 @@ func (d *dummyStorage) getRequestWatchProgressCounter() int {
 	return d.requestWatchProgressCounter
 }
 
-func (d *dummyStorage) CompactRevision() int64 {
-	return 0
+func (d *dummyStorage) WaitCompaction(ctx context.Context, rev uint64) (uint64, error) {
+	return 0, nil
 }
 
 type dummyWatch struct {

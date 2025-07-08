@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	clientv3 "go.etcd.io/etcd/client/v3"
 
@@ -59,9 +60,12 @@ func newEtcdTestStorage(t testing.TB, prefix string) (*etcd3testing.EtcdTestServ
 	server, _ := etcd3testing.NewUnsecuredEtcd3TestClientServer(t)
 	versioner := storage.APIObjectVersioner{}
 	codec := apitesting.TestCodec(codecs, examplev1.SchemeGroupVersion)
+	compactor := etcd3.StartCompactor(server.V3Client.Client, time.Hour)
+	t.Cleanup(compactor.Stop)
+
 	storage := etcd3.New(
 		server.V3Client,
-		nil,
+		compactor,
 		codec,
 		newPod,
 		newPodList,
@@ -133,9 +137,12 @@ func compactStore(c *CacheDelegator, client *clientv3.Client) storagetesting.Com
 			t.Fatal(err)
 		}
 		if _, err := client.Compact(ctx, int64(rv)); err != nil {
-			t.Fatalf("Unable to compact, %v", err)
+			t.Fatalf("Unable to compact etcd, %v", err)
 		}
-		c.cacher.watchCache.Compact(int64(rv))
+
+		if _, err := c.cacher.compactor.waitForCompactionAndCompactCacher(ctx, rv); err != nil {
+			t.Fatalf("Unable to compact cacher, %v", err)
+		}
 	}
 }
 

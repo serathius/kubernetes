@@ -908,9 +908,9 @@ func (e *Etcd) startHandler(handler func() error) {
 }
 
 func (e *Etcd) errHandler(err error) {
-	if err != nil {
-		e.GetLogger().Error("setting up serving from embedded etcd failed.", zap.Error(err))
-	}
+	// if err != nil {
+	// 	e.GetLogger().Error("setting up serving from embedded etcd failed.", zap.Error(err))
+	// }
 	select {
 	case <-e.stopc:
 		return

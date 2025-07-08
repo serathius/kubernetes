@@ -56,9 +56,6 @@ func StartCompactor(client *clientv3.Client, compactInterval time.Duration) Comp
 			return c
 		}
 	}
-	if compactInterval == 0 {
-		return nil
-	}
 	c := newCompactor(client, compactInterval)
 	for _, ep := range client.Endpoints() {
 		endpointsMap[ep] = c
@@ -73,6 +70,7 @@ func newCompactor(client *clientv3.Client, compactInterval time.Duration) *compa
 		interval: compactInterval,
 		cancel:   cancel,
 	}
+	c.cond = sync.NewCond(&c.mux)
 	for _, ep := range client.Endpoints() {
 		endpointsMap[ep] = c
 	}
@@ -81,6 +79,7 @@ func newCompactor(client *clientv3.Client, compactInterval time.Duration) *compa
 		defer c.wg.Done()
 		c.runCompactLoop(ctx)
 	}()
+	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
 		c.runWatchLoop(ctx)
@@ -92,7 +91,7 @@ type Compactor interface {
 	Stop()
 	Interval() time.Duration
 	UpdateMinInterval(interval time.Duration)
-	CompactRevision() int64
+	WaitCompaction(context.Context, uint64) (uint64, error)
 }
 
 type compactor struct {
@@ -101,14 +100,29 @@ type compactor struct {
 	wg     sync.WaitGroup
 
 	mux             sync.Mutex
-	compactRevision int64
+	cond            *sync.Cond
+	compactRevision uint64
 	interval        time.Duration
+	stopped         bool
 }
 
 func (c *compactor) Stop() {
 	c.cancel()
 	c.client.Close()
 	c.wg.Wait()
+	func() {
+		c.mux.Lock()
+		defer c.mux.Unlock()
+		c.stopped = true
+		c.cond.Signal()
+	}()
+	func() {
+		endpointsMapMu.Lock()
+		defer endpointsMapMu.Unlock()
+		for _, ep := range c.client.Endpoints() {
+			delete(endpointsMap, ep)
+		}
+	}()
 }
 
 func (c *compactor) Interval() time.Duration {
@@ -126,16 +140,37 @@ func (c *compactor) UpdateMinInterval(interval time.Duration) {
 	c.interval = min(c.interval, interval)
 }
 
-func (c *compactor) CompactRevision() int64 {
+func (c *compactor) WaitCompaction(ctx context.Context, rev uint64) (uint64, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go func() {
+		<-ctx.Done()
+		// TODO: Not wake up everyone
+		c.cond.Signal()
+	}()
 	c.mux.Lock()
 	defer c.mux.Unlock()
-	return c.compactRevision
+	for {
+		select {
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		default:
+		}
+		if c.compactRevision >= rev || c.stopped {
+			break
+		}
+		c.cond.Wait()
+	}
+	return c.compactRevision, nil
 }
 
-func (c *compactor) updateCompactRevision(rev int64) {
+func (c *compactor) updateCompactRevision(rev uint64) {
 	c.mux.Lock()
 	defer c.mux.Unlock()
-	c.compactRevision = max(c.compactRevision, rev)
+	if rev > c.compactRevision {
+		c.compactRevision = rev
+		c.cond.Broadcast()
+	}
 }
 
 // compactor periodically compacts historical versions of keys in etcd.
@@ -185,7 +220,7 @@ func (c *compactor) runCompactLoop(ctx context.Context) {
 
 	var previousVersion int64
 	var previousRev int64
-	var compactRev int64
+	var compactRev uint64
 	var err error
 	for {
 		select {
@@ -206,7 +241,7 @@ func (c *compactor) runCompactLoop(ctx context.Context) {
 // compact compacts etcd store and returns current rev.
 // It will return the current compact time and global revision if no error occurred.
 // Note that CAS fail will not incur any error.
-func compact(ctx context.Context, client *clientv3.Client, expectVersion, rev int64) (currentVersion, currentRev, compactRev int64, err error) {
+func compact(ctx context.Context, client *clientv3.Client, expectVersion, rev int64) (currentVersion, currentRev int64, compactRev uint64, err error) {
 	resp, err := client.KV.Txn(ctx).If(
 		clientv3.Compare(clientv3.Version(compactRevKey), "=", expectVersion),
 	).Then(
@@ -222,7 +257,7 @@ func compact(ctx context.Context, client *clientv3.Client, expectVersion, rev in
 
 	if !resp.Succeeded {
 		currentVersion = resp.Responses[0].GetResponseRange().Kvs[0].Version
-		compactRev, err = strconv.ParseInt(string(resp.Responses[0].GetResponseRange().Kvs[0].Value), 10, 64)
+		compactRev, err = strconv.ParseUint(string(resp.Responses[0].GetResponseRange().Kvs[0].Value), 10, 64)
 		if err != nil {
 			return currentVersion, currentRev, 0, nil
 		}
@@ -238,7 +273,7 @@ func compact(ctx context.Context, client *clientv3.Client, expectVersion, rev in
 		return currentVersion, currentRev, 0, err
 	}
 	klog.V(4).Infof("etcd: compacted rev (%d), endpoints (%v)", rev, client.Endpoints())
-	return currentVersion, currentRev, rev, nil
+	return currentVersion, currentRev, uint64(rev), nil
 }
 
 func (c *compactor) runWatchLoop(ctx context.Context) {
@@ -270,13 +305,13 @@ func (c *compactor) runWatchLoop(ctx context.Context) {
 	}
 }
 
-func (c *compactor) getCompactRev(ctx context.Context) (compactRev int64, currentRev int64, err error) {
+func (c *compactor) getCompactRev(ctx context.Context) (compactRev uint64, currentRev int64, err error) {
 	resp, err := c.client.Get(ctx, compactRevKey)
 	if err != nil {
 		return compactRev, currentRev, fmt.Errorf("get %q failed: %v", compactRevKey, err)
 	}
 	if len(resp.Kvs) != 0 {
-		compactRev, err = strconv.ParseInt(string(resp.Kvs[0].Value), 10, 64)
+		compactRev, err = strconv.ParseUint(string(resp.Kvs[0].Value), 10, 64)
 		if err != nil {
 			return compactRev, currentRev, fmt.Errorf("failed to parse compact revision: %v", err)
 		}
@@ -288,7 +323,7 @@ func (c *compactor) getCompactRev(ctx context.Context) (compactRev int64, curren
 	return compactRev, currentRev, nil
 }
 
-func (c *compactor) fromWatchResponse(resp clientv3.WatchResponse) (compactRev int64, err error) {
+func (c *compactor) fromWatchResponse(resp clientv3.WatchResponse) (compactRev uint64, err error) {
 	if resp.Err() != nil {
 		return compactRev, resp.Err()
 	}
@@ -296,7 +331,7 @@ func (c *compactor) fromWatchResponse(resp clientv3.WatchResponse) (compactRev i
 		return compactRev, nil
 	}
 	lastEvent := resp.Events[len(resp.Events)-1]
-	compactRev, err = strconv.ParseInt(string(lastEvent.Kv.Value), 10, 64)
+	compactRev, err = strconv.ParseUint(string(lastEvent.Kv.Value), 10, 64)
 	if err != nil {
 		return compactRev, fmt.Errorf("failed to parse compact revision: %v", err)
 	}

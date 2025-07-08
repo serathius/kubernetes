@@ -201,11 +201,11 @@ func New(c *kubernetes.Client, compactor Compactor, codec runtime.Codec, newFunc
 	return s
 }
 
-func (s *store) CompactRevision() int64 {
+func (s *store) WaitCompaction(ctx context.Context, rev uint64) (uint64, error) {
 	if s.compactor == nil {
-		return 0
+		return 0, errors.New("Compactor not enabled")
 	}
-	return s.compactor.CompactRevision()
+	return s.compactor.WaitCompaction(ctx, rev)
 }
 
 // Versioner implements storage.Interface.Versioner.

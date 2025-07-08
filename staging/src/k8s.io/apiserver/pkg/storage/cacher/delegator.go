@@ -91,8 +91,8 @@ func (c *CacheDelegator) Versioner() storage.Versioner {
 	return c.storage.Versioner()
 }
 
-func (c *CacheDelegator) CompactRevision() int64 {
-	return c.storage.CompactRevision()
+func (c *CacheDelegator) WaitCompaction(ctx context.Context, rev uint64) (uint64, error) {
+	return c.storage.WaitCompaction(ctx, rev)
 }
 
 func (c *CacheDelegator) Create(ctx context.Context, key string, obj, out runtime.Object, ttl uint64) error {

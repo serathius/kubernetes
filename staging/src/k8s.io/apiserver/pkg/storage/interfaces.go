@@ -272,7 +272,7 @@ type Interface interface {
 	// This allows to replace default function that fetches keys from storage with one using cache.
 	SetKeysFunc(KeysFunc)
 
-	CompactRevision() int64
+	WaitCompaction(context.Context, uint64) (uint64, error)
 }
 
 // KeysFunc is a function prototype to fetch keys from storage.
