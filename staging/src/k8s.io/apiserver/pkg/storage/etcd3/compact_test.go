@@ -18,37 +18,101 @@ package etcd3
 
 import (
 	"context"
+	"sync"
 	"testing"
+	"time"
 
 	etcdrpc "go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
 	clientv3 "go.etcd.io/etcd/client/v3"
 
 	"k8s.io/apiserver/pkg/storage/etcd3/testserver"
+	testingclock "k8s.io/utils/clock/testing"
+)
+
+const (
+	waitDelay   = time.Millisecond
+	waitTimeout = 100 * waitDelay
 )
 
 func TestCompact(t *testing.T) {
 	client := testserver.RunEtcd(t, nil).Client
-	ctx := context.Background()
+	clock := testingclock.NewFakeClock(time.Now())
+	wg := sync.WaitGroup{}
+	defer wg.Wait()
 
-	putResp, err := client.Put(ctx, "/somekey", "data")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		compactor(ctx, client, clock, time.Minute)
+	}()
+
+	for !clock.HasWaiters() {
+		time.Sleep(time.Millisecond)
+	}
+	t.Log("First saves revision before first write")
+	clock.Step(time.Minute)
+	waitForClockWaiters(t, clock)
+
+	t.Log("First write")
+	resp1, err := client.Put(ctx, "/somekey", "data")
 	if err != nil {
 		t.Fatalf("Put failed: %v", err)
 	}
+	assertNotCompacted(t, ctx, client, resp1.Header.Revision)
 
-	putResp1, err := client.Put(ctx, "/somekey", "data2")
+	t.Log("Second compaction cycle compacts before first write")
+	clock.Step(time.Minute)
+	waitForClockWaiters(t, clock)
+	assertNotCompacted(t, ctx, client, resp1.Header.Revision)
+
+	t.Log("Create second revision")
+	resp2, err := client.Put(ctx, "/somekey", "data")
 	if err != nil {
 		t.Fatalf("Put failed: %v", err)
 	}
+	assertNotCompacted(t, ctx, client, resp2.Header.Revision)
 
-	_, _, err = compact(ctx, client, 0, putResp1.Header.Revision)
-	if err != nil {
-		t.Fatalf("compact failed: %v", err)
-	}
+	t.Log("Third compaction cycle compacts first write")
+	clock.Step(time.Minute)
+	waitForClockWaiters(t, clock)
+	assertCompacted(t, ctx, client, resp1.Header.Revision)
 
-	obj, err := client.Get(ctx, "/somekey", clientv3.WithRev(putResp.Header.Revision))
+	assertNotCompacted(t, ctx, client, resp2.Header.Revision)
+
+	t.Log("Fourth compaction cycle compacts second write")
+	clock.Step(time.Minute)
+	waitForClockWaiters(t, clock)
+	assertCompacted(t, ctx, client, resp1.Header.Revision)
+	assertCompacted(t, ctx, client, resp2.Header.Revision)
+}
+
+func assertCompacted(t *testing.T, ctx context.Context, client *clientv3.Client, rev int64) {
+	t.Helper()
+	_, err := client.Get(ctx, "/somekey", clientv3.WithRev(rev))
 	if err != etcdrpc.ErrCompacted {
-		t.Errorf("Expecting ErrCompacted, but get=%v err=%v", obj, err)
+		t.Errorf("Expecting rev %d compacted, but err=%v", rev, err)
 	}
+}
+
+func assertNotCompacted(t *testing.T, ctx context.Context, client *clientv3.Client, rev int64) {
+	t.Helper()
+	_, err := client.Get(ctx, "/somekey", clientv3.WithRev(rev))
+	if err != nil {
+		t.Errorf("Get on rev %d failed: %v", rev, err)
+	}
+}
+
+func waitForClockWaiters(t *testing.T, clock *testingclock.FakeClock) {
+	t.Helper()
+	for start := time.Now(); time.Since(start) < waitTimeout; {
+		if clock.HasWaiters() {
+			return
+		}
+		time.Sleep(waitDelay)
+	}
+	t.Fatal("No waiters")
 }
 
 // TestCompactConflict tests that two compactors (Let's use C1, C2) are trying to compact etcd cluster with the same
