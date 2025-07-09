@@ -28,6 +28,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/assert"
@@ -38,6 +39,7 @@ import (
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/apiserver/pkg/apis/example"
 	"k8s.io/apiserver/pkg/features"
@@ -3692,5 +3694,48 @@ func RunTestNamespaceScopedList(ctx context.Context, t *testing.T, store storage
 
 			expectNoDiff(t, "incorrect list pods", tt.expectPods(namespace), listOut.Items)
 		})
+	}
+}
+
+func RunTestCompaction(ctx context.Context, t *testing.T, store storage.Interface, increaseRV IncreaseRVFunc, compact Compaction) {
+	listOut := &example.PodList{}
+	if err := store.GetList(ctx, "/pods", storage.ListOptions{
+		Predicate: storage.Everything,
+		Recursive: true,
+	}, listOut); err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	currentRV, err := store.Versioner().ParseResourceVersion(listOut.ResourceVersion)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	compactedRV := store.CompactRevision()
+	if compactedRV >= int64(currentRV) {
+		t.Fatalf("Expected current RV not be compacted, current: %d, compacted: %d", currentRV, compactedRV)
+	}
+	if err := store.GetList(ctx, "/pods", storage.ListOptions{
+		Predicate:            storage.Everything,
+		Recursive:            true,
+		ResourceVersion:      listOut.ResourceVersion,
+		ResourceVersionMatch: metav1.ResourceVersionMatchExact,
+	}, listOut); err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	increaseRV(ctx, t)
+	expectCompactedRV := currentRV + 1
+	compact(ctx, t, fmt.Sprintf("%d", expectCompactedRV))
+	if err := store.GetList(ctx, "/pods", storage.ListOptions{
+		Predicate:            storage.Everything,
+		Recursive:            true,
+		ResourceVersion:      listOut.ResourceVersion,
+		ResourceVersionMatch: metav1.ResourceVersionMatchExact,
+	}, listOut); err == nil || !strings.Contains(err.Error(), "The resourceVersion for the provided list is too old") {
+		t.Errorf(`Expected "The resourceVersion for the provided list is too old", but got error: %v`, err)
+	}
+	err = wait.PollUntilContextTimeout(ctx, time.Second, wait.ForeverTestTimeout, true, func(ctx context.Context) (bool, error) {
+		return store.CompactRevision() == int64(expectCompactedRV), nil
+	})
+	if err != nil {
+		t.Errorf("CompactRevision()=%d, expected: %d", store.CompactRevision(), expectCompactedRV)
 	}
 }

@@ -315,6 +315,11 @@ func TestNamespaceScopedList(t *testing.T) {
 	storagetesting.RunTestNamespaceScopedList(ctx, t, store)
 }
 
+func TestCompaction(t *testing.T) {
+	ctx, store, client := testSetup(t)
+	storagetesting.RunTestCompaction(ctx, t, store, increaseRV(client.Client), compactStorage(client.Client))
+}
+
 func compactStorage(client *clientv3.Client) storagetesting.Compaction {
 	return func(ctx context.Context, t *testing.T, resourceVersion string) {
 		versioner := storage.APIObjectVersioner{}
@@ -322,8 +327,13 @@ func compactStorage(client *clientv3.Client) storagetesting.Compaction {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err = client.Compact(ctx, int64(rv)); err != nil {
-			t.Fatalf("Unable to compact, %v", err)
+		var currentVersion int64
+		currentVersion, _, _, err = Compact(ctx, client, currentVersion, int64(rv))
+		if err != nil {
+			_, _, _, err = Compact(ctx, client, currentVersion, int64(rv))
+		}
+		if err != nil {
+			t.Fatal(err)
 		}
 	}
 }
@@ -587,9 +597,11 @@ func testSetup(t testing.TB, opts ...setupOption) (context.Context, *store, *kub
 	}
 	client := setupOpts.client(t)
 	versioner := storage.APIObjectVersioner{}
+	compactor := NewCompactor(client.Client, 0)
+	t.Cleanup(compactor.Stop)
 	store := New(
 		client,
-		nil,
+		compactor,
 		setupOpts.codec,
 		setupOpts.newFunc,
 		setupOpts.newListFunc,

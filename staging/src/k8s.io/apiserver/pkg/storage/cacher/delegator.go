@@ -92,7 +92,7 @@ func (c *CacheDelegator) Versioner() storage.Versioner {
 }
 
 func (c *CacheDelegator) CompactRevision() int64 {
-	return c.storage.CompactRevision()
+	return c.cacher.compactor.Revision()
 }
 
 func (c *CacheDelegator) Create(ctx context.Context, key string, obj, out runtime.Object, ttl uint64) error {

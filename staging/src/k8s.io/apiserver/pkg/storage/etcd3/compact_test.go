@@ -40,7 +40,7 @@ func TestCompact(t *testing.T) {
 		t.Fatalf("Put failed: %v", err)
 	}
 
-	_, _, _, err = compact(ctx, client, 0, putResp1.Header.Revision)
+	_, _, _, err = Compact(ctx, client, 0, putResp1.Header.Revision)
 	if err != nil {
 		t.Fatalf("compact failed: %v", err)
 	}
@@ -49,6 +49,7 @@ func TestCompact(t *testing.T) {
 	if err != etcdrpc.ErrCompacted {
 		t.Errorf("Expecting ErrCompacted, but get=%v err=%v", obj, err)
 	}
+	
 }
 
 // TestCompactConflict tests that two compactors (Let's use C1, C2) are trying to compact etcd cluster with the same
@@ -65,7 +66,7 @@ func TestCompactConflict(t *testing.T) {
 	}
 
 	// Compact first. It would do the compaction and return compact time which is incremented by 1.
-	curTime, _, _, err := compact(ctx, client, 0, putResp.Header.Revision)
+	curTime, _, _, err := Compact(ctx, client, 0, putResp.Header.Revision)
 	if err != nil {
 		t.Fatalf("compact failed: %v", err)
 	}
@@ -74,7 +75,7 @@ func TestCompactConflict(t *testing.T) {
 	}
 
 	// Compact again with the same parameters. It won't do compaction but return the latest compact time.
-	curTime2, _, _, err := compact(ctx, client, 0, putResp.Header.Revision)
+	curTime2, _, _, err := Compact(ctx, client, 0, putResp.Header.Revision)
 	if err != nil {
 		t.Fatalf("compact failed: %v", err)
 	}

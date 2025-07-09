@@ -59,14 +59,14 @@ func StartCompactor(client *clientv3.Client, compactInterval time.Duration) Comp
 	if compactInterval == 0 {
 		return nil
 	}
-	c := newCompactor(client, compactInterval)
+	c := NewCompactor(client, compactInterval)
 	for _, ep := range client.Endpoints() {
 		endpointsMap[ep] = c
 	}
 	return c
 }
 
-func newCompactor(client *clientv3.Client, compactInterval time.Duration) *compactor {
+func NewCompactor(client *clientv3.Client, compactInterval time.Duration) *compactor {
 	ctx, cancel := context.WithCancel(context.Background())
 	c := &compactor{
 		client:   client,
@@ -81,6 +81,7 @@ func newCompactor(client *clientv3.Client, compactInterval time.Duration) *compa
 		defer c.wg.Done()
 		c.runCompactLoop(ctx)
 	}()
+	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
 		c.runWatchLoop(ctx)
@@ -188,13 +189,21 @@ func (c *compactor) runCompactLoop(ctx context.Context) {
 	var compactRev int64
 	var err error
 	for {
+		interval := c.Interval()
+		if interval == 0 {
+			interval = 5 * time.Minute
+		}
 		select {
-		case <-time.After(c.Interval()):
+		case <-time.After(interval):
 		case <-ctx.Done():
 			return
 		}
 
-		previousVersion, previousRev, compactRev, err = compact(ctx, c.client, previousVersion, previousRev)
+		if c.Interval() == 0 {
+			continue
+		}
+
+		previousVersion, previousRev, compactRev, err = Compact(ctx, c.client, previousVersion, previousRev)
 		if err != nil {
 			klog.Errorf("etcd: endpoint (%v) compact failed: %v", c.client.Endpoints(), err)
 			continue
@@ -203,10 +212,10 @@ func (c *compactor) runCompactLoop(ctx context.Context) {
 	}
 }
 
-// compact compacts etcd store and returns current rev.
-// It will return the current compact time and global revision if no error occurred.
+// Compact compacts etcd store and returns current rev.
+// It will return the current Compact time and global revision if no error occurred.
 // Note that CAS fail will not incur any error.
-func compact(ctx context.Context, client *clientv3.Client, expectVersion, rev int64) (currentVersion, currentRev, compactRev int64, err error) {
+func Compact(ctx context.Context, client *clientv3.Client, expectVersion, rev int64) (currentVersion, currentRev, compactRev int64, err error) {
 	resp, err := client.KV.Txn(ctx).If(
 		clientv3.Compare(clientv3.Version(compactRevKey), "=", expectVersion),
 	).Then(

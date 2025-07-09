@@ -291,6 +291,12 @@ func TestStats(t *testing.T) {
 	}
 }
 
+func TestCompaction(t *testing.T) {
+	ctx, cacher, server, terminate := testSetupWithEtcdServer(t)
+	t.Cleanup(terminate)
+	storagetesting.RunTestCompaction(ctx, t, cacher, increaseRV(server.V3Client.Client), compactStore(cacher, server.V3Client.Client))
+}
+
 func TestWatch(t *testing.T) {
 	ctx, cacher, terminate := testSetup(t)
 	t.Cleanup(terminate)

@@ -17,6 +17,7 @@ limitations under the License.
 package cacher
 
 import (
+	"sync"
 	"time"
 
 	"k8s.io/apiserver/pkg/storage"
@@ -46,6 +47,9 @@ type compactor struct {
 	clock TickerFactory
 	store storage.Interface
 	wc    *watchCache
+
+	lock            sync.Mutex
+	compactRevision int64
 }
 
 func (c *compactor) Run(stopCh <-chan struct{}) {
@@ -64,7 +68,20 @@ func (c *compactor) Run(stopCh <-chan struct{}) {
 
 func (c *compactor) compact() {
 	rev := c.store.CompactRevision()
-	if rev != 0 {
-		c.wc.Compact(rev)
+	if rev == 0 {
+		return
 	}
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	if rev <= c.compactRevision {
+		return
+	}
+	c.wc.Compact(rev)
+	c.compactRevision = rev
+}
+
+func (c *compactor) Revision() int64 {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	return c.compactRevision
 }
