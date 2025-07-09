@@ -355,17 +355,35 @@ var newETCD3Client = func(c storagebackend.TransportConfig) (*kubernetes.Client,
 	return kubernetes.New(cfg)
 }
 
-type runningCompactor struct {
-	interval time.Duration
-	cancel   context.CancelFunc
-	client   *clientv3.Client
-	refs     int
+func newCompactorReferenceCounter(client *clientv3.Client, interval time.Duration, clean DestroyFunc) *compactorReferenceCounter {
+	ref := &compactorReferenceCounter{
+		Compactor: etcd3.StartCompactor(client, interval),
+		counter:   1,
+		clean:     clean,
+	}
+	return ref
+}
+
+type compactorReferenceCounter struct {
+	etcd3.Compactor
+	counter int
+	clean   DestroyFunc
+}
+
+func (c *compactorReferenceCounter) Stop() {
+	compactorsMu.Lock()
+	defer compactorsMu.Unlock()
+	c.counter--
+	if c.counter == 0 {
+		c.Compactor.Stop()
+		c.clean()
+	}
 }
 
 var (
 	// compactorsMu guards access to compactors map
 	compactorsMu sync.Mutex
-	compactors   = map[string]*runningCompactor{}
+	compactors   = map[string]*compactorReferenceCounter{}
 	// dbMetricsMonitorsMu guards access to dbMetricsMonitors map
 	dbMetricsMonitorsMu sync.Mutex
 	dbMetricsMonitors   map[string]struct{}
@@ -374,64 +392,37 @@ var (
 // startCompactorOnce start one compactor per transport. If the interval get smaller on repeated calls, the
 // compactor is replaced. A destroy func is returned. If all destroy funcs with the same transport are called,
 // the compactor is stopped.
-func startCompactorOnce(c storagebackend.TransportConfig, interval time.Duration) (func(), error) {
+func startCompactorOnce(c storagebackend.TransportConfig, interval time.Duration) (etcd3.Compactor, error) {
 	compactorsMu.Lock()
 	defer compactorsMu.Unlock()
 
-	if interval == 0 {
-		// short circuit, if the compaction request from apiserver is disabled
-		return func() {}, nil
-	}
 	key := fmt.Sprintf("%v", c) // gives: {[server1 server2] keyFile certFile caFile}
-	if compactor, foundBefore := compactors[key]; !foundBefore || compactor.interval > interval {
+	ref, foundBefore := compactors[key]
+	if foundBefore {
+		ref.UpdateInterval(interval)
+		ref.counter++
+	} else if !foundBefore {
 		client, err := newETCD3Client(c)
 		if err != nil {
 			return nil, err
 		}
-		compactorClient := client.Client
-
-		if foundBefore {
-			// replace compactor
-			compactor.cancel()
-			compactor.client.Close()
-		} else {
-			// start new compactor
-			compactor = &runningCompactor{}
-			compactors[key] = compactor
-		}
-
-		compactor.interval = interval
-		compactor.client = compactorClient
-
-		c := etcd3.StartCompactor(compactorClient, interval)
-		compactor.cancel = c.Stop
-	}
-
-	compactors[key].refs++
-
-	return func() {
-		compactorsMu.Lock()
-		defer compactorsMu.Unlock()
-
-		compactor := compactors[key]
-		compactor.refs--
-		if compactor.refs == 0 {
-			compactor.cancel()
-			compactor.client.Close()
+		ref = newCompactorReferenceCounter(client.Client, interval, func() {
 			delete(compactors, key)
-		}
-	}, nil
+		})
+		compactors[key] = ref
+	}
+	return ref, nil
 }
 
 func newETCD3Storage(c storagebackend.ConfigForResource, newFunc, newListFunc func() runtime.Object, resourcePrefix string) (storage.Interface, DestroyFunc, error) {
-	stopCompactor, err := startCompactorOnce(c.Transport, c.CompactionInterval)
+	compactor, err := startCompactorOnce(c.Transport, c.CompactionInterval)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	client, err := newETCD3Client(c.Transport)
 	if err != nil {
-		stopCompactor()
+		compactor.Stop()
 		return nil, nil, err
 	}
 
@@ -440,6 +431,8 @@ func newETCD3Storage(c storagebackend.ConfigForResource, newFunc, newListFunc fu
 
 	stopDBSizeMonitor, err := startDBSizeMonitorPerEndpoint(client.Client, c.DBMetricPollInterval)
 	if err != nil {
+		compactor.Stop()
+		_ = client.Close()
 		return nil, nil, err
 	}
 
@@ -462,7 +455,7 @@ func newETCD3Storage(c storagebackend.ConfigForResource, newFunc, newListFunc fu
 		// Hence, we only destroy once.
 		// TODO: fix duplicated storage destroy calls higher level
 		once.Do(func() {
-			stopCompactor()
+			compactor.Stop()
 			stopDBSizeMonitor()
 			store.Close()
 			_ = client.Close()

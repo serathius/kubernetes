@@ -151,7 +151,6 @@ func clockNoWaiters(t *testing.T, clock *testingclock.FakeClock) {
 	}
 }
 
-
 // TestCompactConflict tests that two compactors (Let's use C1, C2) are trying to compact etcd cluster with the same
 // logical time.
 // - C1 compacts first. It will succeed.
