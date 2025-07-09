@@ -23,6 +23,7 @@ import (
 	"time"
 
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/clock"
 )
@@ -33,36 +34,114 @@ const (
 
 var (
 	endpointsMapMu sync.Mutex
-	endpointsMap   map[string]struct{}
+	endpointsMap   map[string]*compactor
 )
 
 func init() {
-	endpointsMap = make(map[string]struct{})
+	endpointsMap = make(map[string]*compactor)
 }
 
 // StartCompactor starts a compactor in the background to compact old version of keys that's not needed.
 // By default, we save the most recent 5 minutes data and compact versions > 5minutes ago.
 // It should be enough for slow watchers and to tolerate burst.
 // TODO: We might keep a longer history (12h) in the future once storage API can take advantage of past version of keys.
-func StartCompactor(ctx context.Context, client *clientv3.Client, compactInterval time.Duration) {
+func StartCompactor(client *clientv3.Client, compactInterval time.Duration) Compactor {
 	endpointsMapMu.Lock()
 	defer endpointsMapMu.Unlock()
 
 	// In one process, we can have only one compactor for one cluster.
 	// Currently we rely on endpoints to differentiate clusters.
 	for _, ep := range client.Endpoints() {
-		if _, ok := endpointsMap[ep]; ok {
+		if c, ok := endpointsMap[ep]; ok {
 			klog.V(4).Infof("compactor already exists for endpoints %v", client.Endpoints())
-			return
+			return c
 		}
 	}
+	c := newCompactor(client, compactInterval, clock.RealClock{})
 	for _, ep := range client.Endpoints() {
-		endpointsMap[ep] = struct{}{}
+		endpointsMap[ep] = c
 	}
+	return c
+}
 
-	if compactInterval != 0 {
-		go compactor(ctx, client, clock.RealClock{}, compactInterval)
+func newCompactor(client *clientv3.Client, compactInterval time.Duration, clock clock.Clock) *compactor {
+	c := &compactor{
+		client:   client,
+		interval: compactInterval,
+		stop:     make(chan struct{}),
+		clock:    clock,
 	}
+	for _, ep := range client.Endpoints() {
+		endpointsMap[ep] = c
+	}
+	if compactInterval != 0 {
+		c.wg.Add(1)
+		go func() {
+			defer c.wg.Done()
+			c.runCompactLoop(c.stop)
+		}()
+	}
+	return c
+}
+
+type Compactor interface {
+	Stop()
+	Interval() time.Duration
+	UpdateInterval(interval time.Duration)
+	CompactRevision() int64
+}
+
+type compactor struct {
+	client *clientv3.Client
+	wg     sync.WaitGroup
+	stop   chan struct{}
+	clock  clock.Clock
+
+	mux             sync.Mutex
+	compactRevision int64
+	interval        time.Duration
+}
+
+func (c *compactor) Stop() {
+	close(c.stop)
+	c.client.Close()
+	c.wg.Wait()
+}
+
+func (c *compactor) Interval() time.Duration {
+	c.mux.Lock()
+	defer c.mux.Unlock()
+	return c.interval
+}
+
+func (c *compactor) UpdateInterval(interval time.Duration) {
+	if interval <= 0 {
+		return
+	}
+	c.mux.Lock()
+	defer c.mux.Unlock()
+	if c.interval == 0 {
+		c.wg.Add(1)
+		go func() {
+			defer c.wg.Done()
+			c.runCompactLoop(c.stop)
+		}()
+		c.interval = interval
+		return
+	}
+	c.interval = min(c.interval, interval)
+}
+
+func (c *compactor) CompactRevision() int64 {
+	c.mux.Lock()
+	defer c.mux.Unlock()
+	return c.compactRevision
+}
+
+func (c *compactor) UpdateCompactRevision(rev int64) {
+	c.mux.Lock()
+	defer c.mux.Unlock()
+	c.compactRevision = max(c.compactRevision, rev)
 }
 
 // compactor periodically compacts historical versions of keys in etcd.
@@ -70,7 +149,7 @@ func StartCompactor(ctx context.Context, client *clientv3.Client, compactInterva
 // In other words, after compaction, it will only contain keys set during last interval.
 // Any API call for the older versions of keys will return error.
 // Interval is the time interval between each compaction. The first compaction happens after "interval".
-func compactor(ctx context.Context, client *clientv3.Client, clock clock.Clock, interval time.Duration) {
+func (c *compactor) runCompactLoop(stopCh chan struct{}) {
 	// Technical definitions:
 	// We have a special key in etcd defined as *compactRevKey*.
 	// compactRevKey's value will be set to the string of last compacted revision.
@@ -110,54 +189,61 @@ func compactor(ctx context.Context, client *clientv3.Client, clock clock.Clock, 
 	// - What happened under heavy load scenarios? Initially, each apiserver will do only one compaction
 	//   every 5 minutes. This is very unlikely affecting or affected w.r.t. server load.
 
-	var compactTime int64
-	var rev int64
+	ctx := wait.ContextForChannel(stopCh)
+	var previousVersion int64
+	var previousRev int64
+	var compactRev int64
 	var err error
 	for {
 		select {
-		case <-clock.After(interval):
+		case <-c.clock.After(c.Interval()):
 		case <-ctx.Done():
 			return
 		}
 
-		compactTime, rev, err = compact(ctx, client, compactTime, rev)
+		previousVersion, previousRev, compactRev, err = compact(ctx, c.client, previousVersion, previousRev)
 		if err != nil {
-			klog.Errorf("etcd: endpoint (%v) compact failed: %v", client.Endpoints(), err)
+			klog.Errorf("etcd: endpoint (%v) compact failed: %v", c.client.Endpoints(), err)
 			continue
 		}
+		c.UpdateCompactRevision(compactRev)
 	}
 }
 
 // compact compacts etcd store and returns current rev.
 // It will return the current compact time and global revision if no error occurred.
 // Note that CAS fail will not incur any error.
-func compact(ctx context.Context, client *clientv3.Client, t, rev int64) (int64, int64, error) {
+func compact(ctx context.Context, client *clientv3.Client, expectVersion, rev int64) (currentVersion, currentRev, compactRev int64, err error) {
 	resp, err := client.KV.Txn(ctx).If(
-		clientv3.Compare(clientv3.Version(compactRevKey), "=", t),
+		clientv3.Compare(clientv3.Version(compactRevKey), "=", expectVersion),
 	).Then(
 		clientv3.OpPut(compactRevKey, strconv.FormatInt(rev, 10)), // Expect side effect: increment Version
 	).Else(
 		clientv3.OpGet(compactRevKey),
 	).Commit()
 	if err != nil {
-		return t, rev, err
+		return expectVersion, rev, 0, err
 	}
 
-	curRev := resp.Header.Revision
+	currentRev = resp.Header.Revision
 
 	if !resp.Succeeded {
-		curTime := resp.Responses[0].GetResponseRange().Kvs[0].Version
-		return curTime, curRev, nil
+		currentVersion = resp.Responses[0].GetResponseRange().Kvs[0].Version
+		compactRev, err = strconv.ParseInt(string(resp.Responses[0].GetResponseRange().Kvs[0].Value), 10, 64)
+		if err != nil {
+			return currentVersion, currentRev, 0, nil
+		}
+		return currentVersion, currentRev, compactRev, nil
 	}
-	curTime := t + 1
+	currentVersion = expectVersion + 1
 
 	if rev == 0 {
 		// We don't compact on bootstrap.
-		return curTime, curRev, nil
+		return currentVersion, currentRev, 0, nil
 	}
 	if _, err = client.Compact(ctx, rev); err != nil {
-		return curTime, curRev, err
+		return currentVersion, currentRev, 0, err
 	}
 	klog.V(4).Infof("etcd: compacted rev (%d), endpoints (%v)", rev, client.Endpoints())
-	return curTime, curRev, nil
+	return currentVersion, currentRev, rev, nil
 }

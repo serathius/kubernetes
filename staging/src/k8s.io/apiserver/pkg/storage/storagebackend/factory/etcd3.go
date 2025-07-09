@@ -400,13 +400,11 @@ func startCompactorOnce(c storagebackend.TransportConfig, interval time.Duration
 			compactors[key] = compactor
 		}
 
-		ctx, cancel := context.WithCancel(context.Background())
-
 		compactor.interval = interval
-		compactor.cancel = cancel
 		compactor.client = compactorClient
 
-		etcd3.StartCompactor(ctx, compactorClient, interval)
+		c := etcd3.StartCompactor(compactorClient, interval)
+		compactor.cancel = c.Stop
 	}
 
 	compactors[key].refs++
