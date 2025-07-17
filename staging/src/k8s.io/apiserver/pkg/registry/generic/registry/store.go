@@ -1669,9 +1669,10 @@ func (e *Store) startObservingCount(period time.Duration, objectCountTracker flo
 	go wait.JitterUntil(func() {
 		stats, err := e.Storage.Stats(ctx)
 		if err != nil {
-			klog.V(5).InfoS("Failed to update storage count metric", "err", err)
+			fmt.Printf("DUPA resource: %q, err: %+v\n", resourceName, err)
 			stats.ObjectCount = -1
 		}
+		fmt.Printf("DUPA resource: %q, stats: %+v\n", resourceName, stats)
 
 		metrics.UpdateObjectCount(e.DefaultQualifiedResource, stats.ObjectCount)
 		if objectCountTracker != nil {

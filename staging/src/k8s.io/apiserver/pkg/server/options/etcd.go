@@ -83,7 +83,7 @@ func NewEtcdOptions(backendConfig *storagebackend.Config) *EtcdOptions {
 		EnableWatchCache:        true,
 		DefaultWatchCacheSize:   100,
 	}
-	options.StorageConfig.CountMetricPollPeriod = time.Minute
+	options.StorageConfig.CountMetricPollPeriod = 10 * time.Second
 	return options
 }
 

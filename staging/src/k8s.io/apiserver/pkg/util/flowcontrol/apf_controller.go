@@ -861,6 +861,7 @@ func (meal *cfgMeal) finishQueueSetReconfigsLocked() {
 		// to a little more than serverConcurrencyLimit but the
 		// difference will be negligible.
 		concurrencyLimit := int(math.Ceil(float64(meal.cfgCtlr.serverConcurrencyLimit) * float64(*nominalConcurrencyShares) / meal.shareSum))
+		fmt.Printf("DUPA plName: %q concurrencyLimit: %d\n", plName, concurrencyLimit)
 		var lendableCL, borrowingCL int
 		if lendablePercent != nil {
 			lendableCL = int(math.Round(float64(concurrencyLimit) * float64(*lendablePercent) / 100))
@@ -889,8 +890,10 @@ func (meal *cfgMeal) finishQueueSetReconfigsLocked() {
 				// while clusters with lower inflight requests will use max seats no greater than nominalCL/handSize.
 				// Calculated max seats can return arbitrarily high values but work estimator currently limits max seats at 10.
 				handSize := plState.pl.Spec.Limited.LimitResponse.Queuing.HandSize
+				fmt.Printf("DUPA plName: %q handSize: %d\n", plName, handSize)
 				maxSeats := uint64(math.Max(1, math.Min(math.Ceil(float64(concurrencyLimit)*priorityLevelMaxSeatsPercent), float64(int32(concurrencyLimit)/handSize))))
 				meal.cfgCtlr.MaxSeatsTracker.SetMaxSeats(plName, maxSeats)
+				fmt.Printf("DUPA plName: %q maxSeats: %d\n", plName, maxSeats)
 			}
 		}
 		if plState.queues == nil {

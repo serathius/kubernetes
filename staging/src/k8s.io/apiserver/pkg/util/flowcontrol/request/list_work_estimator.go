@@ -17,6 +17,7 @@ limitations under the License.
 package request
 
 import (
+	"fmt"
 	"math"
 	"net/http"
 
@@ -61,6 +62,7 @@ func (e *listWorkEstimator) estimate(r *http.Request, flowSchemaName, priorityLe
 	if !ok {
 		// no RequestInfo should never happen, but to be on the safe side
 		// let's return maximumSeats
+		fmt.Printf("DUPA 1 plName: %q, seats: %d\n", priorityLevelName, maxSeats)
 		return WorkEstimate{InitialSeats: maxSeats}
 	}
 
@@ -70,6 +72,7 @@ func (e *listWorkEstimator) estimate(r *http.Request, flowSchemaName, priorityLe
 		// Example of such list requests:
 		// /apis/certificates.k8s.io/v1/certificatesigningrequests?fieldSelector=metadata.name%3Dcsr-xxs4m
 		// /api/v1/namespaces/test/configmaps?fieldSelector=metadata.name%3Dbig-deployment-1&limit=500&resourceVersion=0
+		fmt.Printf("DUPA 2 plName: %q, resource: %q, seats: %d\n", priorityLevelName, requestInfo.Resource, minSeats)
 		return WorkEstimate{InitialSeats: minSeats}
 	}
 
@@ -80,6 +83,7 @@ func (e *listWorkEstimator) estimate(r *http.Request, flowSchemaName, priorityLe
 
 		// This request is destined to fail in the validation layer,
 		// return maximumSeats for this request to be consistent.
+		fmt.Printf("DUPA 3 plName: %q, resource: %q, seats: %d, err: %s\n", priorityLevelName, requestInfo.Resource, maxSeats, err)
 		return WorkEstimate{InitialSeats: maxSeats}
 	}
 
@@ -87,12 +91,14 @@ func (e *listWorkEstimator) estimate(r *http.Request, flowSchemaName, priorityLe
 	// sending initial events.
 	if requestInfo.Verb == "watch" {
 		if listOptions.SendInitialEvents == nil || !*listOptions.SendInitialEvents {
+			fmt.Printf("DUPA 4 plName: %q, resource: %q, seats: %d\n", priorityLevelName, requestInfo.Resource, e.config.MinimumSeats)
 			return WorkEstimate{InitialSeats: e.config.MinimumSeats}
 		}
 	}
 	// TODO: Check whether watchcache is enabled.
 	result, err := delegator.ShouldDelegateListMeta(&listOptions, delegator.CacheWithoutSnapshots{})
 	if err != nil {
+		fmt.Printf("DUPA 5 plName: %q, resource: %q, seats: %d, err: %s\n", priorityLevelName, requestInfo.Resource, maxSeats, err)
 		return WorkEstimate{InitialSeats: maxSeats}
 	}
 	listFromStorage := result.ShouldDelegate
@@ -105,6 +111,7 @@ func (e *listWorkEstimator) estimate(r *http.Request, flowSchemaName, priorityLe
 		// be conservative here and allocate maximum seats to this list request.
 		// NOTE: if a CRD is removed, its count will go stale first and then the
 		// pruner will eventually remove the CRD from the cache.
+		fmt.Printf("DUPA 6 plName: %q, resource: %q, stats: %+v, isListFromCache: %v, seats: %d, err: %s\n", priorityLevelName, requestInfo.Resource, stats, isListFromCache, maxSeats, err)
 		return WorkEstimate{InitialSeats: maxSeats}
 	case err == ObjectCountNotFoundErr:
 		// there are multiple scenarios in which we can see this error:
@@ -119,11 +126,13 @@ func (e *listWorkEstimator) estimate(r *http.Request, flowSchemaName, priorityLe
 		// when aggregated API calls are overestimated, we allocate the minimum
 		// possible seats (see #109106 as an example when being more conservative
 		// led to problems).
+		fmt.Printf("DUPA 7 plName: %q, resource: %q, stats: %+v, isListFromCache: %v, seats: %d, err: %s\n", priorityLevelName, requestInfo.Resource, stats, isListFromCache, minSeats, err)
 		return WorkEstimate{InitialSeats: minSeats}
 	case err != nil:
 		// we should never be here since Get returns either ObjectCountStaleErr or
 		// ObjectCountNotFoundErr, return maximumSeats to be on the safe side.
 		klog.ErrorS(err, "Unexpected error from object count tracker")
+		fmt.Printf("DUPA 8 plName: %q, resource: %q, stats: %+v, isListFromCache: %v, seats: %d, err: %s\n", priorityLevelName, requestInfo.Resource, stats, isListFromCache, maxSeats, err)
 		return WorkEstimate{InitialSeats: maxSeats}
 	}
 	var seats uint64
@@ -137,9 +146,10 @@ func (e *listWorkEstimator) estimate(r *http.Request, flowSchemaName, priorityLe
 	if seats < minSeats {
 		seats = minSeats
 	}
-	if seats > maxSeats {
-		seats = maxSeats
+	if seats > 100 {
+		seats = 100
 	}
+	fmt.Printf("DUPA 9 plName: %q, resource: %q, stats: %+v, isListFromCache: %v, seats: %d\n", priorityLevelName, requestInfo.Resource, stats, isListFromCache, seats)
 	return WorkEstimate{InitialSeats: seats}
 }
 

@@ -24,7 +24,7 @@ import (
 
 const (
 	minimumSeats                = 1
-	maximumSeatsLimit           = 10
+	maximumSeatsLimit           = 100
 	objectsPerSeat              = 100.0
 	watchesPerSeat              = 10.0
 	enableMutatingWorkEstimator = true
