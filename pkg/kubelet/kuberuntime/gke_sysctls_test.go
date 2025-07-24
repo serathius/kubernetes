@@ -25,10 +25,12 @@ import (
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
+	"k8s.io/kubernetes/test/utils/ktesting"
 )
 
 func TestSysctlFiltering(t *testing.T) {
-	_, _, m, err := createTestRuntimeManager()
+	tCtx := ktesting.Init(t)
+	_, _, m, err := createTestRuntimeManager(tCtx)
 	assert.NoError(t, err)
 	originalPodSysctls := PodSysctls
 	defer func() { PodSysctls = originalPodSysctls }()
@@ -97,7 +99,7 @@ func TestSysctlFiltering(t *testing.T) {
 	} {
 		pod := createTestPodFunc(test.hostNetwork, test.hostIPC)
 		template := sandboxTemplate{pod, 1, fakeCreatedAt, runtimeapi.PodSandboxState_SANDBOX_READY, true, false}
-		config, err := m.generatePodSandboxConfig(template.pod, template.attempt)
+		config, err := m.generatePodSandboxConfig(tCtx, template.pod, template.attempt)
 		assert.NoError(t, err)
 		if !reflect.DeepEqual(test.expectedSysctls, config.Linux.Sysctls) {
 			t.Errorf("Expected sysctls %v, got %v", test.expectedSysctls, config.Linux.Sysctls)
