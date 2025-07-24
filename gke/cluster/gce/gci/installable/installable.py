@@ -471,7 +471,7 @@ def process_installables(args: argparse.Namespace):
           LOGGER.info(f'Processing object "{object_name}"')
           with parse_installable(objs[object_name]) as inst:
             preloaded_inst = preload_info.get(component, object_name)
-            if preloaded_inst:
+            if preloaded_inst and isinstance(inst, Container):
               LOGGER.info(f'Retagging image in object "{object_name}"')
               ctr.retag(preloaded_inst.get_url(), inst.get_url())
             process_installable(inst, download=download, is_preloader=is_preloader)
