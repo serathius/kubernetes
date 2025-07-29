@@ -1003,6 +1003,17 @@ function gke-setup-gcfs {
   # gcfsd read-ahead flag
   local gcfs_read_ahead_flag="${enable_single_flighting} ${read_ahead_max_blocks} ${read_ahead_cache_size_ratio}"
 
+  # Enable gcfsd to use node P4SA to call Google APIs.
+  if [[ -n "$GCFSD_ADC_CONFIG" ]]; then
+    local gcfsd_application_default_credentials_config_path="${KUBE_HOME}/gcfsd_application_default_credentials.json"
+    echo "$GCFSD_ADC_CONFIG" > "${gcfsd_application_default_credentials_config_path}"
+  fi
+
+  # Enable gcfs-snapshotter to use node P4SA to call Google APIs.
+  if [[ -n "$GCFS_SNAPSHOTTER_ADC_CONFIG" ]]; then
+    local gcfs_snapshotter_application_default_credentials_config_path="${KUBE_HOME}/gcfs_snaphotter_application_default_credentials.json"
+    echo "$GCFS_SNAPSHOTTER_ADC_CONFIG" > "${gcfs_snapshotter_application_default_credentials_config_path}"
+  fi
 
   cat <<EOF >/etc/systemd/system/gcfsd.service
 # Systemd configuration for Google Container File System service
@@ -1014,6 +1025,15 @@ Type=notify
 LimitNOFILE=infinity
 # More aggressive Go garbage collection setting (go/fast/19).
 Environment=GOGC=10
+EOF
+
+  if [[ -n "$GCFSD_ADC_CONFIG" ]]; then
+  cat <<EOF >>/etc/systemd/system/gcfsd.service
+Environment="GOOGLE_APPLICATION_CREDENTIALS=${gcfsd_application_default_credentials_config_path}"
+EOF
+  fi
+
+  cat <<EOF >>/etc/systemd/system/gcfsd.service
 ExecStartPre=-/bin/umount -f ${gcfsd_mnt_dir}
 ExecStartPre=/bin/mkdir -p ${gcfsd_mnt_dir}
 ExecStartPre=/bin/mkdir -p ${layer_cache_dir}
@@ -1045,6 +1065,15 @@ StartLimitIntervalSec=0
 [Service]
 Type=notify
 Environment=HOME=/root
+EOF
+
+  if [[ -n "$GCFS_SNAPSHOTTER_ADC_CONFIG" ]]; then
+  cat <<EOF >>/etc/systemd/system/gcfs-snapshotter.service
+Environment="GOOGLE_APPLICATION_CREDENTIALS=${gcfs_snapshotter_application_default_credentials_config_path}"
+EOF
+  fi
+
+  cat <<EOF >>/etc/systemd/system/gcfs-snapshotter.service
 ExecStart=${KUBE_HOME}/bin/containerd-gcfs-grpc --log-level=info --config=/etc/containerd-gcfs-grpc/config.toml --enable-image-proxy-keychain-client ${secondary_boot_disk_mount_points_flag} ${secondary_boot_data_disk_mount_points_flag} --disable-duplicate-layer-support=false ${enable_metric_exporter_flag}
 Restart=always
 RestartSec=1
