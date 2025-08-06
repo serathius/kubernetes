@@ -519,14 +519,17 @@ function install-node-problem-detector {
 
   echo "Downloading ${npd_tar}."
   local -r npd_release_path="${NODE_PROBLEM_DETECTOR_RELEASE_PATH:-${STORAGE_ENDPOINT}/gke-release}"
-  # We keep the tar file for LICENSES notices - do not remove it.
   download-or-bust "${npd_hash}" "${npd_release_path}/node-problem-detector/${npd_tar}"
   local -r npd_dir="${KUBE_HOME}/node-problem-detector"
   mkdir -p "${npd_dir}"
   tar xzf "${KUBE_HOME}/${npd_tar}" -C "${npd_dir}" --overwrite
+
+  mv "${npd_dir}/bin/LICENSES.txt" "${KUBE_BIN}/node-problem-detector-license"
+  mv "${npd_dir}/bin/source.tar.gz" "${KUBE_BIN}/node-problem-detector-source.tar.gz"
   mv "${npd_dir}/bin"/* "${KUBE_BIN}"
   chmod a+x "${KUBE_BIN}/node-problem-detector"
   rmdir "${npd_dir}/bin"
+  rm -f "${KUBE_HOME:?Error: KUBE_HOME environment variable is not set}/${npd_tar}"
 
   record-preload-info "${npd_tar}" "${npd_hash}"
 }
@@ -639,6 +642,11 @@ EOF
   tar xf "${crictl}"
   mv crictl "${KUBE_BIN}/crictl"
   rm -f "${crictl}"
+
+  local -r license_url="${crictl_path}/notices.tar.gz"
+  echo "Downloading crictl license"
+  download-or-bust "" "${license_url}"
+  mv notices.tar.gz "${KUBE_BIN}/crictl-notices.tar.gz"
 
   record-preload-info "${crictl}" "${crictl_hash}"
 }
