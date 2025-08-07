@@ -575,7 +575,7 @@ function install-cni-binaries {
   fi
 
   local -r cni_tar="cni-plugins-${HOST_PLATFORM}-${HOST_ARCH}-${cni_version}.tgz"
-  local -r cni_url="${STORAGE_ENDPOINT}/gke-release/cni-plugins/${cni_version}/${cni_tar}"
+  local -r cni_path="${STORAGE_ENDPOINT}/gke-release/cni-plugins/${cni_version}"
 
   if is-preloaded "${cni_tar}" "${cni_hash}"; then
     echo "${cni_tar} is preloaded."
@@ -583,13 +583,18 @@ function install-cni-binaries {
   fi
 
   echo "Downloading cni binaries"
-  download-or-bust "${cni_hash}" "${cni_url}"
+  download-or-bust "${cni_hash}" "${cni_path}/${cni_tar}"
   local -r cni_dir="${KUBE_HOME}/cni"
   mkdir -p "${cni_dir}/bin"
   tar xzf "${KUBE_HOME}/${cni_tar}" -C "${cni_dir}/bin" --overwrite
   mv "${cni_dir}/bin"/* "${KUBE_BIN}"
   rmdir "${cni_dir}/bin"
   rm -f "${KUBE_HOME}/${cni_tar}"
+
+  local -r license_url="${cni_path}/notices.tar.gz"
+  echo "Downloading cni license"
+  download-or-bust "" "${license_url}"
+  mv "${KUBE_HOME}/notices.tar.gz" "${KUBE_BIN}/cni-notices.tar.gz"
 
   record-preload-info "${cni_tar}" "${cni_hash}"
 }
