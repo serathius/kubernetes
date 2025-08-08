@@ -426,6 +426,7 @@ function kube::release::package_kube_manifests_tarball() {
     cp "${KUBE_ROOT}/gke/cluster/gce/gci/gke-internal-configure-helper.sh" "${dst_dir}/"
   fi
   cp "${KUBE_ROOT}/gke/cluster/gce/gci/node-registration-checker.sh" "${dst_dir}/node-registration-checker.sh"
+  cp "${KUBE_ROOT}/gke/cluster/gce/gci/retag-preloaded-images.sh" "${dst_dir}/retag-preloaded-images.sh"
   cp "${KUBE_ROOT}/gke/cluster/gce/gci/networkd-monitor.sh" "${dst_dir}/networkd-monitor.sh"
   cp -r "${KUBE_ROOT}/gke/cluster/gce/gci/sysctl/" "${dst_dir}/sysctl/"
   cp -r "${KUBE_ROOT}/gke/cluster/gce/gci/gpu/" "${dst_dir}/gpu/"

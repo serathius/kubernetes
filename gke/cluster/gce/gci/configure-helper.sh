@@ -1742,7 +1742,7 @@ function start-kubelet {
 [Unit]
 Description=Kubernetes kubelet
 Requires=network-online.target
-After=network-online.target
+After=network-online.target retag-preloaded-images.service
 
 [Service]
 Restart=always
@@ -1757,6 +1757,34 @@ EOF
 
   systemctl daemon-reload
   systemctl start kubelet.service
+}
+
+function configure-retag-preloaded-images {
+  # This service runs once on boot before kubelet and after containerd restarts.
+  # It is a safe no-op on subsequent reboots and will not run again if kubelet restarts.
+  # Does not block startup on failure as this service is best effort. If we fail to retag
+  # images, they will be repulled when referenced at runtime.
+  cat <<EOF >/etc/systemd/system/retag-preloaded-images.service
+[Unit]
+Description=Retag preloaded images for AR
+Requires=containerd.service
+
+[Service]
+Type=oneshot
+Environment="KUBE_DOCKER_REGISTRY=${KUBE_DOCKER_REGISTRY}"
+ExecStartPre=/bin/chmod 544 /home/kubernetes/bin/retag-preloaded-images.sh
+ExecStart=/home/kubernetes/bin/retag-preloaded-images.sh
+StandardOutput=journal+console
+RemainAfterExit=yes
+
+[Install]
+WantedBy=kubernetes.target
+EOF
+}
+
+function start-retag-preloaded-images {
+  systemctl daemon-reload
+  systemctl --no-block start retag-preloaded-images.service || true
 }
 
 # This function assembles the node problem detector systemd service file and
@@ -3133,6 +3161,9 @@ function main() {
     log-wrap 'GKESetupContainerdDropInConfig' gke-setup-containerd-drop-in-systemd-config
     log-wrap 'GKESetupContainerd' gke-setup-containerd
   fi
+
+  log-wrap "ConfigureRetagPreloadedImagesForAR" configure-retag-preloaded-images
+  log-wrap "StartRetagPreloadedImagesForAR" start-retag-preloaded-images
 
   log-start 'SetupKubePodLogReadersGroupDir'
   if [[ -n "${KUBE_POD_LOG_READERS_GROUP:-}" ]]; then

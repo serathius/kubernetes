@@ -762,6 +762,8 @@ function install-kube-manifests {
   # Add the installable script to KUBE_BIN so installables can be processed.
   cp "${KUBE_HOME}/kube-manifests/kubernetes/gci-trusty/installable.py" "${KUBE_BIN}/installable.py"
 
+  cp "${dst_dir}/kubernetes/gci-trusty/retag-preloaded-images.sh" "${KUBE_BIN}/retag-preloaded-images.sh"
+
 
   rm -f "${KUBE_HOME}/${manifests_tar}"
   rm -f "${KUBE_HOME}/${manifests_tar}.sha512"
