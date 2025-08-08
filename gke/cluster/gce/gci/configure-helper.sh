@@ -1793,7 +1793,7 @@ function start-node-problem-detector {
   systemctl mask node-problem-detector.service
 
   # Enable node problem detector to use node P4SA to call Google APIs.
-  if [[ -n "$NODE_PROBLEM_DETECTOR_ADC_CONFIG" ]]; then
+  if [[ -n "${NODE_PROBLEM_DETECTOR_ADC_CONFIG:-}" ]]; then
     local application_default_credentials_config_path="${KUBE_HOME}/node-problem-detector/config/application_default_credentials.json"
     echo "$NODE_PROBLEM_DETECTOR_ADC_CONFIG" > "${application_default_credentials_config_path}"
   fi
@@ -1808,7 +1808,7 @@ After=network-online.target
 [Service]
 EOF
 
-  if [[ -n "$NODE_PROBLEM_DETECTOR_ADC_CONFIG" ]]; then
+  if [[ -n "${NODE_PROBLEM_DETECTOR_ADC_CONFIG:-}" ]]; then
   cat <<EOF >>/etc/systemd/system/gke-node-problem-detector.service
 Environment="GOOGLE_APPLICATION_CREDENTIALS=${application_default_credentials_config_path}"
 EOF

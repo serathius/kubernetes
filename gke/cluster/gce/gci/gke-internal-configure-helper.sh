@@ -883,7 +883,7 @@ function gke-configure-node-problem-detector {
   local custom_plugin_monitors="${custom_km_config},${custom_sm_config}"
 
   gke-configure-npd-custom-plugins
-  if [[ -n "${GKE_NPD_CUSTOM_PLUGINS_CONFIG}" ]]; then
+  if [[ -n "${GKE_NPD_CUSTOM_PLUGINS_CONFIG:-}" ]]; then
     custom_plugin_monitors+=",${GKE_NPD_CUSTOM_PLUGINS_CONFIG}"
   fi
 
@@ -1004,13 +1004,13 @@ function gke-setup-gcfs {
   local gcfs_read_ahead_flag="${enable_single_flighting} ${read_ahead_max_blocks} ${read_ahead_cache_size_ratio}"
 
   # Enable gcfsd to use node P4SA to call Google APIs.
-  if [[ -n "$GCFSD_ADC_CONFIG" ]]; then
+  if [[ -n "${GCFSD_ADC_CONFIG:-}" ]]; then
     local gcfsd_application_default_credentials_config_path="${KUBE_HOME}/gcfsd_application_default_credentials.json"
     echo "$GCFSD_ADC_CONFIG" > "${gcfsd_application_default_credentials_config_path}"
   fi
 
   # Enable gcfs-snapshotter to use node P4SA to call Google APIs.
-  if [[ -n "$GCFS_SNAPSHOTTER_ADC_CONFIG" ]]; then
+  if [[ -n "${GCFS_SNAPSHOTTER_ADC_CONFIG:-}" ]]; then
     local gcfs_snapshotter_application_default_credentials_config_path="${KUBE_HOME}/gcfs_snaphotter_application_default_credentials.json"
     echo "$GCFS_SNAPSHOTTER_ADC_CONFIG" > "${gcfs_snapshotter_application_default_credentials_config_path}"
   fi
@@ -1027,7 +1027,7 @@ LimitNOFILE=infinity
 Environment=GOGC=10
 EOF
 
-  if [[ -n "$GCFSD_ADC_CONFIG" ]]; then
+  if [[ -n "${GCFSD_ADC_CONFIG:-}" ]]; then
   cat <<EOF >>/etc/systemd/system/gcfsd.service
 Environment="GOOGLE_APPLICATION_CREDENTIALS=${gcfsd_application_default_credentials_config_path}"
 EOF
@@ -1067,7 +1067,7 @@ Type=notify
 Environment=HOME=/root
 EOF
 
-  if [[ -n "$GCFS_SNAPSHOTTER_ADC_CONFIG" ]]; then
+  if [[ -n "${GCFS_SNAPSHOTTER_ADC_CONFIG:-}" ]]; then
   cat <<EOF >>/etc/systemd/system/gcfs-snapshotter.service
 Environment="GOOGLE_APPLICATION_CREDENTIALS=${gcfs_snapshotter_application_default_credentials_config_path}"
 EOF
