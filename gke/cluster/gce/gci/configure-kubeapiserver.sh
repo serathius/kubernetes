@@ -97,7 +97,7 @@ function start-kube-apiserver {
     params+=" $(gke-kube-apiserver-internal-sni-param)"
   fi
   params+=" --kubelet-preferred-address-types=InternalIP,ExternalIP,Hostname"
-  if [[ -s "${REQUESTHEADER_CA_CERT_PATH:-}" ]]; then
+  if [[ -n "${REQUESTHEADER_CA_CERT_PATH:-}" ]]; then
     params+=" --requestheader-client-ca-file=${REQUESTHEADER_CA_CERT_PATH}"
     params+=" --requestheader-allowed-names=aggregator"
     params+=" --requestheader-extra-headers-prefix=X-Remote-Extra-"
@@ -107,7 +107,7 @@ function start-kube-apiserver {
     params+=" --proxy-client-key-file=${PROXY_CLIENT_KEY_PATH}"
   fi
   params+=" --enable-aggregator-routing=true"
-  if [[ -e "${APISERVER_CLIENT_CERT_PATH}" ]] && [[ -e "${APISERVER_CLIENT_KEY_PATH}" ]]; then
+  if [[ -n "${APISERVER_CLIENT_CERT_PATH}" ]] && [[ -n "${APISERVER_CLIENT_KEY_PATH}" ]]; then
     params+=" --kubelet-client-certificate=${APISERVER_CLIENT_CERT_PATH}"
     params+=" --kubelet-client-key=${APISERVER_CLIENT_KEY_PATH}"
   fi
