@@ -107,7 +107,7 @@ function start-kube-apiserver {
     params+=" --proxy-client-key-file=${PROXY_CLIENT_KEY_PATH}"
   fi
   params+=" --enable-aggregator-routing=true"
-  if [[ -n "${APISERVER_CLIENT_CERT_PATH}" ]] && [[ -n "${APISERVER_CLIENT_KEY_PATH}" ]]; then
+  if [[ -n "${APISERVER_CLIENT_CERT_PATH:-}" ]] && [[ -n "${APISERVER_CLIENT_KEY_PATH:-}" ]]; then
     params+=" --kubelet-client-certificate=${APISERVER_CLIENT_CERT_PATH}"
     params+=" --kubelet-client-key=${APISERVER_CLIENT_KEY_PATH}"
   fi
