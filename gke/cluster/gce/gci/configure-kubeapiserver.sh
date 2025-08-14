@@ -461,6 +461,14 @@ EOF
     container_env+=",{\"name\": \"KUBE_PATCH_CONVERSION_DETECTOR\", \"value\": \"${ENABLE_PATCH_CONVERSION_DETECTOR}\"}"
   fi
 
+  # All egress traffic will be blocked by a black hole proxy, except for the
+  # essential GKE services and the domains provided in this user-defined list.
+  if [[ -n "${KUBE_APISERVER_NO_PROXY_ALLOWLIST:-}" ]]; then
+    container_env+=",{\"name\": \"HTTP_PROXY\", \"value\": \"http://master-internet-access-unavailable.localhost\"}"
+    container_env+=",{\"name\": \"HTTPS_PROXY\", \"value\": \"https://master-internet-access-unavailable.localhost\"}"
+    container_env+=",{\"name\": \"NO_PROXY\", \"value\": \"${KUBE_APISERVER_NO_PROXY_ALLOWLIST}\"}"
+  fi
+
   if [[ -n "${container_env}" ]]; then
     container_env="\"env\":[${container_env}],"
   fi
