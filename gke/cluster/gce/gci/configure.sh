@@ -924,13 +924,19 @@ function install-auth-provider-gcp {
     return
   fi
 
-  local -r auth_provider_storage_url="${STORAGE_ENDPOINT}/gke-release/auth-provider-gcp/${AUTH_PROVIDER_GCP_VERSION}/${HOST_PLATFORM}_${HOST_ARCH}/auth-provider-gcp"
+  local -r auth_provider_storage_path="${STORAGE_ENDPOINT}/gke-release/auth-provider-gcp/${AUTH_PROVIDER_GCP_VERSION}"
+  local -r auth_provider_storage_url="${auth_provider_storage_path}/${HOST_PLATFORM}_${HOST_ARCH}/auth-provider-gcp"
   echo "Downloading auth-provider-gcp ${auth_provider_storage_url}" .
   download-or-bust "${auth_provider_gcp_hash}" "${auth_provider_storage_url}"
 
   # Keep in sync with --image-credential-provider-bin-dir in cloud/kubernetes/distro/legacy/kube_env.go
   mv "${KUBE_HOME}/auth-provider-gcp" "${KUBE_BIN}"
   chmod a+x "${KUBE_BIN}/auth-provider-gcp"
+
+  local -r license_url="${auth_provider_storage_path}/LICENSE"
+  echo "Downloading auth-provider-gcp license"
+  download-or-bust "" "${license_url}"
+  mv "${KUBE_HOME}/LICENSE" "${KUBE_BIN}/auth-provider-gcp-license"
 
   record-preload-info "auth-provider-gcp" "${auth_provider_gcp_hash}"
 }
