@@ -203,6 +203,16 @@ function download-kubelet-config {
   )
 }
 
+function snapshot-initial-kubelet-config {
+  if [[ ! -f "${KUBE_HOME}/kubelet-config.yaml" ]]; then
+    echo "Kubelet config not found, skipping snapshot."
+    return
+  fi
+  echo "Creating initial kubelet config snapshot for NPD"
+  mkdir -p "${KUBE_HOME}/npd-custom-plugins/configs"
+  cp "${KUBE_HOME}/kubelet-config.yaml" "${KUBE_HOME}/npd-custom-plugins/configs/init-kubelet-config.yaml"
+}
+
 # A function to pull kube-master-certs from HMS using hurl
 function download-kube-master-certs-hurl {
   local -r endpoint=$(get-metadata-value "instance/attributes/gke-api-endpoint")
@@ -1543,6 +1553,7 @@ log-wrap 'ConfigureCgroupMode' configure-cgroup-mode
 log-wrap 'BestEffortRebootDetection' detect-reboot-needed
 
 log-wrap 'DownloadKubeletConfig' download-kubelet-config "${KUBE_HOME}/kubelet-config.yaml"
+log-wrap 'SnapshotInitialKubeletConfig' snapshot-initial-kubelet-config
 
 if [[ "${KUBERNETES_MASTER:-}" == "true" ]]; then
   log-wrap 'DownloadKubeMasterCerts' download-kube-master-certs-hurl
