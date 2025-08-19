@@ -35,6 +35,7 @@ import subprocess
 import sys
 import urllib3
 import hashlib
+from pathlib import Path
 
 INSTALLABLE_NAMESPACE = "installable.gke.io"
 
@@ -165,14 +166,12 @@ def get_gce_credentials() -> str:
     return json.loads(data)['access_token']
 
 class GCS:
-  def download(self, gcs_path: str, install_prefix: str) -> str:
-    if not gcs_path.startswith('https://storage.googleapis.com'):
-      raise ValueError(f"GCS path {gcs_path} must start with https://storage.googleapis.com")
+  def download(self, gcs_path: str, install_path: str) -> str:
+    if not gcs_path:
+      raise ValueError(f"gcs_path cannot be empty.")
 
-    if not install_prefix:
-      raise ValueError(f"install_prefix cannot be empty.")
-
-    file_name = os.path.join(install_prefix, gcs_path.split('/')[-1])
+    if not install_path:
+      raise ValueError(f"install_path cannot be empty.")
 
     retry = urllib3.Retry(
       total=5,
@@ -189,20 +188,22 @@ class GCS:
           headers = {}
           headers['Authorization'] = f'Bearer {credentials}'
 
-          os.makedirs(install_prefix, exist_ok=True)
+          path = Path(install_path)
+
+          path.parent.mkdir(parents=True, exist_ok=True)
 
           response = http.request('GET', gcs_path, headers=headers)
           if response.status != 200:
             raise GetCredentialError(f'Failed to get file from GCS: status: {response.status} reason: {response.reason}')
 
-          with open(file_name, 'wb') as f:
+          with open(install_path, 'wb') as f:
               f.write(response.data)
 
-          return file_name
+          return install_path
 
       except Exception as e:
-          if os.path.exists(file_name):
-              os.remove(file_name)
+          if os.path.exists(install_path):
+              os.remove(install_path)
           raise
 
 class Ctr:
@@ -330,21 +331,20 @@ class AppPkg(Installable):
 
   def download(self):
     """Downloads the underlying file using gcs."""
-    file_path: str = ""
     try:
-      file_path = gcs.download(self.get_url(), self.get_install_prefix())
+      file_path = self.get_install_prefix()
+      gcs.download(self.get_url(), file_path)
       validate_checksum(file_path, self.digest_algo(), self.digest())
       os.chmod(file_path, self.get_mode())
     except Exception as e:
-      if file_path and os.path.exists(file_path):
+      if os.path.exists(file_path):
         os.remove(file_path)
       raise
 
   def is_preloaded(self) -> bool:
     """Check if the same file exists on disk."""
     try:
-      file_path = os.path.join(self.get_install_prefix(), self.get_url().split('/')[-1])
-      validate_checksum(file_path, self.digest_algo(), self.digest())
+      validate_checksum(self.get_install_prefix(), self.digest_algo(), self.digest())
       return True
     except Exception as e:
       return False

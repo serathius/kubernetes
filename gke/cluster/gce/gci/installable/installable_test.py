@@ -25,6 +25,7 @@ import sys
 import tempfile
 from typing import Any
 import unittest
+from pathlib import Path
 
 
 def credentials_in_log(log: str) -> bool:
@@ -60,7 +61,7 @@ apppkg_fake_content = """{
 "remoteURL": "https://storage.googleapis.com/gke-prod-binaries/gke-exec-auth-plugin",
 "digest": "b63f7abcf5d2c195e01619532286d0d68a259839c117e373aa204ab68cda35daa7c703d093dd9cb5a40868496890eee712d02f9cf453063e964a6632814b3d5a",
 "digestAlgo": "sha512",
-"installPrefix": "/tmp/installables/test/kubernetes/bin/",
+"installPrefix": "/tmp/installables/test/kubernetes/bin/gke-exec-auth-plugin",
 "mode": "755"
 }"""
 
@@ -76,7 +77,7 @@ apppkg_content = """{
 "remoteURL": "https://storage.googleapis.com/gke-prod-binaries/gke-exec-auth-plugin/internal/gke-internal-branch-v1-33/f3f058859e54db63fd78adecd073be39db348785/linux_amd64/gke-exec-auth-plugin",
 "digest": "1eacaa2fba8d9b993a1777b676aef18c4ab77a9965a2dab95d7e24115a4958161c1f23bd91a45bb6cb7157683ecd20ed4320b2b6eec2b922af59488b4738d037",
 "digestAlgo": "sha512",
-"installPrefix": "/tmp/installables/test/kubernetes/bin/",
+"installPrefix": "/tmp/installables/test/kubernetes/bin/gke-exec-auth-plugin",
 "mode": "755"
 }"""
 
@@ -86,12 +87,12 @@ garbage = 'this_is_garbage'
 class FakeGCS(installable.GCS):
   fake_file = b"AppPkg"
 
-  def download(self, gcs_path, install_prefix):
-    os.makedirs(install_prefix, exist_ok=True)
-    file_path = os.path.join(install_prefix, gcs_path.split('/')[-1])
-    with open(file_path, "wb") as file:
+  def download(self, gcs_path, install_path):
+    path = Path(install_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(install_path, "wb") as file:
       file.write(self.fake_file)
-    return file_path
+    return install_path
 
 class FakeCtr(installable.Ctr):
   """FakeCtr fakes calls to the ctr executable."""
