@@ -35,9 +35,9 @@ DEFAULT_NPD_VERSION='v0.8.21-0-gca907dc1-gke.0'
 DEFAULT_NPD_HASH_AMD64='80bbccba6b4df7e62fc456814cc978e261f7e707fedd8cf525d8e30c6204bea317914d26fad0be5f0debe4b95934209ae927c55ed158ff4d9a6f4abff05fdcb9'
 DEFAULT_NPD_HASH_ARM64='bd0bd2c0f999ae05391efe8aea84bccd4ff8bc50d4c2334afc0d7fc531eb4814393c0cfaaad7f71e2964c280641eb3b957f916bb625addcb2eb43a7606fdf2d3'
 
-NPD_CUSTOM_PLUGINS_VERSION="v1.0.25"
-NPD_CUSTOM_PLUGINS_TAR_AMD64_HASH="9b2602fe1e70eb7c9a8702cb38ec127254ce200096f72df4bb97a9ec76a1a6a5071faeff9b6c86332043eda870c69e6dab80d9f4c52079e2671a0592fe078d63"
-NPD_CUSTOM_PLUGINS_TAR_ARM64_HASH="82af0c089dc20dbd88e6407459c5f2cbd633820447368092dc0b2d5a60392d7bfa6bfe4cfa21e8c18334433ab9ec596ebc6ced2f22c9ff1074b8d365dc22ff6a"
+NPD_CUSTOM_PLUGINS_VERSION="v1.0.26"
+NPD_CUSTOM_PLUGINS_TAR_AMD64_HASH="c1ae8bd1f850bfdf114dc175522e4c17cd1272645f4791582b155587baf4ae312e2eba87d48541b79805c48fdc2a3b3a24dd43e652fa5db2798ad70b40fa81a9"
+NPD_CUSTOM_PLUGINS_TAR_ARM64_HASH="b78c158831ab3d09334439ab80dbf377a491e8b379560b9d5a6a782e9ba9ce416f2515c21a320e7dcbfae2c4aedb0c9a47d2c43461c2fc888327c32169f1f153"
 
 DEFAULT_CRICTL_VERSION='v1.31.1-gke.0'
 DEFAULT_CRICTL_AMD64_SHA512='7c0ea3355b53c79e00772cfdf0bf67d262a9a0e827fdcf5be956ff68be25b47d7cb5cd6b065e3de251efc7b4534961e37a37b9f0e3f1efa22dfe2b5149702889'
@@ -559,6 +559,7 @@ function install-npd-custom-plugins {
       echo "$NPD_CUSTOM_PLUGINS_VERSION $HOST_PLATFORM/$HOST_ARCH"
       exit 1
   esac
+  local -r npd_plugin_path="${STORAGE_ENDPOINT}/gke-release/npd-custom-plugins/${version}"
   local -r tar="npd-custom-plugins-${version}-${HOST_PLATFORM}-${HOST_ARCH}.tar.gz"
 
   if is-preloaded "${tar}" "${hash}"; then
@@ -567,13 +568,18 @@ function install-npd-custom-plugins {
   fi
 
   echo "Downloading ${tar}."
-  download-or-bust "${hash}" "${STORAGE_ENDPOINT}/gke-release/npd-custom-plugins/${version}/${tar}"
+  download-or-bust "${hash}" "${npd_plugin_path}/${tar}"
   local -r dir="${KUBE_HOME}/npd-custom-plugins"
   mkdir -p "${dir}"
   tar xzf "${KUBE_HOME}/${tar}" -C "${dir}" --overwrite
   local -r kube_bin_dir="${KUBE_HOME}/bin"
   cp -r "${dir}/bins"/* "${kube_bin_dir}"
   rm -f "${KUBE_HOME}/${tar}"
+
+  local -r license_url="${npd_plugin_path}/notices.tar.gz"
+  echo "Downloading npd-custom-plugins license"
+  download-or-bust "" "${license_url}"
+  mv "${KUBE_HOME}/notices.tar.gz" "${kube_bin_dir}/npd-checker-notices.tar.gz"
 
   record-preload-info "${tar}" "${hash}"
 }
