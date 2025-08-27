@@ -332,7 +332,7 @@ class AppPkg(Installable):
   def download(self):
     """Downloads the underlying file using gcs."""
     try:
-      file_path = self.get_install_prefix()
+      file_path = self.get_file_path()
       gcs.download(self.get_url(), file_path)
       validate_checksum(file_path, self.digest_algo(), self.digest())
       os.chmod(file_path, self.get_mode())
@@ -344,15 +344,10 @@ class AppPkg(Installable):
   def is_preloaded(self) -> bool:
     """Check if the same file exists on disk."""
     try:
-      validate_checksum(self.get_install_prefix(), self.digest_algo(), self.digest())
+      validate_checksum(self.get_file_path(), self.digest_algo(), self.digest())
       return True
     except Exception as e:
       return False
-
-  def get_install_prefix(self) -> str:
-    """Return the installPrefix string for the AppPkg"""
-
-    return self.content['installPrefix']
 
   def get_mode(self) -> int:
     """Returns the mode. If not set we use the default 0755."""
@@ -371,6 +366,11 @@ class AppPkg(Installable):
   def run(self, is_preloader=False):
     """Run for AppPkgs is a noop"""
     return
+
+  def get_file_path(self) -> str:
+    if not self.content["installDestination"]:
+      return  os.path.join(self.content['installPrefix'], self.get_url().split('/')[-1])
+    return self.content["installDestination"]
 
 class Container(Installable):
   """A container kind installable.

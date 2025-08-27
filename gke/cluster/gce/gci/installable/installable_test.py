@@ -61,7 +61,7 @@ apppkg_fake_content = """{
 "remoteURL": "https://storage.googleapis.com/gke-prod-binaries/gke-exec-auth-plugin",
 "digest": "b63f7abcf5d2c195e01619532286d0d68a259839c117e373aa204ab68cda35daa7c703d093dd9cb5a40868496890eee712d02f9cf453063e964a6632814b3d5a",
 "digestAlgo": "sha512",
-"installPrefix": "/tmp/installables/test/kubernetes/bin/gke-exec-auth-plugin",
+"installDestination": "/tmp/installables/test/kubernetes/bin/gke-exec-auth-plugin",
 "mode": "755"
 }"""
 
@@ -77,7 +77,7 @@ apppkg_content = """{
 "remoteURL": "https://storage.googleapis.com/gke-prod-binaries/gke-exec-auth-plugin/internal/gke-internal-branch-v1-33/f3f058859e54db63fd78adecd073be39db348785/linux_amd64/gke-exec-auth-plugin",
 "digest": "1eacaa2fba8d9b993a1777b676aef18c4ab77a9965a2dab95d7e24115a4958161c1f23bd91a45bb6cb7157683ecd20ed4320b2b6eec2b922af59488b4738d037",
 "digestAlgo": "sha512",
-"installPrefix": "/tmp/installables/test/kubernetes/bin/gke-exec-auth-plugin",
+"installDestination": "/tmp/installables/test/kubernetes/bin/gke-exec-auth-plugin",
 "mode": "755"
 }"""
 
