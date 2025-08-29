@@ -2973,7 +2973,7 @@ function setup-hugepages {
 }
 
 function setup-swap {
-  # In private preview stage, set Swap on boot disk by default.
+  # Set Swap on boot disk by default.
   local swap_file_on_boot
   if is-ubuntu; then
     swap_file_on_boot=/swapfile
@@ -2995,10 +2995,20 @@ function setup-swap {
     # Swap should be accessible only by root
     chmod 600 "${swap_file_on_boot}"
 
-    mkswap "${swap_file_on_boot}"
+    local swap_device="${swap_file_on_boot}"
+    # Check if swap encryption is enabled.
+    if [[ "${NODE_SWAP_ENCRYPTION:-false}" == "true" ]]; then
+      echo "Encrypting swap file."
+      # Use secure_random to generate a 256-bit (32-byte) key.
+      # The base64 output is decoded and piped to cryptsetup.
+      secure_random 32 | base64 --decode | cryptsetup open "${swap_file_on_boot}" encswap --type plain --key-file - --key-size 256
+      swap_device="/dev/mapper/encswap"
+    fi
+
+    mkswap "${swap_device}"
     # Setting a specific low priority as default configuration ensures
     # customer-defined swap takes precedence (higher the priority, more preferencial).
-    swapon -p 10 "${swap_file_on_boot}"
+    swapon -p 10 "${swap_device}"
 
     # Disable swap on system cgroup. This runs before start-kubelet.
     systemctl set-property system.slice MemorySwapMax=0
