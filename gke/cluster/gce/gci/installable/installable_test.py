@@ -375,18 +375,20 @@ class CtrTests(unittest.TestCase):
 
   # We need a container image that has bash to run these test. This image rarely changes.
   bash_image = "gcr.io/gke-release-staging/gke-distroless/bash:gke_distroless_20241207.00_p0@sha256:9bd9f35657b03f55a00a33feac0500ee183dcfd5f7f1982cd35a7a032953d466"
-  alpine_image = "docker.io/library/alpine@sha256:a8560b36e8b8210634f77d9f7f9efd7ffa463e380b75e2e74aff4511df3ef88c"
+  gcloud_image = "gcr.io/gke-release-staging/cloud-sdk:504.0.1-stable@sha256:3b4af0b6ffe23b03f8da8b9c50368bcf12c33c1f7b55ec297e379308a01c92b5"
 
   def setUp(self):
     super().setUp()
     if is_fake():
       self.skipTest('CTR tests are not hermetic and require containerd.')
     installable.ctr.download(self.bash_image)
+    installable.ctr.download(self.gcloud_image)
 
   def tearDown(self):
     super().setUp()
     if not is_fake():
       installable.ctr.delete(self.bash_image)
+      installable.ctr.delete(self.gcloud_image)
 
   def test_ctr_with_mount(self):
     """Tests that a ctr with the root directory mounted allows us to read from and write to it."""
@@ -441,6 +443,38 @@ class CtrTests(unittest.TestCase):
     )
     self.assertEqual(result.returncode, 0, msg=result)
     self.assertEqual(env_var_val + '\n', result.stdout.decode('utf-8'))
+
+  def test_ctr_with_nethost(self):
+    """
+    Tests that a ctr with host networking namespace.
+    The IP address should be same in host and container.
+    """
+    get_ip_command = 'ip a | grep inet | awk \'{print $2}\' | cut -d\'/\' -f1'
+
+    ip_command = subprocess.run(
+        get_ip_command,
+        capture_output=True,
+        text=True,
+        shell=True,
+        check=True
+    )
+
+    host_content = ip_command.stdout
+
+    result = installable.ctr.run(
+      container_name='net_host_container',
+      url=self.gcloud_image,
+      ctr_args=[
+        '--net-host',
+        ],
+      container_args=[
+        '/bin/sh',
+        '-c',
+        f'apt update > /dev/null 2>&1; apt install -yq iproute2 > /dev/null 2>&1; {get_ip_command}'
+      ],
+    )
+    self.assertEqual(result.returncode, 0, msg=result)
+    self.assertEqual(host_content, result.stdout.decode('utf-8'))
 
 fake_creds = "fake_creds"
 
