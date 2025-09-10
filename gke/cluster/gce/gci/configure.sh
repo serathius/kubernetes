@@ -1489,9 +1489,7 @@ function log-proto {
 # Variables needed for this function to work will be set by the preloader
 function preload {
   cd "${KUBE_HOME}"
-  if [[ "${ENABLE_AUTH_PROVIDER_GCP:-""}" == "true" ]]; then
-    log-wrap 'InstallExternalCredentialProvider' install-auth-provider-gcp
-  fi
+  log-wrap 'InstallExternalCredentialProvider' install-auth-provider-gcp
 
   if [[ "${KUBERNETES_MASTER:-}" == "true" ]]; then
     log-wrap 'InstallHurl' install-hurl
