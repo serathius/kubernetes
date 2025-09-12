@@ -537,11 +537,15 @@ function ensure-local-ssds() {
   # NODE_LOCAL_SSDS_EPHEMERAL is env variable for --ephemeral-storage API
   # NODE_EPHEMERAL_STORAGE_LOCAL_SSD is env variable for --ephemeral-storage-local-ssd API
   # Both APIs now have the same functionality
+  if [[ "${NODE_SWAP_PROFILE:-}" == "DEDICATED_LOCAL_SSD" ]]; then
+    ensure-local-ssds-swap
+  fi
+
   if [ "${NODE_LOCAL_SSDS_EPHEMERAL:-false}" == "true" ] || [ "${NODE_EPHEMERAL_STORAGE_LOCAL_SSD:-false}" == "true" ] ; then
-    if [ "${ENABLE_DATA_CACHE:-false}" == "true" ]; then
-       # Follow data cache specific logic if enabled.
-       # Local SSD selection logic is different but format/mounting logic stays the same with ensure-local-ssds-ephemeral-storage().
-       ensure-local-ssds-ephemeral-storage-data-cache
+    if [ "${ENABLE_DATA_CACHE:-false}" == "true" ] || [[ "${NODE_SWAP_PROFILE:-}" == "DEDICATED_LOCAL_SSD" ]]; then
+      # Follow reserved local ssd specific logic if either data cache or dedicated swap is enabled.
+      # Local SSD selection logic is different but format/mounting logic stays the same with ensure-local-ssds-ephemeral-storage().
+      ensure-local-ssds-ephemeral-storage-reserved
     else
       ensure-local-ssds-ephemeral-storage
     fi
@@ -592,6 +596,69 @@ function ensure-local-ssds() {
         echo "No local NVMe SSD disks found."
       fi
   done
+}
+
+# Configure and mount all local SSDs used for swap
+function ensure-local-ssds-swap() {
+  if [[ "${NODE_SWAP_PROFILE:-}" != "DEDICATED_LOCAL_SSD" ]]; then
+    return
+  fi
+
+  local devices=()
+  # Get nvme devices
+  while IFS= read -r -d '' ssd; do
+    if [ -e "${ssd}" ]; then
+      devices+=("${ssd}")
+    fi
+  done < <(find "$(dirname "${LOCAL_SSDS_ID_PATH_PREFIX}")" -maxdepth 1 -name "$(basename "${LOCAL_SSDS_ID_PATH_PREFIX}")-nvme-ssd-*" -print0 | sort -Vz)
+  if [ "${#devices[@]}" -eq 0 ]; then
+    echo "No local NVMe SSD disks found for swap."
+    return
+  fi
+
+  local ssd_for_data_cache="${NODE_LOCAL_SSDS_DATA_CACHE_COUNT:-0}"
+  local ssd_for_swap="${NODE_SWAP_DEDICATED_LOCAL_SSD_COUNT:-0}"
+  local total_devices="${#devices[@]}"
+
+  if [[ "${ssd_for_swap}" -eq 0 ]]; then
+    echo "NODE_SWAP_DEDICATED_LOCAL_SSD_COUNT is not set or is 0."
+    return
+  fi
+
+  local swap_start_index=$(( total_devices - ssd_for_data_cache - ssd_for_swap ))
+  if [[ "${swap_start_index}" -lt 0 ]]; then
+    echo "Not enough local SSDs for data cache and swap." >&2
+    return
+  fi
+
+  local swap_devices=("${devices[@]:${swap_start_index}:${ssd_for_swap}}")
+
+  if [ "${#swap_devices[@]}" -eq 0 ]; then
+    echo "No devices found for swap after partitioning."
+    return
+  fi
+
+  local device="${swap_devices[0]}"
+  local md_device="/dev/md/swap"
+  if [ "${#swap_devices[@]}" -ne 1 ]; then
+    local -r seen_arrays=("/dev/md/"*)
+    local found_existing_swap_array=false
+    for dir in "${seen_arrays[@]}"; do
+      if [[ "$dir" == "${md_device}"* ]]; then
+        echo "Using existing RAID array ${dir} for the swap devices"
+        device="${dir}"
+        found_existing_swap_array=true
+        break
+      fi
+    done
+    if [ "$found_existing_swap_array" == false ]; then
+      device="${md_device}"
+      echo "y" | mdadm --create "${device}" --level=0 --raid-devices=${#swap_devices[@]} "${swap_devices[@]}"
+    fi
+  fi
+
+  local swap_mountpoint="/mnt/stateful_partition/swap"
+  safe-format-and-mount-local-ssd "${device}" "${swap_mountpoint}"
 }
 
 # Local SSDs, if present, are used in a single RAID 0 array and directories that
@@ -648,28 +715,39 @@ function ensure-local-ssds-ephemeral-storage() {
   safe-bind-mount "${ephemeral_mountpoint}/log_pods" "/var/log/pods"
 }
 
-# Local SSDs + Data Cached SSDs, if present, are used in a single RAID 0 array and
-# directories that back ephemeral storage are mounted on them (kubelet root, container runtime
-# root and pod logs).
-function ensure-local-ssds-ephemeral-storage-data-cache() {
+# Local SSDs for ephemeral storage, if present, are used in a single RAID 0 array and
+# directories that back the ephemeral storage are mounted on them (kubelet root,
+# container runtime root and pod logs). Local SSDs for Data Cache and Swap are reserved
+# and not formatted in this function.
+function ensure-local-ssds-ephemeral-storage-reserved() {
+  local ssd_for_data_cache=0
+  if [[ "${ENABLE_DATA_CACHE:-false}" == "true" ]]; then
+    ssd_for_data_cache="${NODE_LOCAL_SSDS_DATA_CACHE_COUNT:-0}"
+  fi
+  local ssd_for_swap=0
+  if [[ "${NODE_SWAP_PROFILE:-}" == "DEDICATED_LOCAL_SSD" ]]; then
+    ssd_for_swap="${NODE_SWAP_DEDICATED_LOCAL_SSD_COUNT:-0}"
+  fi
+  local reserved_ssd_count=$(( ssd_for_data_cache + ssd_for_swap ))
+
   local devices=()
   # Get nvme devices
-  for ssd in "${LOCAL_SSDS_ID_PATH_PREFIX}"-nvme-ssd-*; do
+  while IFS= read -r -d '' ssd; do
     if [ -e "${ssd}" ]; then
       devices+=("${ssd}")
     fi
-  done
+  done < <(find "$(dirname "${LOCAL_SSDS_ID_PATH_PREFIX}")" -maxdepth 1 -name "$(basename "${LOCAL_SSDS_ID_PATH_PREFIX}")-nvme-ssd-*" -print0 | sort -Vz)
   if [ "${#devices[@]}" -eq 0 ]; then
     echo "No local NVMe SSD disks found."
     return
   fi
 
-  ssd_for_data_cache="${NODE_LOCAL_SSDS_DATA_CACHE_COUNT:-0}"
-  available_lssds=$(( "${#devices[@]}" - "${ssd_for_data_cache}" ))
-  if [ "${available_lssds}" -eq 0 ]; then
+  local available_lssds=$(( "${#devices[@]}" - reserved_ssd_count ))
+  if [[ "${available_lssds}" -le 0 ]]; then
+    echo "No local SSDs available for ephemeral storage."
     return
   fi
-  available_devices=("${devices[@]:0:$available_lssds}")
+  available_devices=("${devices[@]:0:${available_lssds}}")
 
   local device="${available_devices[0]}"
   md_device="/dev/md/kubelet_ephemeral_storage"
@@ -2968,47 +3046,61 @@ function setup-hugepages {
   fi
 }
 
-function setup-swap {
-  # Set Swap on boot disk by default.
-  local swap_file_on_boot
-  if is-ubuntu; then
-    swap_file_on_boot=/swapfile
-  else
-    swap_file_on_boot=/mnt/stateful_partition/swapfile
-  fi
+ function setup-swap {
+  local swap_dir="/mnt/stateful_partition/swap"
+  local swap_file="${swap_dir}/swapfile"
 
   # Always remove GKE-provisioned swap file if it exists at bootstrap
-  if [[ -f "$swap_file_on_boot" ]]; then
+  if [[ -f "$swap_file" ]]; then
     swapoff -a
-    rm -f "${swap_file_on_boot}"
+    rm -f "${swap_file}"
   fi
 
-  # Enable Swap if user specifies swap file size
-  if [[ -n "${NODE_SWAP_SIZE:-}" ]]; then
-    echo "Create swap file with ${NODE_SWAP_SIZE} in ${swap_file_on_boot}."
-    swapoff -a
-    fallocate -l "${NODE_SWAP_SIZE}" "${swap_file_on_boot}"
-    # Swap should be accessible only by root
-    chmod 600 "${swap_file_on_boot}"
-
-    local swap_device="${swap_file_on_boot}"
-    # Check if swap encryption is enabled.
-    if [[ "${NODE_SWAP_ENCRYPTION:-false}" == "true" ]]; then
-      echo "Encrypting swap file."
-      # Use secure_random to generate a 256-bit (32-byte) key.
-      # The base64 output is decoded and piped to cryptsetup.
-      secure_random 32 | base64 --decode | cryptsetup open "${swap_file_on_boot}" encswap --type plain --key-file - --key-size 256
-      swap_device="/dev/mapper/encswap"
-    fi
-
-    mkswap "${swap_device}"
-    # Setting a specific low priority as default configuration ensures
-    # customer-defined swap takes precedence (higher the priority, more preferencial).
-    swapon -p 10 "${swap_device}"
-
-    # Disable swap on system cgroup. This runs before start-kubelet.
-    systemctl set-property system.slice MemorySwapMax=0
+  if [[ -z "${NODE_SWAP_SIZE:-}" ]]; then
+    return
   fi
+
+  if [[ "${NODE_SWAP_PROFILE:-}" == "BOOT_DISK" ]]; then
+    echo "Setting up swap on boot disk."
+    mkdir -p "${swap_dir}"
+  elif [[ "${NODE_SWAP_PROFILE:-}" == "EPHEMERAL_LOCAL_SSD" ]]; then
+    echo "Setting up swap on ephemeral local SSD."
+    local ephemeral_ssd_swap_dir="/mnt/stateful_partition/kube-ephemeral-ssd/swap"
+    mkdir -p "${ephemeral_ssd_swap_dir}"
+    safe-bind-mount "${ephemeral_ssd_swap_dir}" "${swap_dir}"
+  elif [[ "${NODE_SWAP_PROFILE:-}" == "DEDICATED_LOCAL_SSD" ]]; then
+    # The local SSDs are configured and mounted in ensure-local-ssds-swap(),
+    # no other setup required here.
+    echo "Setting up swap on dedicated local SSD."
+  else
+    # Default to provision swap on boot disk.
+    echo "Unexpected NODE_SWAP_PROFILE=${NODE_SWAP_PROFILE:-}, not initializing swap"
+    return
+  fi
+
+  echo "Create swap file with ${NODE_SWAP_SIZE} in ${swap_file}."
+  swapoff -a
+  fallocate -l "${NODE_SWAP_SIZE}" "${swap_file}"
+  # Swap should be accessible only by root.
+  chmod 600 "${swap_file}"
+
+  local swap_device="${swap_file}"
+  # Check if swap encryption is enabled.
+  if [[ "${NODE_SWAP_ENCRYPTION:-false}" == "true" ]]; then
+    echo "Encrypting swap file."
+    # Use secure_random to generate a 256-bit (32-byte) key.
+    # The base64 output is decoded and piped to cryptsetup.
+    secure_random 32 | base64 --decode | cryptsetup open "${swap_file}" encswap --type plain --key-file - --key-size 256
+    swap_device="/dev/mapper/encswap"
+  fi
+
+  mkswap "${swap_device}"
+  # Setting a specific low priority as default configuration ensures
+  # customer-defined swap takes precedence (higher the priority, more preferencial).
+  swapon -p 10 "${swap_device}"
+
+  # Disable swap on system cgroup. This runs before start-kubelet.
+  systemctl set-property system.slice MemorySwapMax=0
 }
 
 # Setup transparent hugepage based on provided flags
