@@ -244,9 +244,7 @@ function config-ip-firewall {
       ip -6 addr add dev lo "${ipv6_gke_mds_listen_address}/128" scope host
       ip6tables -w -t nat -I PREROUTING -p tcp ! -i eth0 -d "${METADATA_SERVER_IPV6}" --dport 80 -m comment --comment "metadata-concealment: bridge traffic to metadata server goes to metadata proxy" -j DNAT --to-destination "[${ipv6_gke_mds_listen_address}]:988"
       ip6tables -w -t nat -I PREROUTING -p tcp ! -i eth0 -d "${METADATA_SERVER_IPV6}" --dport 8080 -m comment --comment "metadata-concealment: bridge traffic to metadata server goes to metadata proxy" -j DNAT --to-destination "[${ipv6_gke_mds_listen_address}]:987"
-      if [[ "${ENABLE_S2A_PORT:-}" == "true" ]]; then
-        ip6tables -w -t nat -I PREROUTING -p tcp ! -i eth0 -d "${METADATA_SERVER_IPV6}" --dport 8082 -m comment --comment "metadata-concealment: bridge traffic to metadata server goes to metadata proxy" -j DNAT --to-destination "[${ipv6_gke_mds_listen_address}]:991"
-      fi
+      ip6tables -w -t nat -I PREROUTING -p tcp ! -i eth0 -d "${METADATA_SERVER_IPV6}" --dport 8082 -m comment --comment "metadata-concealment: bridge traffic to metadata server goes to metadata proxy" -j DNAT --to-destination "[${ipv6_gke_mds_listen_address}]:991"
     fi
     if [[ "${STACK_TYPE:-}" != "IPV6" ]]; then
       # cluster stackType indicate it supports IPv4
