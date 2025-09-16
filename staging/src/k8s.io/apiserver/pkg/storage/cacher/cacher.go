@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -345,6 +346,8 @@ type Cacher struct {
 // its internal cache and updating its cache in the background based on the
 // given configuration.
 func NewCacherFromConfig(config Config) (*Cacher, error) {
+	klog.InfoS("cacher.NewCacherFromConfig", "group", config.GroupResource.Group, "resource", config.GroupResource.Resource, "resourcePrefix", config.ResourcePrefix)
+	debug.PrintStack()
 	stopCh := make(chan struct{})
 	obj := config.NewFunc()
 	// Give this error when it is constructed rather than when you get the
