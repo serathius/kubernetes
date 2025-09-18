@@ -19,7 +19,7 @@ write_files:
       User=kube-bootstrap-logs-forwarder
       Group=systemd-journal
       SupplementaryGroups=serial
-      ExecStart=journalctl --no-tail --no-pager --follow --utc --output short-iso --unit setup-kubernetes-dir --unit placeholders-presuspend-setup --unit kube-node-installation --unit kube-node-configuration --unit kubelet
+      ExecStart=journalctl --no-tail --no-pager --follow --utc --output short-iso --unit setup-kubernetes-dir --unit placeholders-presuspend-setup --unit kube-node-installation --unit kube-node-configuration --unit kubelet  --unit gcfsd --unit gcfs-snapshotter
       StandardOutput=tty
       TTYPath=/dev/ttyS2
 
