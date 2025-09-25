@@ -482,23 +482,40 @@ function Start-GKEMetadataServer {
 
 
   Log-Output "Creating gke-metadata-server service"
-  & sc.exe create gke-metadata-server binPath= "${env:NODE_DIR}\gke-metadata-server.exe ${args}" start= demand
-  & sc.exe failure gke-metadata-server reset= 0 actions= restart/10000
-  Log-Output "Starting gke-metadata-server service"
-  & sc.exe start gke-metadata-server
 
-  # Wait for gke-metadata-server to be ready within 10s
-  $waited = 0
-  $timeout = 10
-  while (((Get-Service gke-metadata-server).Status -ne 'Running') -and $waited -lt $timeout) {
-    Start-Sleep 1
-    $waited++
-  }
+  New-Service -Name gke-metadata-server -BinaryPathName "${env:NODE_DIR}\gke-metadata-server.exe ${args}" -StartupType Manual
 
-  if ($waited -ge $timeout) {
+  $attempt = 0
+  $max_start_attempts = 3
+  $per_attempt_wait_seconds = 30
+  Do {
+    $attempt += 1
+    # Sometimes observed the service becomes "Stopped" if something goes wrong.
+    # Start-Service is called each attempt in case that happens.
+    # This cmdlet is Idempotent and can be redundantly called even if
+    # the service is already running.
+    Start-Service gke-metadata-server
+    $service = Get-Service -Name gke-metadata-server
+    try {
+      $service.WaitForStatus("Running", (New-TimeSpan -Seconds $per_attempt_wait_seconds))
+      Log-Output "Service gke-metadata-server is running."
+      break
+    }
+    catch {
+      Log-Output "Timeout or error waiting for service gke-metadata-server. Attempt $attempt of $max_start_attempts"
+    }
+  } while($attempt -le $max_start_attempts)
+
+  if ((Get-Service gke-metadata-server).Status -ne 'Running') {
     Log-Output "$(Get-Service gke-metadata-server | Out-String)"
-    Throw ("Timeout while waiting ${timeout} seconds for gke-metadata-server to start")
+    Throw ("Timeout after ${max_start_attempts} at $per_attempt_wait_seconds seconds each for gke-metadata-server to run. ")
   }
+
+  # There is no cmdlet equivalent for this sc.exe command.
+  # Set restart policy in case the MDS crashes in the future.
+  sc.exe failure gke-metadata-server reset= 0 actions= restart/10000
+
+  Log-Output "Done creating and running gke-metadata-server service."
 }
 
 # Downloads the Kubernetes binaries from kube-env's NODE_BINARY_TAR_URL and
