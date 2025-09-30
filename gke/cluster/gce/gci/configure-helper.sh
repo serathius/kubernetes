@@ -3060,20 +3060,23 @@ function setup-hugepages {
     return
   fi
 
-  if [[ "${NODE_SWAP_PROFILE:-}" == "BOOT_DISK" ]]; then
+  # The default profile is to create swap on boot disk, this handles the private
+  # API kubelet-config behavior.
+  local swap_profile="${NODE_SWAP_PROFILE:-BOOT_DISK}"
+  if [[ "${swap_profile}" == "BOOT_DISK" ]]; then
     echo "Setting up swap on boot disk."
     mkdir -p "${swap_dir}"
-  elif [[ "${NODE_SWAP_PROFILE:-}" == "EPHEMERAL_LOCAL_SSD" ]]; then
+  elif [[ "${swap_profile}" == "EPHEMERAL_LOCAL_SSD" ]]; then
     echo "Setting up swap on ephemeral local SSD."
     local ephemeral_ssd_swap_dir="/mnt/stateful_partition/kube-ephemeral-ssd/swap"
     mkdir -p "${ephemeral_ssd_swap_dir}"
     safe-bind-mount "${ephemeral_ssd_swap_dir}" "${swap_dir}"
-  elif [[ "${NODE_SWAP_PROFILE:-}" == "DEDICATED_LOCAL_SSD" ]]; then
+  elif [[ "${swap_profile}" == "DEDICATED_LOCAL_SSD" ]]; then
     # The local SSDs are configured and mounted in ensure-local-ssds-swap(),
     # no other setup required here.
     echo "Setting up swap on dedicated local SSD."
   else
-    # Default to provision swap on boot disk.
+    # Default to not initialize swap.
     echo "Unexpected NODE_SWAP_PROFILE=${NODE_SWAP_PROFILE:-}, not initializing swap"
     return
   fi
