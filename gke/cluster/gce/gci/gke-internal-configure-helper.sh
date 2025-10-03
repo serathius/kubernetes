@@ -502,7 +502,7 @@ function configure-containerd-customization {
 # If your new containerd feature uses CRI registry hostpath config model,
 # update this function to include it.
 function use-containerd-cri-registry-hostpath {
-  if [[ -n "${CONTAINERD_PRIVATE_CA_GSM_CERT:-}" ]]; then
+  if [[ -n "${CONTAINERD_PRIVATE_CA_GSM_CERT:-}" || "${CONTAINERD_REGISTRY_HOSTS_ENABLED:-false}" == "true" ]]; then
     echo "true"
     return
   fi
@@ -808,6 +808,12 @@ EOF
   if [[ "${ENABLE_RIPTIDE_IMAGE_PRELOADING:-false}" == "false" ]]; then
     # Mount /home/containerd as readonly to avoid security issues.
     mount --bind -o ro,exec "${CONTAINERD_HOME}" "${CONTAINERD_HOME}"
+  fi
+
+  # Invoke the installable gke-containerd-config before restarting containerd
+  # Currently it configures hosts.d and certs.d for containerd.
+  if installable-component-exists "gke-containerd-config"; then
+    process-installables "gke-containerd-config"
   fi
 
   echo "Restart containerd to load the config change"
@@ -1243,6 +1249,21 @@ function process-installables {
     flags+=("--download-restricted")
   fi
   python3 "${script}" "${flags[@]}"
+}
+
+# If processing one installable component, first check if it exists in RENDERED_INSTALLABLES map.
+function installable-component-exists {
+  local installable_name="${1:-}"
+  # Installables are passed as Json. Pass an empty map if none have been passed.
+  local all_installables="${RENDERED_INSTALLABLES:-"{}"}"
+  if [[ -z "${installable_name}" ]]; then
+    false
+  fi
+  if echo "${all_installables}" | jq -e --arg key "${installable_name}" 'has($key)' > /dev/null; then
+    true
+  else
+    false
+  fi
 }
 
 function create-kcp-admin-kubeconfig {

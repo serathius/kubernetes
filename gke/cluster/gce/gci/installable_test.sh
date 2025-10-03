@@ -38,9 +38,18 @@ rm /tmp/processed-installables
 echo "OK"
 
 KUBE_HOME=$(mktemp -d)
-readonly RENDERED_INSTALLABLES='{}'
+RENDERED_INSTALLABLES='{}'
 echo "Testing RENDERED_INSTALLABLES=${RENDERED_INSTALLABLES}"
 process-installables
 rm -rf "${KUBE_HOME}"
 rm /tmp/processed-installables
 echo "OK"
+
+# Test installable-component-exists
+RENDERED_INSTALLABLES='{"foo":{"bar":{"kind":"apppkg","apiVersion":"installable.gke.io/v1","metadata":{"name":"bar","creationTimestamp":null},"os":"OS","arch":"X86_64","version":"version","remoteURL":"remoteURL","digest":"digest","digestAlgo":"digestAlgo","installPrefix":"/install/prefix"}}}'
+if installable-component-exists "bar"; then
+  echo "Failed: installable-component-exists find the non-existent component bar"
+fi
+if ! installable-component-exists "foo"; then
+  echo "Failed: installable-component-exists cannot find the existent component foo"
+fi
