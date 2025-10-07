@@ -38,6 +38,7 @@ type Indexer interface {
 	// intersects the set of indexed values of the given object, for
 	// the named index
 	Index(indexName string, obj interface{}) ([]interface{}, error)
+	IndexRV(indexName string, obj interface{}) ([]interface{}, string, error)
 	// IndexKeys returns the storage keys of the stored objects whose
 	// set of indexed values for the named index includes the given
 	// indexed value

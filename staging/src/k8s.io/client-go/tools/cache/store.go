@@ -50,6 +50,7 @@ type Store interface {
 
 	// List returns a list of all the currently non-empty accumulators
 	List() []interface{}
+	ListRV() ([]interface{}, string)
 
 	// ListKeys returns a list of all the keys currently associated with non-empty accumulators
 	ListKeys() []string
@@ -191,7 +192,7 @@ func (c *cache) Delete(obj interface{}) error {
 	if err != nil {
 		return KeyError{obj, err}
 	}
-	c.cacheStorage.Delete(key)
+	c.cacheStorage.DeleteObj(key, obj)
 	return nil
 }
 
@@ -199,6 +200,10 @@ func (c *cache) Delete(obj interface{}) error {
 // List is completely threadsafe as long as you treat all items as immutable.
 func (c *cache) List() []interface{} {
 	return c.cacheStorage.List()
+}
+
+func (c *cache) ListRV() ([]interface{}, string) {
+	return c.cacheStorage.ListRV()
 }
 
 // ListKeys returns a list of all the keys of the objects currently
@@ -216,6 +221,10 @@ func (c *cache) GetIndexers() Indexers {
 // Index is thread-safe so long as you treat all items as immutable
 func (c *cache) Index(indexName string, obj interface{}) ([]interface{}, error) {
 	return c.cacheStorage.Index(indexName, obj)
+}
+
+func (c *cache) IndexRV(indexName string, obj interface{}) ([]interface{}, string, error) {
+	return c.cacheStorage.IndexRV(indexName, obj)
 }
 
 // IndexKeys returns the storage keys of the stored objects whose set of
