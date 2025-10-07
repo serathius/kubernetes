@@ -1039,12 +1039,17 @@ Environment="GOOGLE_APPLICATION_CREDENTIALS=${gcfsd_application_default_credenti
 EOF
   fi
 
+  local gcfsd_bin="gcfsd"
+  if [[ "${ENABLE_GCFS_V2_API:-false}" == "true" ]]; then
+    gcfsd_bin="gcfsd-v2"
+  fi
+
   cat <<EOF >>/etc/systemd/system/gcfsd.service
 ExecStartPre=-/bin/umount -f ${gcfsd_mnt_dir}
 ExecStartPre=/bin/mkdir -p ${gcfsd_mnt_dir}
 ExecStartPre=/bin/mkdir -p ${layer_cache_dir}
 ExecStartPre=/bin/mkdir -p $(dirname ${images_in_use_db_path})
-ExecStart=${KUBE_HOME}/bin/gcfsd --mount_point=${gcfsd_mnt_dir} ${gcfs_cache_size_flag} ${gcfs_layer_caching_flag} --images_in_use_db_path=${images_in_use_db_path} --enable_pull_secret_keychain --client_name=GKE ${client_version_flag} ${gcfs_read_ahead_flag}
+ExecStart=${KUBE_HOME}/bin/${gcfsd_bin} --mount_point=${gcfsd_mnt_dir} ${gcfs_cache_size_flag} ${gcfs_layer_caching_flag} --images_in_use_db_path=${images_in_use_db_path} --enable_pull_secret_keychain --client_name=GKE ${client_version_flag} ${gcfs_read_ahead_flag}
 ExecStop=-/bin/umount -f ${gcfsd_mnt_dir}
 RuntimeDirectory=gcfsd
 Restart=on-failure
@@ -1079,8 +1084,13 @@ Environment="GOOGLE_APPLICATION_CREDENTIALS=${gcfs_snapshotter_application_defau
 EOF
   fi
 
+  local enable_v2_api_flag=""
+  if [[ "${ENABLE_GCFS_V2_API:-false}" == "true" ]]; then
+    enable_v2_api_flag="--enable-v2 --gcfs-socket-path=/run/gcfsd/gcfsd.sock"
+  fi
+
   cat <<EOF >>/etc/systemd/system/gcfs-snapshotter.service
-ExecStart=${KUBE_HOME}/bin/containerd-gcfs-grpc --log-level=info --config=/etc/containerd-gcfs-grpc/config.toml --enable-image-proxy-keychain-client ${secondary_boot_disk_mount_points_flag} ${secondary_boot_data_disk_mount_points_flag} --disable-duplicate-layer-support=false ${enable_metric_exporter_flag}
+ExecStart=${KUBE_HOME}/bin/containerd-gcfs-grpc --log-level=info --config=/etc/containerd-gcfs-grpc/config.toml --enable-image-proxy-keychain-client ${secondary_boot_disk_mount_points_flag} ${secondary_boot_data_disk_mount_points_flag} --disable-duplicate-layer-support=false ${enable_metric_exporter_flag} ${enable_v2_api_flag}
 Restart=always
 RestartSec=1
 [Install]
