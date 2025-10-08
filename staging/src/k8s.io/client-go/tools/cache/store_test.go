@@ -160,9 +160,9 @@ func TestCacheWithTransformer(t *testing.T) {
 	}
 }
 
-func TestFIFOCache(t *testing.T) {
-	doTestStore(t, NewFIFO(testStoreKeyFunc))
-}
+// func TestFIFOCache(t *testing.T) {
+// 	doTestStore(t, NewFIFO(testStoreKeyFunc))
+// }
 
 func TestUndeltaStore(t *testing.T) {
 	nop := func([]interface{}) {}

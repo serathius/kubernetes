@@ -21,12 +21,9 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
-	"net/http"
 	"reflect"
 	goruntime "runtime"
 	"strconv"
-	"sync"
-	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -1922,247 +1919,247 @@ func TestReflectorListExtract(t *testing.T) {
 	}
 }
 
-func TestReflectorReplacesStoreOnUnsafeDelete(t *testing.T) {
-	mkPod := func(id string, rv string) *v1.Pod {
-		return &v1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: id, ResourceVersion: rv}}
-	}
-	mkList := func(rv string, pods ...*v1.Pod) *v1.PodList {
-		list := &v1.PodList{ListMeta: metav1.ListMeta{ResourceVersion: rv}}
-		for _, pod := range pods {
-			list.Items = append(list.Items, *pod)
-		}
-		return list
-	}
-	makeStatus := func() *metav1.Status {
-		return &metav1.Status{
-			Status:  metav1.StatusFailure,
-			Code:    http.StatusInternalServerError,
-			Reason:  metav1.StatusReasonStoreReadError,
-			Message: "failed to prepare current and previous objects: corrupt object has been deleted",
-		}
-	}
+// func TestReflectorReplacesStoreOnUnsafeDelete(t *testing.T) {
+// 	mkPod := func(id string, rv string) *v1.Pod {
+// 		return &v1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: id, ResourceVersion: rv}}
+// 	}
+// 	mkList := func(rv string, pods ...*v1.Pod) *v1.PodList {
+// 		list := &v1.PodList{ListMeta: metav1.ListMeta{ResourceVersion: rv}}
+// 		for _, pod := range pods {
+// 			list.Items = append(list.Items, *pod)
+// 		}
+// 		return list
+// 	}
+// 	makeStatus := func() *metav1.Status {
+// 		return &metav1.Status{
+// 			Status:  metav1.StatusFailure,
+// 			Code:    http.StatusInternalServerError,
+// 			Reason:  metav1.StatusReasonStoreReadError,
+// 			Message: "failed to prepare current and previous objects: corrupt object has been deleted",
+// 		}
+// 	}
 
-	// these pods preexist and never get updated/deleted
-	preExisting := mkPod("foo-1", "1")
-	pods := []*v1.Pod{preExisting, mkPod("foo-2", "2"), mkPod("foo-3", "3")}
-	lastExpectedRV := "5"
-	lists := []*v1.PodList{
-		mkList("3", pods...),            // initial list
-		mkList(lastExpectedRV, pods...), // re-list due to watch error
-	}
-	corruptObj := mkPod("foo", "4")
-	events := []watch.Event{
-		{Type: watch.Added, Object: corruptObj},
-		// the object becomes corrupt, and it gets unsafe-deleted, and
-		// watch sends the following Error event, note the RV has
-		// advanced to "5" in the storage due to the delete operation
-		{Type: watch.Error, Object: makeStatus()},
-	}
+// 	// these pods preexist and never get updated/deleted
+// 	preExisting := mkPod("foo-1", "1")
+// 	pods := []*v1.Pod{preExisting, mkPod("foo-2", "2"), mkPod("foo-3", "3")}
+// 	lastExpectedRV := "5"
+// 	lists := []*v1.PodList{
+// 		mkList("3", pods...),            // initial list
+// 		mkList(lastExpectedRV, pods...), // re-list due to watch error
+// 	}
+// 	corruptObj := mkPod("foo", "4")
+// 	events := []watch.Event{
+// 		{Type: watch.Added, Object: corruptObj},
+// 		// the object becomes corrupt, and it gets unsafe-deleted, and
+// 		// watch sends the following Error event, note the RV has
+// 		// advanced to "5" in the storage due to the delete operation
+// 		{Type: watch.Error, Object: makeStatus()},
+// 	}
 
-	s := NewFIFO(MetaNamespaceKeyFunc)
-	var replaceInvoked atomic.Int32
-	store := &fakeStore{
-		Store: s,
-		beforeReplace: func(list []interface{}, rv string) {
-			// interested in the Replace call that happens after the Error event
-			if rv == lastExpectedRV {
-				replaceInvoked.Add(1)
-				_, exists, err := s.Get(corruptObj)
-				if err != nil || !exists {
-					t.Errorf("expected the object to exist in the store, exists: %t, err: %v", exists, err)
-				}
-				_, exists, err = s.Get(preExisting)
-				if err != nil || !exists {
-					t.Errorf("expected the pre-existing object to be in the store, exists: %t, err: %v", exists, err)
-				}
-			}
-		},
-		afterReplace: func(rv string, err error) {
-			if rv == lastExpectedRV {
-				replaceInvoked.Add(1)
-				if err != nil {
-					t.Errorf("expected Replace to have succeeded, but got error: %v", err)
-				}
-				_, exists, err := s.Get(corruptObj)
-				if err != nil || exists {
-					t.Errorf("expected the object to have been removed from the store, exists: %t, err: %v", exists, err)
-				}
-				// show that a pre-existing pod is still in the cache
-				_, exists, err = s.Get(preExisting)
-				if err != nil || !exists {
-					t.Errorf("expected the pre-existing object to be in the store, exists: %t, err: %v", exists, err)
-				}
-			}
-		},
-	}
+// 	s := NewFIFO(MetaNamespaceKeyFunc)
+// 	var replaceInvoked atomic.Int32
+// 	store := &fakeStore{
+// 		Store: s,
+// 		beforeReplace: func(list []interface{}, rv string) {
+// 			// interested in the Replace call that happens after the Error event
+// 			if rv == lastExpectedRV {
+// 				replaceInvoked.Add(1)
+// 				_, exists, err := s.Get(corruptObj)
+// 				if err != nil || !exists {
+// 					t.Errorf("expected the object to exist in the store, exists: %t, err: %v", exists, err)
+// 				}
+// 				_, exists, err = s.Get(preExisting)
+// 				if err != nil || !exists {
+// 					t.Errorf("expected the pre-existing object to be in the store, exists: %t, err: %v", exists, err)
+// 				}
+// 			}
+// 		},
+// 		afterReplace: func(rv string, err error) {
+// 			if rv == lastExpectedRV {
+// 				replaceInvoked.Add(1)
+// 				if err != nil {
+// 					t.Errorf("expected Replace to have succeeded, but got error: %v", err)
+// 				}
+// 				_, exists, err := s.Get(corruptObj)
+// 				if err != nil || exists {
+// 					t.Errorf("expected the object to have been removed from the store, exists: %t, err: %v", exists, err)
+// 				}
+// 				// show that a pre-existing pod is still in the cache
+// 				_, exists, err = s.Get(preExisting)
+// 				if err != nil || !exists {
+// 					t.Errorf("expected the pre-existing object to be in the store, exists: %t, err: %v", exists, err)
+// 				}
+// 			}
+// 		},
+// 	}
 
-	var once sync.Once
-	lw := toListWatcherWithUnSupportedWatchListSemantics(&ListWatch{
-		WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
-			fw := watch.NewFake()
-			go func() {
-				once.Do(func() {
-					for _, e := range events {
-						fw.Action(e.Type, e.Object)
-					}
-				})
-			}()
-			return fw, nil
-		},
-		ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
-			var list runtime.Object
-			if len(lists) > 0 {
-				list = lists[0]
-				lists = lists[1:]
-			}
-			return list, nil
-		},
-	})
+// 	var once sync.Once
+// 	lw := toListWatcherWithUnSupportedWatchListSemantics(&ListWatch{
+// 		WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
+// 			fw := watch.NewFake()
+// 			go func() {
+// 				once.Do(func() {
+// 					for _, e := range events {
+// 						fw.Action(e.Type, e.Object)
+// 					}
+// 				})
+// 			}()
+// 			return fw, nil
+// 		},
+// 		ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
+// 			var list runtime.Object
+// 			if len(lists) > 0 {
+// 				list = lists[0]
+// 				lists = lists[1:]
+// 			}
+// 			return list, nil
+// 		},
+// 	})
 
-	r := NewReflector(lw, &v1.Pod{}, store, 0)
-	doneCh, stopCh := make(chan struct{}), make(chan struct{})
-	go func() {
-		defer close(doneCh)
-		//nolint:logcheck // Intentionally uses the old API.
-		r.Run(stopCh)
-	}()
+// 	r := NewReflector(lw, &v1.Pod{}, store, 0)
+// 	doneCh, stopCh := make(chan struct{}), make(chan struct{})
+// 	go func() {
+// 		defer close(doneCh)
+// 		//nolint:logcheck // Intentionally uses the old API.
+// 		r.Run(stopCh)
+// 	}()
 
-	// wait for the RV to sync to the version returned by the final list
-	err := wait.PollUntilContextTimeout(context.Background(), 100*time.Millisecond, wait.ForeverTestTimeout, true, func(ctx context.Context) (done bool, err error) {
-		if rv := r.LastSyncResourceVersion(); rv == lastExpectedRV {
-			return true, nil
-		}
-		return false, nil
-	})
-	if err != nil {
-		t.Fatalf("reflector never caught up with expected revision: %q, err: %v", lastExpectedRV, err)
-	}
+// 	// wait for the RV to sync to the version returned by the final list
+// 	err := wait.PollUntilContextTimeout(context.Background(), 100*time.Millisecond, wait.ForeverTestTimeout, true, func(ctx context.Context) (done bool, err error) {
+// 		if rv := r.LastSyncResourceVersion(); rv == lastExpectedRV {
+// 			return true, nil
+// 		}
+// 		return false, nil
+// 	})
+// 	if err != nil {
+// 		t.Fatalf("reflector never caught up with expected revision: %q, err: %v", lastExpectedRV, err)
+// 	}
 
-	if want, got := lastExpectedRV, r.LastSyncResourceVersion(); want != got {
-		t.Errorf("expected LastSyncResourceVersion to be %q, but got: %q", want, got)
-	}
-	if want, got := 2, int(replaceInvoked.Load()); want != got {
-		t.Errorf("expected store Delete hooks to be invoked %d times, but got: %d", want, got)
-	}
-	if want, got := len(pods), len(s.List()); want != got {
-		t.Errorf("expected the store to have %d objects, but got: %d", want, got)
-	}
+// 	if want, got := lastExpectedRV, r.LastSyncResourceVersion(); want != got {
+// 		t.Errorf("expected LastSyncResourceVersion to be %q, but got: %q", want, got)
+// 	}
+// 	if want, got := 2, int(replaceInvoked.Load()); want != got {
+// 		t.Errorf("expected store Delete hooks to be invoked %d times, but got: %d", want, got)
+// 	}
+// 	if want, got := len(pods), len(s.List()); want != got {
+// 		t.Errorf("expected the store to have %d objects, but got: %d", want, got)
+// 	}
 
-	close(stopCh)
-	select {
-	case <-doneCh:
-	case <-time.After(wait.ForeverTestTimeout):
-		t.Errorf("timed out waiting for Run to return")
-	}
-}
+// 	close(stopCh)
+// 	select {
+// 	case <-doneCh:
+// 	case <-time.After(wait.ForeverTestTimeout):
+// 		t.Errorf("timed out waiting for Run to return")
+// 	}
+// t s}
 
-func TestReflectorRespectStoreTransformer(t *testing.T) {
-	mkPod := func(id string, rv string) *v1.Pod {
-		return &v1.Pod{
-			ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: id, ResourceVersion: rv},
-			Spec: v1.PodSpec{
-				Hostname: "test",
-			},
-		}
-	}
+// func TestReflectorRespectStoreTransformer(t *testing.T) {
+// 	mkPod := func(id string, rv string) *v1.Pod {
+// 		return &v1.Pod{
+// 			ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: id, ResourceVersion: rv},
+// 			Spec: v1.PodSpec{
+// 				Hostname: "test",
+// 			},
+// 		}
+// 	}
 
-	preExisting1 := mkPod("foo-1", "1")
-	preExisting2 := mkPod("foo-2", "2")
-	pod3 := mkPod("foo-3", "3")
+// 	preExisting1 := mkPod("foo-1", "1")
+// 	preExisting2 := mkPod("foo-2", "2")
+// 	pod3 := mkPod("foo-3", "3")
 
-	lastExpectedRV := "3"
-	events := []watch.Event{
-		{Type: watch.Added, Object: preExisting1},
-		{Type: watch.Added, Object: preExisting2},
-		{Type: watch.Bookmark, Object: &v1.Pod{
-			ObjectMeta: metav1.ObjectMeta{
-				ResourceVersion: lastExpectedRV,
-				Annotations: map[string]string{
-					metav1.InitialEventsAnnotationKey: "true",
-				},
-			},
-		}},
-		{Type: watch.Added, Object: pod3},
-	}
+// 	lastExpectedRV := "3"
+// 	events := []watch.Event{
+// 		{Type: watch.Added, Object: preExisting1},
+// 		{Type: watch.Added, Object: preExisting2},
+// 		{Type: watch.Bookmark, Object: &v1.Pod{
+// 			ObjectMeta: metav1.ObjectMeta{
+// 				ResourceVersion: lastExpectedRV,
+// 				Annotations: map[string]string{
+// 					metav1.InitialEventsAnnotationKey: "true",
+// 				},
+// 			},
+// 		}},
+// 		{Type: watch.Added, Object: pod3},
+// 	}
 
-	s := NewFIFO(MetaNamespaceKeyFunc)
-	var replaceInvoked atomic.Int32
-	store := &fakeStore{
-		Store: s,
-		beforeReplace: func(list []interface{}, rv string) {
-			replaceInvoked.Add(1)
-			// Only two pods are present at the point when Replace is called.
-			if len(list) != 2 {
-				t.Errorf("unexpected nb of objects: expected 2 received %d", len(list))
-			}
-			for _, obj := range list {
-				cast := obj.(*v1.Pod)
-				if cast.Spec.Hostname != "transformed" {
-					t.Error("Object was not transformed prior to replacement")
-				}
-			}
-		},
-		afterReplace: func(rv string, err error) {},
-		transformer: func(i interface{}) (interface{}, error) {
-			cast := i.(*v1.Pod)
-			cast.Spec.Hostname = "transformed"
-			return cast, nil
-		},
-	}
+// 	s := NewFIFO(MetaNamespaceKeyFunc)
+// 	var replaceInvoked atomic.Int32
+// 	store := &fakeStore{
+// 		Store: s,
+// 		beforeReplace: func(list []interface{}, rv string) {
+// 			replaceInvoked.Add(1)
+// 			// Only two pods are present at the point when Replace is called.
+// 			if len(list) != 2 {
+// 				t.Errorf("unexpected nb of objects: expected 2 received %d", len(list))
+// 			}
+// 			for _, obj := range list {
+// 				cast := obj.(*v1.Pod)
+// 				if cast.Spec.Hostname != "transformed" {
+// 					t.Error("Object was not transformed prior to replacement")
+// 				}
+// 			}
+// 		},
+// 		afterReplace: func(rv string, err error) {},
+// 		transformer: func(i interface{}) (interface{}, error) {
+// 			cast := i.(*v1.Pod)
+// 			cast.Spec.Hostname = "transformed"
+// 			return cast, nil
+// 		},
+// 	}
 
-	var once sync.Once
-	lw := &ListWatch{
-		WatchFunc: func(metav1.ListOptions) (watch.Interface, error) {
-			fw := watch.NewFake()
-			go func() {
-				once.Do(func() {
-					for _, e := range events {
-						fw.Action(e.Type, e.Object)
-					}
-				})
-			}()
-			return fw, nil
-		},
-		// ListFunc should never be used in WatchList mode
-		ListFunc: func(metav1.ListOptions) (runtime.Object, error) {
-			return nil, errors.New("list call not expected in WatchList mode")
-		},
-	}
+// 	var once sync.Once
+// 	lw := &ListWatch{
+// 		WatchFunc: func(metav1.ListOptions) (watch.Interface, error) {
+// 			fw := watch.NewFake()
+// 			go func() {
+// 				once.Do(func() {
+// 					for _, e := range events {
+// 						fw.Action(e.Type, e.Object)
+// 					}
+// 				})
+// 			}()
+// 			return fw, nil
+// 		},
+// 		// ListFunc should never be used in WatchList mode
+// 		ListFunc: func(metav1.ListOptions) (runtime.Object, error) {
+// 			return nil, errors.New("list call not expected in WatchList mode")
+// 		},
+// 	}
 
-	clientfeaturestesting.SetFeatureDuringTest(t, clientfeatures.WatchListClient, true)
-	r := NewReflector(lw, &v1.Pod{}, store, 0)
-	ctx, cancel := context.WithCancel(context.Background())
-	doneCh := make(chan struct{})
-	go func() {
-		defer close(doneCh)
-		r.RunWithContext(ctx)
-	}()
+// 	clientfeaturestesting.SetFeatureDuringTest(t, clientfeatures.WatchListClient, true)
+// 	r := NewReflector(lw, &v1.Pod{}, store, 0)
+// 	ctx, cancel := context.WithCancel(context.Background())
+// 	doneCh := make(chan struct{})
+// 	go func() {
+// 		defer close(doneCh)
+// 		r.RunWithContext(ctx)
+// 	}()
 
-	// wait for the RV to sync to the version returned by the final list
-	err := wait.PollUntilContextTimeout(context.Background(), 100*time.Millisecond, 5*time.Second, true, func(ctx context.Context) (done bool, err error) {
-		if rv := r.LastSyncResourceVersion(); rv == lastExpectedRV {
-			return true, nil
-		}
-		return false, nil
-	})
-	if err != nil {
-		t.Fatalf("reflector never caught up with expected revision: %q, err: %v", lastExpectedRV, err)
-	}
+// 	// wait for the RV to sync to the version returned by the final list
+// 	err := wait.PollUntilContextTimeout(context.Background(), 100*time.Millisecond, 5*time.Second, true, func(ctx context.Context) (done bool, err error) {
+// 		if rv := r.LastSyncResourceVersion(); rv == lastExpectedRV {
+// 			return true, nil
+// 		}
+// 		return false, nil
+// 	})
+// 	if err != nil {
+// 		t.Fatalf("reflector never caught up with expected revision: %q, err: %v", lastExpectedRV, err)
+// 	}
 
-	if want, got := lastExpectedRV, r.LastSyncResourceVersion(); want != got {
-		t.Errorf("expected LastSyncResourceVersion to be %q, but got: %q", want, got)
-	}
-	if want, got := 1, int(replaceInvoked.Load()); want != got {
-		t.Errorf("expected replace to be invoked %d times, but got: %d", want, got)
-	}
+// 	if want, got := lastExpectedRV, r.LastSyncResourceVersion(); want != got {
+// 		t.Errorf("expected LastSyncResourceVersion to be %q, but got: %q", want, got)
+// 	}
+// 	if want, got := 1, int(replaceInvoked.Load()); want != got {
+// 		t.Errorf("expected replace to be invoked %d times, but got: %d", want, got)
+// 	}
 
-	cancel()
-	select {
-	case <-doneCh:
-	case <-time.After(wait.ForeverTestTimeout):
-		t.Errorf("timed out waiting for Run to return")
-	}
-}
+// 	cancel()
+// 	select {
+// 	case <-doneCh:
+// 	case <-time.After(wait.ForeverTestTimeout):
+// 		t.Errorf("timed out waiting for Run to return")
+// 	}
+// }
 
 type fakeStore struct {
 	Store

@@ -21,6 +21,9 @@ import (
 	"sync"
 	"time"
 
+	"k8s.io/klog/v2"
+
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/util/sets"
 	utiltrace "k8s.io/utils/trace"
 )
@@ -44,14 +47,18 @@ type ThreadSafeStore interface {
 	Add(key string, obj interface{})
 	Update(key string, obj interface{})
 	Delete(key string)
+	DeleteObj(key string, obj interface{})
 	Get(key string) (item interface{}, exists bool)
 	List() []interface{}
+	ListRV() ([]interface{}, string)
 	ListKeys() []string
 	Replace(map[string]interface{}, string)
 	Index(indexName string, obj interface{}) ([]interface{}, error)
+	IndexRV(indexName string, obj interface{}) ([]interface{}, string, error)
 	IndexKeys(indexName, indexedValue string) ([]string, error)
 	ListIndexFuncValues(name string) []string
 	ByIndex(indexName, indexedValue string) ([]interface{}, error)
+	ByIndexRV(indexName, indexedValue string) ([]interface{}, string, error)
 	GetIndexers() Indexers
 
 	// AddIndexers adds more indexers to this store. This supports adding indexes after the store already has items.
@@ -239,6 +246,7 @@ func (i *storeIndex) deleteKeyFromIndex(key, indexValue string, index index) {
 type threadSafeMap struct {
 	lock  sync.RWMutex
 	items map[string]interface{}
+	rv    string
 
 	// index implements the indexing functionality
 	index *storeIndex
@@ -279,6 +287,16 @@ func (c *threadSafeMap) Update(key string, obj interface{}) {
 }
 
 func (c *threadSafeMap) updateLocked(key string, obj interface{}) {
+	meta, err := meta.Accessor(obj)
+	if err != nil {
+		klog.ErrorS(nil, "No meta", "key", key)
+	}
+	if meta != nil {
+		rv := meta.GetResourceVersion()
+		if rv != "" {
+			c.rv = rv
+		}
+	}
 	oldObject := c.items[key]
 	c.items[key] = obj
 	c.index.updateIndices(oldObject, obj, key)
@@ -291,6 +309,25 @@ func (c *threadSafeMap) Delete(key string) {
 }
 
 func (c *threadSafeMap) deleteLocked(key string) {
+	if obj, exists := c.items[key]; exists {
+		c.index.updateIndices(obj, nil, key)
+		delete(c.items, key)
+	}
+}
+
+func (c *threadSafeMap) DeleteObj(key string, obj interface{}) {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	meta, err := meta.Accessor(obj)
+	if err != nil {
+		klog.ErrorS(nil, "No meta", "key", key)
+	}
+	if meta != nil {
+		rv := meta.GetResourceVersion()
+		if rv != "" {
+			c.rv = rv
+		}
+	}
 	if obj, exists := c.items[key]; exists {
 		c.index.updateIndices(obj, nil, key)
 		delete(c.items, key)
@@ -314,6 +351,16 @@ func (c *threadSafeMap) List() []interface{} {
 	return list
 }
 
+func (c *threadSafeMap) ListRV() ([]interface{}, string) {
+	c.lock.RLock()
+	defer c.lock.RUnlock()
+	list := make([]interface{}, 0, len(c.items))
+	for _, item := range c.items {
+		list = append(list, item)
+	}
+	return list, c.rv
+}
+
 // ListKeys returns a list of all the keys of the objects currently
 // in the threadSafeMap.
 func (c *threadSafeMap) ListKeys() []string {
@@ -330,6 +377,7 @@ func (c *threadSafeMap) Replace(items map[string]interface{}, resourceVersion st
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	c.items = items
+	c.rv = resourceVersion
 
 	// rebuild any index
 	c.index.reset()
@@ -356,6 +404,22 @@ func (c *threadSafeMap) Index(indexName string, obj interface{}) ([]interface{},
 	return list, nil
 }
 
+func (c *threadSafeMap) IndexRV(indexName string, obj interface{}) ([]interface{}, string, error) {
+	c.lock.RLock()
+	defer c.lock.RUnlock()
+
+	storeKeySet, err := c.index.getKeysFromIndex(indexName, obj)
+	if err != nil {
+		return nil, c.rv, err
+	}
+
+	list := make([]interface{}, 0, storeKeySet.Len())
+	for storeKey := range storeKeySet {
+		list = append(list, c.items[storeKey])
+	}
+	return list, c.rv, nil
+}
+
 // ByIndex returns a list of the items whose indexed values in the given index include the given indexed value
 func (c *threadSafeMap) ByIndex(indexName, indexedValue string) ([]interface{}, error) {
 	c.lock.RLock()
@@ -371,6 +435,23 @@ func (c *threadSafeMap) ByIndex(indexName, indexedValue string) ([]interface{}, 
 	}
 
 	return list, nil
+}
+
+// ByIndex returns a list of the items whose indexed values in the given index include the given indexed value
+func (c *threadSafeMap) ByIndexRV(indexName, indexedValue string) ([]interface{}, string, error) {
+	c.lock.RLock()
+	defer c.lock.RUnlock()
+
+	set, err := c.index.getKeysByIndex(indexName, indexedValue)
+	if err != nil {
+		return nil, c.rv, err
+	}
+	list := make([]interface{}, 0, set.Len())
+	for key := range set {
+		list = append(list, c.items[key])
+	}
+
+	return list, c.rv, nil
 }
 
 // IndexKeys returns a list of the Store keys of the objects whose indexed values in the given index include the given indexed value.
