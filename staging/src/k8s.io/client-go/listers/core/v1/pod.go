@@ -57,6 +57,7 @@ type PodNamespaceLister interface {
 	// List lists all Pods in the indexer for a given namespace.
 	// Objects returned here must be treated as read-only.
 	List(selector labels.Selector) (ret []*corev1.Pod, err error)
+	ListRV(selector labels.Selector) (ret []*corev1.Pod, rv string, err error)
 	// Get retrieves the Pod from the indexer for a given namespace and name.
 	// Objects returned here must be treated as read-only.
 	Get(name string) (*corev1.Pod, error)

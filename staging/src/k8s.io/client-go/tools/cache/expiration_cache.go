@@ -137,6 +137,19 @@ func (c *ExpirationCache) List() []interface{} {
 	return list
 }
 
+func (c *ExpirationCache) ListRV() ([]interface{}, string) {
+	items, rv := c.cacheStorage.ListRV()
+
+	list := make([]interface{}, 0, len(items))
+	for _, item := range items {
+		key := item.(*TimestampedEntry).key
+		if obj, exists := c.getOrExpire(key); exists {
+			list = append(list, obj)
+		}
+	}
+	return list, rv
+}
+
 // ListKeys returns a list of all keys in the expiration cache.
 func (c *ExpirationCache) ListKeys() []string {
 	return c.cacheStorage.ListKeys()

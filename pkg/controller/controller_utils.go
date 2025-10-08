@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"math"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -1202,6 +1203,57 @@ func FilterPodsByOwner(podIndexer cache.Indexer, owner *metav1.ObjectMeta, owner
 		}
 	}
 	return result, nil
+}
+
+// FilterPodsByOwner gets the Pods managed by an owner or orphan Pods in the owner's namespace
+func FilterPodsByOwnerRV(podIndexer cache.Indexer, owner *metav1.ObjectMeta, ownerKind string, includeOrphanedPods bool) ([]*v1.Pod, int, error) {
+	result := []*v1.Pod{}
+
+	if len(owner.Namespace) == 0 {
+		return nil, 0, fmt.Errorf("no owner namespace provided")
+	}
+	if len(owner.Name) == 0 {
+		return nil, 0, fmt.Errorf("no owner name provided")
+	}
+	if len(owner.UID) == 0 {
+		return nil, 0, fmt.Errorf("no owner uid provided")
+	}
+	if len(ownerKind) == 0 {
+		return nil, 0, fmt.Errorf("no owner kind provided")
+	}
+	// Always include the owner key, which identifies Pods that are controlled by the owner
+	keys := []string{PodControllerIndexKey(owner.Namespace, &metav1.OwnerReference{Name: owner.Name, Kind: ownerKind, UID: owner.UID})}
+	if includeOrphanedPods {
+		// Optionally include the unowned key, which identifies orphaned Pods in the owner's namespace and might be adopted by the owner later
+		keys = append(keys, PodControllerIndexKey(owner.Namespace, nil))
+	}
+	minRV := 0
+	for _, key := range keys {
+		pods, rvStr, err := podIndexer.ByIndexRV(PodControllerIndex, key)
+		if err != nil {
+			return nil, 0, err
+		}
+		rv, err := strconv.Atoi(rvStr)
+		if err != nil {
+			fmt.Printf("Error Atoi rv: %q, err: %v\n", rvStr, err)
+		} else {
+			if minRV == 0 {
+				minRV = rv
+			} else {
+				minRV = min(minRV, rv)
+			}
+		}
+
+		for _, obj := range pods {
+			pod, ok := obj.(*v1.Pod)
+			if !ok {
+				utilruntime.HandleError(fmt.Errorf("unexpected object type in pod indexer: %v", obj))
+				continue
+			}
+			result = append(result, pod)
+		}
+	}
+	return result, minRV, nil
 }
 
 // PodKey returns a key unique to the given pod within a cluster.
