@@ -59,7 +59,7 @@ func getEtcdPath() (string, error) {
 // startEtcd executes an etcd instance. The returned function will signal the
 // etcd process and wait for it to exit.
 func startEtcd(logger klog.Logger, forceCreate bool) (func(), error) {
-	if !forceCreate {
+	if false {
 		etcdURL := env.GetEnvAsStringOrFallback("KUBE_INTEGRATION_ETCD_URL", "http://127.0.0.1:2379")
 		conn, err := net.Dial("tcp", strings.TrimPrefix(etcdURL, "http://"))
 		if err == nil {

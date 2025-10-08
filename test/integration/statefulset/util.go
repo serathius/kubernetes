@@ -30,6 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apiserver/pkg/admission"
 	"k8s.io/client-go/informers"
@@ -37,6 +38,7 @@ import (
 	typedappsv1 "k8s.io/client-go/kubernetes/typed/apps/v1"
 	typedv1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	restclient "k8s.io/client-go/rest"
+	"k8s.io/client-go/util/flowcontrol"
 	"k8s.io/client-go/util/retry"
 	kubeapiservertesting "k8s.io/kubernetes/cmd/kube-apiserver/app/testing"
 	api "k8s.io/kubernetes/pkg/apis/core"
@@ -47,8 +49,8 @@ import (
 )
 
 const (
-	pollInterval = 100 * time.Millisecond
-	pollTimeout  = 60 * time.Second
+	pollInterval = 800 * time.Millisecond
+	pollTimeout  = 600 * time.Second
 )
 
 func labelMap() map[string]string {
@@ -141,6 +143,115 @@ func newSTS(name, namespace string, replicas int) *appsv1.StatefulSet {
 	}
 }
 
+func newSmallSTS(name, namespace string, replicas int, slack int) *appsv1.StatefulSet {
+	replicasCopy := int32(replicas)
+	labels := labelMap()
+	labels["name"] = name
+	labels["app"] = "ok"
+	labels["slack"] = rand.String(60)
+	return &appsv1.StatefulSet{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "StatefulSet",
+			APIVersion: "apps/v1",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: namespace,
+			Name:      name,
+			Annotations: map[string]string{
+				rand.SafeEncodeString(rand.String(60)): rand.String(60),
+				rand.SafeEncodeString(rand.String(60)): rand.String(60),
+				rand.SafeEncodeString(rand.String(60)): rand.String(60),
+				rand.SafeEncodeString(rand.String(60)): rand.String(60),
+				rand.SafeEncodeString(rand.String(60)): rand.String(60),
+			},
+		},
+		Spec: appsv1.StatefulSetSpec{
+			PodManagementPolicy: appsv1.ParallelPodManagement,
+			Replicas:            &replicasCopy,
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{"name": name},
+			},
+			Template: v1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: labels,
+				},
+				Spec: v1.PodSpec{
+					Containers: []v1.Container{
+						{
+							Name:  "fake-name",
+							Image: "fakeimage",
+						},
+						{
+							Name:  "fake-name-a",
+							Image: "fakeimage-a",
+							Command: []string{
+								rand.String(slack),
+							},
+							Args: []string{
+								rand.String(slack),
+								rand.String(slack),
+								rand.String(slack),
+								rand.String(slack),
+								rand.String(slack),
+							},
+							Env: []v1.EnvVar{
+								{
+									Name:  "fake-name-a",
+									Value: rand.String(slack),
+								},
+							},
+						},
+						{
+							Name:  "fake-name-b",
+							Image: "fakeimage-b",
+							Command: []string{
+								rand.String(slack),
+							},
+							Args: []string{
+								rand.String(slack),
+								rand.String(slack),
+								rand.String(slack),
+								rand.String(slack),
+								rand.String(slack),
+							},
+							Env: []v1.EnvVar{
+								{
+									Name:  "fake-name-a",
+									Value: rand.String(slack),
+								},
+							},
+						},
+						{
+							Name:  "fake-name-c",
+							Image: "fakeimage-c",
+							Command: []string{
+								rand.String(slack),
+							},
+							Args: []string{
+								rand.String(slack),
+								rand.String(slack),
+								rand.String(slack),
+								rand.String(slack),
+								rand.String(slack),
+							},
+							Env: []v1.EnvVar{
+								{
+									Name:  "fake-name-a",
+									Value: rand.String(slack),
+								},
+							},
+						},
+					},
+				},
+			},
+			ServiceName: namespace,
+			UpdateStrategy: appsv1.StatefulSetUpdateStrategy{
+				Type: appsv1.RollingUpdateStatefulSetStrategyType,
+			},
+		},
+	}
+}
+
 func newStatefulSetPVC(name string) v1.PersistentVolumeClaim {
 	return v1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{
@@ -163,19 +274,17 @@ func newStatefulSetPVC(name string) v1.PersistentVolumeClaim {
 }
 
 // scSetup sets up necessities for Statefulset integration test, including control plane, apiserver, informers, and clientset
-func scSetup(t *testing.T) (context.Context, kubeapiservertesting.TearDownFunc, *statefulset.StatefulSetController, informers.SharedInformerFactory, clientset.Interface) {
+func scSetup(t testing.TB) (context.Context, kubeapiservertesting.TearDownFunc, *statefulset.StatefulSetController, informers.SharedInformerFactory, clientset.Interface) {
 	tCtx := ktesting.Init(t)
 	// Disable ServiceAccount admission plugin as we don't have serviceaccount controller running.
 	server := kubeapiservertesting.StartTestServerOrDie(t, nil, framework.DefaultTestServerFlags(), framework.SharedEtcd())
 
 	config := restclient.CopyConfig(server.ClientConfig)
-	clientSet, err := clientset.NewForConfig(config)
-	if err != nil {
-		t.Fatalf("error in create clientset: %v", err)
-	}
+	config.RateLimiter = flowcontrol.NewTokenBucketRateLimiter(500, 600)
 	resyncPeriod := 12 * time.Hour
 	informers := informers.NewSharedInformerFactory(clientset.NewForConfigOrDie(restclient.AddUserAgent(config, "statefulset-informers")), resyncPeriod)
 
+	config.RateLimiter = flowcontrol.NewTokenBucketRateLimiter(500, 600)
 	sc := statefulset.NewStatefulSetController(
 		tCtx,
 		informers.Core().V1().Pods(),
@@ -189,25 +298,62 @@ func scSetup(t *testing.T) (context.Context, kubeapiservertesting.TearDownFunc, 
 		tCtx.Cancel("tearing down controller")
 		server.TearDownFn()
 	}
+
+	clientConfig := restclient.CopyConfig(server.ClientConfig)
+	clientConfig.RateLimiter = flowcontrol.NewTokenBucketRateLimiter(400, 500)
+	clientSet, err := clientset.NewForConfig(clientConfig)
+	if err != nil {
+		t.Fatalf("error in create clientset: %v", err)
+	}
 	return tCtx, teardown, sc, informers, clientSet
+}
+
+// scSetup sets up necessities for Statefulset integration test, including control plane, apiserver, informers, and clientset
+func scSetupCC(t testing.TB) (context.Context, kubeapiservertesting.TearDownFunc, *statefulset.StatefulSetController, informers.SharedInformerFactory, *restclient.Config) {
+	tCtx := ktesting.Init(t)
+	// Disable ServiceAccount admission plugin as we don't have serviceaccount controller running.
+	server := kubeapiservertesting.StartTestServerOrDie(t, nil, framework.DefaultTestServerFlags(), framework.SharedEtcd())
+
+	config := restclient.CopyConfig(server.ClientConfig)
+	config.RateLimiter = flowcontrol.NewTokenBucketRateLimiter(500, 600)
+	resyncPeriod := 12 * time.Hour
+	informers := informers.NewSharedInformerFactory(clientset.NewForConfigOrDie(restclient.AddUserAgent(config, "statefulset-informers")), resyncPeriod)
+
+	config.RateLimiter = flowcontrol.NewTokenBucketRateLimiter(500, 600)
+	sc := statefulset.NewStatefulSetController(
+		tCtx,
+		informers.Core().V1().Pods(),
+		informers.Apps().V1().StatefulSets(),
+		informers.Core().V1().PersistentVolumeClaims(),
+		informers.Apps().V1().ControllerRevisions(),
+		clientset.NewForConfigOrDie(restclient.AddUserAgent(config, "statefulset-controller")),
+	)
+
+	teardown := func() {
+		tCtx.Cancel("tearing down controller")
+		server.TearDownFn()
+	}
+
+	clientConfig := restclient.CopyConfig(server.ClientConfig)
+	return tCtx, teardown, sc, informers, clientConfig
 }
 
 // Run STS controller and informers
 func runControllerAndInformers(ctx context.Context, sc *statefulset.StatefulSetController, informers informers.SharedInformerFactory) context.CancelFunc {
 	ctx, cancel := context.WithCancel(ctx)
 	informers.Start(ctx.Done())
-	go sc.Run(ctx, 5)
+	go sc.Run(ctx, 50)
 	return cancel
 }
 
-func createHeadlessService(t *testing.T, clientSet clientset.Interface, headlessService *v1.Service) {
+func createHeadlessService(t testing.TB, clientSet clientset.Interface, headlessService *v1.Service) {
 	_, err := clientSet.CoreV1().Services(headlessService.Namespace).Create(context.TODO(), headlessService, metav1.CreateOptions{})
 	if err != nil {
 		t.Fatalf("failed creating headless service: %v", err)
 	}
 }
 
-func createSTSs(t *testing.T, clientSet clientset.Interface, stss []*appsv1.StatefulSet) []*appsv1.StatefulSet {
+func createSTSs(t testing.TB, clientSet clientset.Interface, stss []*appsv1.StatefulSet) []*appsv1.StatefulSet {
 	var createdSTSs []*appsv1.StatefulSet
 	for _, sts := range stss {
 		createdSTS, err := clientSet.AppsV1().StatefulSets(sts.Namespace).Create(context.TODO(), sts, metav1.CreateOptions{})
@@ -237,7 +383,7 @@ func createSTSsPods(t *testing.T, clientSet clientset.Interface, stss []*appsv1.
 }
 
 // Verify .Status.Replicas is equal to .Spec.Replicas
-func waitSTSStable(t *testing.T, clientSet clientset.Interface, sts *appsv1.StatefulSet) {
+func waitSTSStable(t testing.TB, clientSet clientset.Interface, sts *appsv1.StatefulSet) {
 	stsClient := clientSet.AppsV1().StatefulSets(sts.Namespace)
 	desiredGeneration := sts.Generation
 	if err := wait.PollImmediate(pollInterval, pollTimeout, func() (bool, error) {
@@ -283,7 +429,7 @@ func updatePodStatus(t *testing.T, podClient typedv1.PodInterface, podName strin
 	return pod
 }
 
-func getPods(t *testing.T, podClient typedv1.PodInterface, labelMap map[string]string) *v1.PodList {
+func getPods(t testing.TB, podClient typedv1.PodInterface, labelMap map[string]string) *v1.PodList {
 	podSelector := labels.Set(labelMap).AsSelector()
 	options := metav1.ListOptions{LabelSelector: podSelector.String()}
 	pods, err := podClient.List(context.TODO(), options)
@@ -342,7 +488,7 @@ func updateSTS(t *testing.T, stsClient typedappsv1.StatefulSetInterface, stsName
 }
 
 // Update .Spec.Replicas to replicas and verify .Status.Replicas is changed accordingly
-func scaleSTS(t *testing.T, c clientset.Interface, sts *appsv1.StatefulSet, replicas int32) {
+func scaleSTS(t testing.TB, c clientset.Interface, sts *appsv1.StatefulSet, replicas int32) {
 	stsClient := c.AppsV1().StatefulSets(sts.Namespace)
 	if err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
 		newSTS, err := stsClient.Get(context.TODO(), sts.Name, metav1.GetOptions{})
@@ -350,8 +496,12 @@ func scaleSTS(t *testing.T, c clientset.Interface, sts *appsv1.StatefulSet, repl
 			return err
 		}
 		*newSTS.Spec.Replicas = replicas
-		sts, err = stsClient.Update(context.TODO(), newSTS, metav1.UpdateOptions{})
-		return err
+		stsNew, err := stsClient.Update(context.TODO(), newSTS, metav1.UpdateOptions{})
+		if err != nil {
+			return err
+		}
+		sts = stsNew
+		return nil
 	}); err != nil {
 		t.Fatalf("failed to update .Spec.Replicas to %d for sts %s: %v", replicas, sts.Name, err)
 	}

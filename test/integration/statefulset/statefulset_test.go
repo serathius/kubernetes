@@ -19,12 +19,18 @@ package statefulset
 import (
 	"context"
 	"fmt"
+	"math/rand/v2"
+	"sort"
 	"strconv"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/go-logr/zapr"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -36,6 +42,8 @@ import (
 	"k8s.io/client-go/informers"
 	clientset "k8s.io/client-go/kubernetes"
 	restclient "k8s.io/client-go/rest"
+	"k8s.io/client-go/util/flowcontrol"
+	"k8s.io/klog/v2"
 	apiservertesting "k8s.io/kubernetes/cmd/kube-apiserver/app/testing"
 	podutil "k8s.io/kubernetes/pkg/api/v1/pod"
 	"k8s.io/kubernetes/pkg/controller/statefulset"
@@ -43,11 +51,12 @@ import (
 	"k8s.io/kubernetes/test/integration/framework"
 	"k8s.io/kubernetes/test/utils/ktesting"
 	"k8s.io/utils/ptr"
+	utiltrace "k8s.io/utils/trace"
 )
 
 const (
-	interval = 100 * time.Millisecond
-	timeout  = 60 * time.Second
+	interval = 800 * time.Millisecond
+	timeout  = 300 * time.Second
 )
 
 // TestVolumeTemplateNoopUpdate ensures embedded StatefulSet objects with embedded PersistentVolumes can be updated
@@ -163,6 +172,172 @@ func TestSpecReplicasChange(t *testing.T) {
 		return newSTS.Status.ObservedGeneration >= savedGeneration, nil
 	}); err != nil {
 		t.Fatalf("failed to verify .Status.ObservedGeneration has incremented for sts %s: %v", sts.Name, err)
+	}
+}
+
+func BenchmarkStatefulSetScale(t *testing.B) {
+	slack := 500
+	namespaces := 1
+	qps := 500
+	// 6k pods -> 8.5s watch_latecy_max, 4.5s watch_latecy_p99
+	// 10k pods -> 8.4s watch_latecy_max, 4.5s watch_latecy_p99
+	// 50k pods -> 9.6s watch_latecy_max, 6.1s watch_latecy_p99
+	for _, pods := range []int{6_000} {
+		for _, podsWSS := range []int{pods / 100} { // 1%
+			for _, statefulsets := range []int{2_000} {
+				for _, stsWSS := range []int{statefulsets / 100} { // 1%
+					stssPerNamespace := statefulsets / namespaces
+					podsPerStatefulset := pods / statefulsets
+					t.Run(fmt.Sprintf("pods=%d,statefulsets=%d,qps=%d,podsWSS=%d,stsWSS=%d", pods, statefulsets, qps, podsWSS, stsWSS), func(t *testing.B) {
+
+						if podsWSS > (podsPerStatefulset-2)*statefulsets {
+							t.Fatalf("WSS can't be higher than total number of pods")
+						}
+
+						logger := zap.NewNop()
+						klog.SetLogger(zapr.NewLogger(logger))
+
+						framework.StartEtcd(zapr.NewLogger(logger), t, true)
+						tCtx, closeFn, rm, informers, cc := scSetupCC(t)
+
+						podsClientConfig := restclient.CopyConfig(cc)
+						podsClientConfig.RateLimiter = flowcontrol.NewTokenBucketRateLimiter(float32(qps/2), qps/4)
+						podC, err := clientset.NewForConfig(podsClientConfig)
+						if err != nil {
+							t.Fatalf("error in create clientset: %v", err)
+						}
+
+						clientConfig := restclient.CopyConfig(cc)
+						clientConfig.RateLimiter = flowcontrol.NewTokenBucketRateLimiter(float32(qps/2), qps/4)
+						c, err := clientset.NewForConfig(clientConfig)
+						if err != nil {
+							t.Fatalf("error in create clientset: %v", err)
+						}
+
+						defer closeFn()
+						nss := make([]*v1.Namespace, 0, namespaces)
+						for i := 0; i < namespaces; i++ {
+							nss = append(nss,
+								framework.CreateNamespaceOrDie(c, fmt.Sprintf("test-sts-%06d", i), t),
+							)
+						}
+						defer func() {
+							for _, ns := range nss {
+								framework.DeleteNamespaceOrDie(c, ns, t)
+							}
+						}()
+
+						stss := make([]*appsv1.StatefulSet, 0, namespaces*stssPerNamespace)
+						for _, ns := range nss {
+							createHeadlessService(t, c, newHeadlessService(ns.Name))
+							for i := 0; i < stssPerNamespace; i++ {
+								name := fmt.Sprintf("test-sts-%06d", i)
+								sts := newSmallSTS(name, ns.Name, podsPerStatefulset-2, slack)
+								stss = append(stss, sts)
+							}
+						}
+						createSTSs(t, c, stss)
+
+						cancel := runControllerAndInformers(tCtx, rm, informers)
+						defer cancel()
+
+						for _, sts := range stss {
+							waitSTSStable(t, c, sts)
+						}
+						klog.SetLogger(zapr.NewLogger(logger))
+
+						atomic.StoreUint64(&utiltrace.TraceCount, 0)
+
+						buffer := qps / 2
+
+						for t.Loop() {
+							readyPods := make(chan v1.Pod, buffer)
+							notReadyPods := make(chan v1.Pod, buffer)
+							go func() {
+								defer close(readyPods)
+								allPods := make([]v1.Pod, 0, pods)
+								for _, ns := range nss {
+									podClient := podC.CoreV1().Pods(ns.Name)
+									pods := getPods(t, podClient, nil)
+									allPods = append(allPods, pods.Items...)
+								}
+
+								for _, p := range rand.Perm(len(allPods))[:podsWSS] {
+									readyPods <- allPods[p]
+								}
+							}()
+
+							workers := 100
+							var wgPodChurnReady, wgPodChurnNotReady sync.WaitGroup
+							wgPodChurnReady.Add(workers / 2)
+							wgPodChurnNotReady.Add(workers / 2)
+							for i := 0; i < workers/2; i++ {
+								go func() {
+									defer wgPodChurnReady.Done()
+									for pod := range readyPods {
+										setPodsReadyCondition(t, podC, &v1.PodList{Items: []v1.Pod{pod}}, v1.ConditionTrue, time.Now())
+										notReadyPods <- pod
+									}
+								}()
+								go func() {
+									defer wgPodChurnNotReady.Done()
+									for pod := range notReadyPods {
+										setPodsReadyCondition(t, podC, &v1.PodList{Items: []v1.Pod{pod}}, v1.ConditionFalse, time.Now())
+									}
+								}()
+							}
+
+							scalingUp := make(chan *appsv1.StatefulSet, buffer)
+							scalingDown := make(chan *appsv1.StatefulSet, buffer)
+							go func() {
+								defer close(scalingUp)
+								for _, i := range rand.Perm(len(stss))[:stsWSS] {
+									sts := stss[i]
+									scalingUp <- sts
+								}
+							}()
+							stsWorkers := 2 * qps
+							var wgUp, wgDown sync.WaitGroup
+							wgUp.Add(stsWorkers / 2)
+							wgDown.Add(stsWorkers / 2)
+							for i := 0; i < stsWorkers/2; i++ {
+								go func() {
+									defer wgUp.Done()
+									for sts := range scalingUp {
+										scaleSTS(t, c, sts, int32(podsPerStatefulset))
+										scalingDown <- sts
+									}
+								}()
+								go func() {
+									defer wgDown.Done()
+									for sts := range scalingDown {
+										scaleSTS(t, c, sts, int32(podsPerStatefulset)-2)
+									}
+								}()
+							}
+							wgPodChurnReady.Wait()
+							close(notReadyPods)
+							wgUp.Wait()
+							close(scalingDown)
+							wgPodChurnNotReady.Wait()
+							wgDown.Wait()
+						}
+						time.Sleep(time.Second * 10)
+						var measurements []float64
+						statefulset.MeasureLock.Lock()
+						measurements = statefulset.Measurements
+						statefulset.MeasureLock.Unlock()
+						sort.Float64s(measurements)
+						watchLatencyP99 := measurements[len(measurements)*99/100]
+						watchLatencyMax := measurements[len(measurements)-1]
+						t.ReportMetric(watchLatencyP99, "watch_latecy_p99")
+						t.ReportMetric(watchLatencyMax, "watch_latecy_max")
+						t.ReportMetric(float64(stss[0].Size()), "sts_size_bytes")
+						t.ReportMetric(float64(stsWSS*2+podsWSS*2)/float64(t.Elapsed().Seconds()), "effective_qps")
+					})
+				}
+			}
+		}
 	}
 }
 
@@ -335,7 +510,7 @@ func TestStatefulSetAvailable(t *testing.T) {
 	}
 }
 
-func setPodsReadyCondition(t *testing.T, clientSet clientset.Interface, pods *v1.PodList, conditionStatus v1.ConditionStatus, lastTransitionTime time.Time) {
+func setPodsReadyCondition(t testing.TB, clientSet clientset.Interface, pods *v1.PodList, conditionStatus v1.ConditionStatus, lastTransitionTime time.Time) {
 	replicas := int32(len(pods.Items))
 	var readyPods int32
 	err := wait.PollImmediate(interval, timeout, func() (bool, error) {
@@ -365,6 +540,9 @@ func setPodsReadyCondition(t *testing.T, clientSet clientset.Interface, pods *v1
 				continue
 			}
 			readyPods++
+		}
+		if conditionStatus == v1.ConditionFalse {
+			return true, nil
 		}
 		return readyPods >= replicas, nil
 	})

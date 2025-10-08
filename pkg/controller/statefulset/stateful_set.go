@@ -249,6 +249,9 @@ func init() {
 	legacyregistry.MustRegister(watchDelayHistogram)
 }
 
+var MeasureLock sync.Mutex
+var Measurements []float64
+
 func (ssc *StatefulSetController) watchDelay(rv int) {
 	now := time.Now()
 	if rv == 0 {
@@ -263,6 +266,9 @@ func (ssc *StatefulSetController) watchDelay(rv int) {
 		diff := now.Sub(rvTime.now)
 		watchDelayGauge.Set(diff.Seconds())
 		watchDelayHistogram.Observe(diff.Seconds())
+		MeasureLock.Lock()
+		Measurements = append(Measurements, diff.Seconds())
+		MeasureLock.Unlock()
 		break
 	}
 	ssc.lock.Unlock()

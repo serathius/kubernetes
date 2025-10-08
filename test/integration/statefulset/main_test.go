@@ -17,11 +17,11 @@ limitations under the License.
 package statefulset
 
 import (
+	"os"
 	"testing"
-
-	"k8s.io/kubernetes/test/integration/framework"
 )
 
 func TestMain(m *testing.M) {
-	framework.EtcdMain(m.Run)
+	//framework.EtcdMain(m.Run)
+	os.Exit(m.Run())
 }

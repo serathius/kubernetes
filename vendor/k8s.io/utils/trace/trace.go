@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"math/rand"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"k8s.io/klog/v2"
@@ -192,7 +193,7 @@ func (t *Trace) Log() {
 	t.endTime = &endTime
 	t.lock.Unlock()
 	// an explicit logging request should dump all the steps out at the higher level
-	if t.parentTrace == nil && klogV(2) { // We don't start logging until Log or LogIfLong is called on the root trace
+	if t.parentTrace == nil { // We don't start logging until Log or LogIfLong is called on the root trace
 		t.logTrace()
 	}
 }
@@ -211,12 +212,18 @@ func (t *Trace) LogIfLong(threshold time.Duration) {
 	t.Log()
 }
 
+var TraceCount uint64
+
 // logTopLevelTraces finds all traces in a hierarchy of nested traces that should be logged but do not have any
 // parents that will be logged, due to threshold limits, and logs them as top level traces.
 func (t *Trace) logTrace() {
 	t.lock.RLock()
 	defer t.lock.RUnlock()
 	if t.durationIsWithinThreshold() {
+		if t.name == "RealFIFO Pop Process" {
+			atomic.AddUint64(&TraceCount, 1)
+			return
+		}
 		var buffer bytes.Buffer
 		traceNum := rand.Int31()
 
@@ -233,7 +240,7 @@ func (t *Trace) logTrace() {
 		t.writeTraceSteps(&buffer, fmt.Sprintf("\nTrace[%d]: ", traceNum), stepThreshold)
 		buffer.WriteString(fmt.Sprintf("\nTrace[%d]: [%v] [%v] END\n", traceNum, t.endTime.Sub(t.startTime), totalTime))
 
-		klog.Info(buffer.String())
+		//fmt.Printf("\n%s\n", buffer.String())
 		return
 	}
 

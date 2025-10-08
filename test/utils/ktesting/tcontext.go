@@ -259,8 +259,8 @@ func Init(tb TB, opts ...InitOption) TContext {
 
 	ctx := interruptCtx
 	if c.PerTestOutput {
-		logger := newLogger(tb, c.BufferLogs)
-		ctx = klog.NewContext(interruptCtx, logger)
+		//logger := newLogger(tb, c.BufferLogs).V(1)
+		//ctx = klog.NewContext(interruptCtx, logger)
 		tb = withKlogHeader(tb)
 	}
 

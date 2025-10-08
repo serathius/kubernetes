@@ -1234,9 +1234,7 @@ func FilterPodsByOwnerRV(podIndexer cache.Indexer, owner *metav1.ObjectMeta, own
 			return nil, 0, err
 		}
 		rv, err := strconv.Atoi(rvStr)
-		if err != nil {
-			fmt.Printf("Error Atoi rv: %q, err: %v\n", rvStr, err)
-		} else {
+		if err == nil {
 			if minRV == 0 {
 				minRV = rv
 			} else {

@@ -35,7 +35,7 @@ const (
 	StorageTypeETCD2 = "etcd2"
 	StorageTypeETCD3 = "etcd3"
 
-	DefaultCompactInterval      = 5 * time.Minute
+	DefaultCompactInterval      = 10 * time.Minute
 	DefaultDBMetricPollInterval = 30 * time.Second
 	DefaultEventsHistoryWindow  = 75 * time.Second
 	DefaultHealthcheckTimeout   = 2 * time.Second
