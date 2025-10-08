@@ -20,6 +20,8 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strconv"
+	"sync"
 	"time"
 
 	apps "k8s.io/api/apps/v1"
@@ -39,6 +41,8 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
+	compbasemetrics "k8s.io/component-base/metrics"
+	"k8s.io/component-base/metrics/legacyregistry"
 	podutil "k8s.io/kubernetes/pkg/api/v1/pod"
 	"k8s.io/kubernetes/pkg/controller"
 	"k8s.io/kubernetes/pkg/controller/history"
@@ -80,6 +84,14 @@ type StatefulSetController struct {
 	queue workqueue.TypedRateLimitingInterface[string]
 	// eventBroadcaster is the core of event processing pipeline.
 	eventBroadcaster record.EventBroadcaster
+
+	lock    sync.Mutex
+	rvQueue []RVTime
+}
+
+type RVTime struct {
+	rv  int
+	now time.Time
 }
 
 // NewStatefulSetController creates a new statefulset controller.
@@ -181,7 +193,79 @@ func (ssc *StatefulSetController) Run(ctx context.Context, workers int) {
 		go wait.UntilWithContext(ctx, ssc.worker, time.Second)
 	}
 
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(time.Second):
+			}
+			start := time.Now()
+			resp, err := ssc.kubeClient.AppsV1().StatefulSets("none").List(ctx, metav1.ListOptions{})
+			if err != nil {
+				klog.ErrorS(err, "DUPA List error")
+				continue
+			}
+			rv, err := strconv.Atoi(resp.ResourceVersion)
+			if err != nil {
+				klog.ErrorS(err, "DUPA LIST Atoi error")
+				continue
+			}
+			ssc.lock.Lock()
+			ssc.rvQueue = append(ssc.rvQueue, RVTime{
+				rv:  rv,
+				now: start,
+			})
+			if len(ssc.rvQueue) > 60*60 {
+				ssc.rvQueue = ssc.rvQueue[len(ssc.rvQueue)-60*60:]
+			}
+			ssc.lock.Unlock()
+		}
+	}()
+
 	<-ctx.Done()
+}
+
+var watchDelayGauge = compbasemetrics.NewGauge(
+	&compbasemetrics.GaugeOpts{
+		Subsystem:      "controller_manager",
+		Name:           "watch_delay_seconds",
+		Help:           "Watch delay seconds",
+		StabilityLevel: compbasemetrics.ALPHA,
+	},
+)
+var watchDelayHistogram = compbasemetrics.NewHistogram(
+	&compbasemetrics.HistogramOpts{
+		Subsystem:      "controller_manager",
+		Name:           "watch_delay_total_seconds",
+		Help:           "Watch delay seconds",
+		StabilityLevel: compbasemetrics.ALPHA,
+		Buckets:        compbasemetrics.LinearBuckets(1, 1, 300),
+	},
+)
+
+func init() {
+	legacyregistry.MustRegister(watchDelayGauge)
+	legacyregistry.MustRegister(watchDelayHistogram)
+}
+
+func (ssc *StatefulSetController) watchDelay(rv int) {
+	now := time.Now()
+	if rv == 0 {
+		return
+	}
+	ssc.lock.Lock()
+	for i := len(ssc.rvQueue) - 1; i >= 0; i-- {
+		rvTime := ssc.rvQueue[i]
+		if rvTime.rv > rv {
+			continue
+		}
+		diff := now.Sub(rvTime.now)
+		watchDelayGauge.Set(diff.Seconds())
+		watchDelayHistogram.Observe(diff.Seconds())
+		break
+	}
+	ssc.lock.Unlock()
 }
 
 // addPod adds the statefulset for the pod to the sync queue
@@ -315,10 +399,10 @@ func (ssc *StatefulSetController) deletePod(logger klog.Logger, obj interface{})
 //
 // NOTE: Returned Pods are pointers to objects from the cache.
 // If you need to modify one, you need to copy it first.
-func (ssc *StatefulSetController) getPodsForStatefulSet(ctx context.Context, set *apps.StatefulSet, selector labels.Selector) ([]*v1.Pod, error) {
-	podsForSts, err := controller.FilterPodsByOwner(ssc.podIndexer, &set.ObjectMeta, "StatefulSet", true)
+func (ssc *StatefulSetController) getPodsForStatefulSet(ctx context.Context, set *apps.StatefulSet, selector labels.Selector) ([]*v1.Pod, int, error) {
+	podsForSts, rv, err := controller.FilterPodsByOwnerRV(ssc.podIndexer, &set.ObjectMeta, "StatefulSet", true)
 	if err != nil {
-		return nil, err
+		return nil, rv, err
 	}
 
 	filter := func(pod *v1.Pod) bool {
@@ -327,7 +411,8 @@ func (ssc *StatefulSetController) getPodsForStatefulSet(ctx context.Context, set
 	}
 
 	cm := controller.NewPodControllerRefManager(ssc.podControl, set, selector, controllerKind, ssc.canAdoptFunc(ctx, set))
-	return cm.ClaimPods(ctx, podsForSts, filter)
+	pods, err := cm.ClaimPods(ctx, podsForSts, filter)
+	return pods, rv, err
 }
 
 // If any adoptions are attempted, we should first recheck for deletion with
@@ -487,11 +572,11 @@ func (ssc *StatefulSetController) sync(ctx context.Context, key string) error {
 		return err
 	}
 
-	pods, err := ssc.getPodsForStatefulSet(ctx, set, selector)
+	pods, rv, err := ssc.getPodsForStatefulSet(ctx, set, selector)
 	if err != nil {
 		return err
 	}
-
+	ssc.watchDelay(rv)
 	return ssc.syncStatefulSet(ctx, set, pods)
 }
 

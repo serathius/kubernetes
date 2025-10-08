@@ -53,6 +53,15 @@ func (l ResourceIndexer[T]) List(selector labels.Selector) (ret []T, err error) 
 	return ret, err
 }
 
+// List lists all resources in the indexer matching the given selector.
+func (l ResourceIndexer[T]) ListRV(selector labels.Selector) (ret []T, rv string, err error) {
+	// ListAllByNamespace reverts to ListAll on empty namespaces
+	rv, err = cache.ListAllByNamespaceRV(l.indexer, l.namespace, selector, func(m interface{}) {
+		ret = append(ret, m.(T))
+	})
+	return ret, rv, err
+}
+
 // Get retrieves the resource from the index for a given name.
 func (l ResourceIndexer[T]) Get(name string) (T, error) {
 	var key string

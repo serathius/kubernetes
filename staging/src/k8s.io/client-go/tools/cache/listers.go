@@ -55,6 +55,28 @@ func ListAll(store Store, selector labels.Selector, appendFn AppendFunc) error {
 	return nil
 }
 
+// ListAll lists items in the store matching the given selector, calling appendFn on each one.
+func ListAllRV(store Store, selector labels.Selector, appendFn AppendFunc) (string, error) {
+	selectAll := selector.Empty()
+	list, rv := store.ListRV()
+	for _, m := range list {
+		if selectAll {
+			// Avoid computing labels of the objects to speed up common flows
+			// of listing all objects.
+			appendFn(m)
+			continue
+		}
+		metadata, err := meta.Accessor(m)
+		if err != nil {
+			return rv, err
+		}
+		if selector.Matches(labels.Set(metadata.GetLabels())) {
+			appendFn(m)
+		}
+	}
+	return rv, nil
+}
+
 // ListAllByNamespace lists items in the given namespace in the store matching the given selector,
 // calling appendFn on each one.
 // If a blank namespace (NamespaceAll) is specified, this delegates to ListAll().
@@ -107,6 +129,57 @@ func ListAllByNamespace(indexer Indexer, namespace string, selector labels.Selec
 	}
 
 	return nil
+}
+
+// ListAllByNamespace lists items in the given namespace in the store matching the given selector,
+// calling appendFn on each one.
+// If a blank namespace (NamespaceAll) is specified, this delegates to ListAll().
+func ListAllByNamespaceRV(indexer Indexer, namespace string, selector labels.Selector, appendFn AppendFunc) (string, error) {
+	if namespace == metav1.NamespaceAll {
+		return ListAllRV(indexer, selector, appendFn)
+	}
+
+	items, rv, err := indexer.IndexRV(NamespaceIndex, &metav1.ObjectMeta{Namespace: namespace})
+	if err != nil {
+		// Ignore error; do slow search without index.
+		//
+		// ListAllByNamespace is called by generated code
+		// (k8s.io/client-go/listers) and probably not worth converting
+		// to contextual logging, which would require changing all of
+		// those APIs.
+		klog.TODO().Info("Warning: can not retrieve list of objects using index", "err", err)
+		list, rv := indexer.ListRV()
+		for _, m := range list {
+			metadata, err := meta.Accessor(m)
+			if err != nil {
+				return "", err
+			}
+			if metadata.GetNamespace() == namespace && selector.Matches(labels.Set(metadata.GetLabels())) {
+				appendFn(m)
+			}
+
+		}
+		return rv, nil
+	}
+
+	selectAll := selector.Empty()
+	for _, m := range items {
+		if selectAll {
+			// Avoid computing labels of the objects to speed up common flows
+			// of listing all objects.
+			appendFn(m)
+			continue
+		}
+		metadata, err := meta.Accessor(m)
+		if err != nil {
+			return rv, err
+		}
+		if selector.Matches(labels.Set(metadata.GetLabels())) {
+			appendFn(m)
+		}
+	}
+
+	return rv, nil
 }
 
 // GenericLister is a lister skin on a generic Indexer
