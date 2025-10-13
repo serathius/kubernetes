@@ -1929,6 +1929,15 @@ EOF
   systemctl start gke-node-problem-detector.service
 }
 
+# This function writes the Application Default Credentials (ADC) file for CRI Proxy on Linked Runner nodes.
+function add-adc-config-criproxy {
+  if [[ -n "${CRIPROXY_ADC_CONFIG:-}" ]]; then
+    local adc_config_path="/etc/criproxy/application_default_credentials.json"
+    mkdir -p /etc/criproxy
+    echo "$CRIPROXY_ADC_CONFIG" > "${adc_config_path}"
+  fi
+}
+
 # Create the log file and set its properties.
 #
 # $1 is the file to create.
@@ -3253,6 +3262,7 @@ function main() {
       echo "Either NODE_PROBLEM_DETECTOR_TOKEN or /var/lib/kubelet/kubeconfig must be set" >&2
       exit 1
     fi
+    log-wrap 'AddADCConfigCRIPROXY' add-adc-config-criproxy
   fi
 
   log-wrap 'DetectCgroupConfig' detect-cgroup-config
