@@ -26,7 +26,12 @@ def get_kernel_version():
   fields = os_release.split('.')
   if len(fields) < 2:
     sys.exit('Failed to parse OS release %s' % os_release)
-  return fields[0], fields[1]
+  try:
+    major_int, minor_int = int(fields[0]), int(fields[1])
+  except ValueError:
+    print("Failed to parse OS version to integer")
+    exit()
+  return major_int, minor_int
 
 
 def get_namespaced_sysctl_names(namespaced_sysctl_names):
@@ -37,7 +42,11 @@ def get_namespaced_sysctl_names(namespaced_sysctl_names):
     if len(fields) < 2:
       sys.exit('Found invalid kernel %s in %s' %
                (entry['kernel'], namespaced_sysctl_names))
-    major, minor = fields[0], fields[1]
+    try:
+      major, minor = int(fields[0]), int(fields[1])
+    except ValueError:
+      print("Failed to parse OS version to integer")
+      exit()
     if kernel_major < major:
       continue
     if kernel_major == major and kernel_minor < minor:
