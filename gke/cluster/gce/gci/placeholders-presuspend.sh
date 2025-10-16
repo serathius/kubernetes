@@ -162,6 +162,10 @@ EOF
 
   log "Continuing the placeholder bootstrapping after resume..."
 
+  # Resize stateful partition to utilize any expanded disk space.
+  log "Attempting to resize stateful partition using COS service..."
+  systemctl start --no-block resize-stateful-partition.service
+
   # b/365605093 - On resume, gve must be reloaded because mac address is changed on resume and must be refreshed
   log "Reloading gvnic"
   modprobe gve
