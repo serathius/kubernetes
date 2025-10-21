@@ -156,6 +156,11 @@ const (
 	// Enables generating snapshots of watch cache store and using them to serve LIST requests.
 	ListFromCacheSnapshot featuregate.Feature = "ListFromCacheSnapshot"
 
+	// owner: @michaelasp
+	//
+	// Enable probing of cache staleness
+	MonitorInformerStaleness featuregate.Feature = "MonitorInformerStaleness"
+
 	// owner: @alexzielenski, @cici37, @jiahuif, @jpbetz
 	// kep: https://kep.k8s.io/3962
 	//
@@ -396,6 +401,10 @@ var defaultVersionedKubernetesFeatureGates = map[featuregate.Feature]featuregate
 	ListFromCacheSnapshot: {
 		{Version: version.MustParse("1.33"), Default: false, PreRelease: featuregate.Alpha},
 		{Version: version.MustParse("1.34"), Default: true, PreRelease: featuregate.Beta},
+	},
+
+	MonitorInformerStaleness: {
+		{Version: version.MustParse("1.35"), Default: true, PreRelease: featuregate.Beta},
 	},
 
 	MutatingAdmissionPolicy: {

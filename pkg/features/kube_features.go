@@ -576,6 +576,11 @@ const (
 	// Enables kubelet to support memory QoS with cgroups v2.
 	MemoryQoS featuregate.Feature = "MemoryQoS"
 
+	// owner: @michaelasp
+	//
+	// Enable probing of cache staleness
+	MonitorInformerStaleness featuregate.Feature = "MonitorInformerStaleness"
+
 	// owner: @aojea
 	// kep: https://kep.k8s.io/1880
 	//
@@ -1900,6 +1905,10 @@ var defaultVersionedKubernetesFeatureGates = map[featuregate.Feature]featuregate
 		{Version: version.MustParse("1.34"), Default: true, PreRelease: featuregate.Beta},
 	},
 
+	genericfeatures.MonitorInformerStaleness: {
+		{Version: version.MustParse("1.35"), Default: true, PreRelease: featuregate.Beta},
+	},
+
 	genericfeatures.MutatingAdmissionPolicy: {
 		{Version: version.MustParse("1.32"), Default: false, PreRelease: featuregate.Alpha},
 		{Version: version.MustParse("1.34"), Default: false, PreRelease: featuregate.Beta},
@@ -2355,6 +2364,8 @@ var defaultKubernetesFeatureGateDependencies = map[featuregate.Feature][]feature
 	genericfeatures.KMSv1: {},
 
 	genericfeatures.ListFromCacheSnapshot: {},
+
+	genericfeatures.MonitorInformerStaleness: {},
 
 	genericfeatures.MutatingAdmissionPolicy: {},
 
