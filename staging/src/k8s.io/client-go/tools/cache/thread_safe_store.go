@@ -24,6 +24,7 @@ import (
 	"k8s.io/klog/v2"
 
 	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/util/resourceversion"
 	"k8s.io/apimachinery/pkg/util/sets"
 	utiltrace "k8s.io/utils/trace"
 )
@@ -48,6 +49,7 @@ type ThreadSafeStore interface {
 	Update(key string, obj interface{})
 	Delete(key string)
 	DeleteObj(key string, obj interface{})
+	DeleteWithObject(key string, obj interface{})
 	Get(key string) (item interface{}, exists bool)
 	List() []interface{}
 	ListRV() ([]interface{}, string)
@@ -56,6 +58,8 @@ type ThreadSafeStore interface {
 	Index(indexName string, obj interface{}) ([]interface{}, error)
 	IndexRV(indexName string, obj interface{}) ([]interface{}, string, error)
 	IndexKeys(indexName, indexedValue string) ([]string, error)
+	ObserveResourceVersion(rv string)
+	GetObservedResourceVersion() string
 	ListIndexFuncValues(name string) []string
 	ByIndex(indexName, indexedValue string) ([]interface{}, error)
 	ByIndexRV(indexName, indexedValue string) ([]interface{}, string, error)
@@ -246,10 +250,10 @@ func (i *storeIndex) deleteKeyFromIndex(key, indexValue string, index index) {
 type threadSafeMap struct {
 	lock  sync.RWMutex
 	items map[string]interface{}
-	rv    string
 
 	// index implements the indexing functionality
 	index *storeIndex
+	rv    string
 }
 
 func (c *threadSafeMap) Transaction(txns ...ThreadSafeStoreTransaction) {
@@ -287,16 +291,7 @@ func (c *threadSafeMap) Update(key string, obj interface{}) {
 }
 
 func (c *threadSafeMap) updateLocked(key string, obj interface{}) {
-	meta, err := meta.Accessor(obj)
-	if err != nil {
-		klog.ErrorS(nil, "No meta", "key", key)
-	}
-	if meta != nil {
-		rv := meta.GetResourceVersion()
-		if rv != "" {
-			c.rv = rv
-		}
-	}
+	c.updateRVFromObject(obj)
 	oldObject := c.items[key]
 	c.items[key] = obj
 	c.index.updateIndices(oldObject, obj, key)
@@ -328,6 +323,16 @@ func (c *threadSafeMap) DeleteObj(key string, obj interface{}) {
 			c.rv = rv
 		}
 	}
+	if obj, exists := c.items[key]; exists {
+		c.index.updateIndices(obj, nil, key)
+		delete(c.items, key)
+	}
+}
+
+func (c *threadSafeMap) DeleteWithObject(key string, obj interface{}) {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	c.updateRVFromObject(obj)
 	if obj, exists := c.items[key]; exists {
 		c.index.updateIndices(obj, nil, key)
 		delete(c.items, key)
@@ -377,12 +382,39 @@ func (c *threadSafeMap) Replace(items map[string]interface{}, resourceVersion st
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	c.items = items
-	c.rv = resourceVersion
+	_, err := resourceversion.CompareResourceVersion(resourceVersion, resourceVersion)
+	if err == nil {
+		c.rv = resourceVersion
+	} else {
+		c.rv = ""
+	}
 
 	// rebuild any index
 	c.index.reset()
 	for key, item := range c.items {
 		c.index.updateIndices(nil, item, key)
+	}
+}
+
+func (c *threadSafeMap) updateRVFromObject(obj interface{}) {
+	meta, err := meta.Accessor(obj)
+	if err != nil {
+		return
+	}
+	rv := meta.GetResourceVersion()
+	if c.rv == "" {
+		_, err := resourceversion.CompareResourceVersion(rv, rv)
+		if err == nil {
+			c.rv = rv
+		}
+		return
+	}
+	cmp, err := resourceversion.CompareResourceVersion(c.rv, rv)
+	if err != nil {
+		return
+	}
+	if cmp < 0 {
+		c.rv = rv
 	}
 }
 
@@ -418,6 +450,33 @@ func (c *threadSafeMap) IndexRV(indexName string, obj interface{}) ([]interface{
 		list = append(list, c.items[storeKey])
 	}
 	return list, c.rv, nil
+}
+
+// GetObservedResourceVersion returns the latest resource version that the store has seen.
+func (c *threadSafeMap) GetObservedResourceVersion() string {
+	c.lock.RLock()
+	defer c.lock.RUnlock()
+	return c.rv
+}
+
+// ObserveResourceVersion returns the latest resource version that the store has seen.
+func (c *threadSafeMap) ObserveResourceVersion(rv string) {
+	c.lock.RLock()
+	defer c.lock.RUnlock()
+	if c.rv == "" {
+		_, err := resourceversion.CompareResourceVersion(rv, rv)
+		if err == nil {
+			c.rv = rv
+		}
+		return
+	}
+	cmp, err := resourceversion.CompareResourceVersion(c.rv, rv)
+	if err != nil {
+		return
+	}
+	if cmp < 0 {
+		c.rv = rv
+	}
 }
 
 // ByIndex returns a list of the items whose indexed values in the given index include the given indexed value
