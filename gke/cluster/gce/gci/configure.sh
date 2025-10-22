@@ -43,9 +43,9 @@ DEFAULT_CRICTL_VERSION='v1.31.1-gke.0'
 DEFAULT_CRICTL_AMD64_SHA512='7c0ea3355b53c79e00772cfdf0bf67d262a9a0e827fdcf5be956ff68be25b47d7cb5cd6b065e3de251efc7b4534961e37a37b9f0e3f1efa22dfe2b5149702889'
 DEFAULT_CRICTL_ARM64_SHA512='05c8a74117288def73c430aa7f207432c2b0e6f0560bb795f90debb65902a76e1d001e876a319cdf090c78ca4cbafa8021dd1a93e938aa74fd800677020446f6'
 
-DEFAULT_MOUNTER_ROOTFS_VERSION='v24.1.1'
-DEFAULT_MOUNTER_ROOTFS_TAR_AMD64_SHA512='722844337489d94afc1ae1cb1833bdefce16334fd9140646af2eb445f545e443dc53bec0b4935a0d2bb665971ac75313a7434750013361e989168cad1fe486fe'
-DEFAULT_MOUNTER_ROOTFS_TAR_ARM64_SHA512='3381e19f65b957d91410fe57df5c8fa45ee042fa6b47c4edefaf9ee512a154f1b707a4d77e5097a731472d0d12cb8684e62644b6db9fc2361800f1984fd31fab'
+DEFAULT_MOUNTER_ROOTFS_VERSION='v25.0.0'
+DEFAULT_MOUNTER_ROOTFS_TAR_AMD64_SHA512='f7b1d8e7359e95a20f054d5aefc500a6cf37c478118945ebac1b284ebbb22820efcf09b9fe8d744f3366031bd2b90e73bd34244f8b028121823401faefb27b79'
+DEFAULT_MOUNTER_ROOTFS_TAR_ARM64_SHA512='8d7ea00a313fcddcb855d1798c56150e1ac7a17787d8bb3f6a79190d8a2da5811995529a6a7548d0e9c29656d1cf5d3f23819eb46f2900b37d614f3d4b681940'
 
 RIPTIDE_FUSE_VERSION="v0.279.2"
 RIPTIDE_FUSE_ARM64_SHA512='40260882addb1b0fdebce5e2b8ef93c070bb2a6e91ea85c59ce860b55fb4f5eab0b0ef6026052f1345db187e7d91e549a0f5f615f0c401e22f646ebf51cef38a'
@@ -406,7 +406,7 @@ function install-gci-mounter-tools {
   chmod a+x "${CONTAINERIZED_MOUNTER_HOME}/mounter"
   # Download the debian rootfs required for the mounter container
   mkdir -p "${CONTAINERIZED_MOUNTER_HOME}/rootfs"
-  local -r mounter_rootfs_tar="containerized-mounter-${mounter_rootfs_version}_${HOST_PLATFORM}_${HOST_ARCH}.tar.gz"
+  local -r mounter_rootfs_tar="containerized-mounter-${HOST_ARCH}-${HOST_PLATFORM}-${mounter_rootfs_version}.tar.gz"
   download-or-bust "${mounter_rootfs_tar_sha}" "${STORAGE_ENDPOINT}/gke-release/containerized-mounter/${mounter_rootfs_version}/${mounter_rootfs_tar}"
   mv "${KUBE_HOME}/${mounter_rootfs_tar}" "/tmp/${mounter_rootfs_tar}"
   tar xzf "/tmp/${mounter_rootfs_tar}" -C "${CONTAINERIZED_MOUNTER_HOME}/rootfs"
