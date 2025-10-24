@@ -1100,7 +1100,13 @@ EOF
   systemctl daemon-reload
 
   if [[ "${ENABLE_RIPTIDE_IMAGE_PRELOADING:-false}" == "false" ]]; then
-    systemctl start gcfsd.service
+    # systemctl will block until gcfsd exits with error or sends a signal via sd_notify.
+    # If gcfsd exits with an error, gcfsd will continue to be restarted in the background, however
+    # we will continue with gcfs-snapshotter startup and not wait for gcfsd.
+    # For new nodes, this will cause gcfs-snapshotter to fallback to default image pulling until
+    # gcfsd becomes available. In a reboot case, if snapshots were previously pulled via gcfsd,
+    # then they will fail to be loaded until gcfsd becomes available.
+    systemctl start gcfsd.service || echo "WARNING: gcfsd.service failed (ret=$?), continuing."
   fi
   systemctl start gcfs-snapshotter.service
 }
