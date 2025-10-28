@@ -1086,7 +1086,7 @@ EOF
 
   local enable_v2_api_flag=""
   if [[ "${ENABLE_GCFS_V2_API:-false}" == "true" ]]; then
-    enable_v2_api_flag="--enable-v2 --gcfs-socket-path=/run/gcfsd/gcfsd.sock"
+    enable_v2_api_flag="--enable-v2"
   fi
 
   cat <<EOF >>/etc/systemd/system/gcfs-snapshotter.service
