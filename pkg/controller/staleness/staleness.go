@@ -33,15 +33,15 @@ import (
 )
 
 var (
-	probePeriod              = 5 * time.Second
+	probePeriod              = time.Second
 	maxDelayMeasured         = 5 * time.Minute
 	queueSize                = int(maxDelayMeasured/probePeriod) + 1
 	minSample                = probePeriod / 2
-	bucketCount              = 10
+	bucketCount              = 100
 	bucketsExponentialFactor = math.Pow(float64(maxDelayMeasured)/float64(minSample), 1.0/float64(bucketCount-1))
 	watchDelayHistogram      = compbasemetrics.NewHistogramVec(
 		&compbasemetrics.HistogramOpts{
-			Subsystem:      "controller_manager",
+			Subsystem:      "michaelasp",
 			Name:           "watch_delay_seconds",
 			Help:           "Watch delay seconds, for now calculated only for pods",
 			StabilityLevel: compbasemetrics.ALPHA,
@@ -51,7 +51,7 @@ var (
 	)
 	watchDelayGauge = compbasemetrics.NewGaugeVec(
 		&compbasemetrics.GaugeOpts{
-			Subsystem:      "controller_manager",
+			Subsystem:      "michaelasp",
 			Name:           "pod_watch_delay_seconds",
 			Help:           "Pod watch delay seconds",
 			StabilityLevel: compbasemetrics.ALPHA,

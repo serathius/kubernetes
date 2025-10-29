@@ -228,7 +228,7 @@ func (ssc *StatefulSetController) Run(ctx context.Context, workers int) {
 
 var watchDelayGauge = compbasemetrics.NewGauge(
 	&compbasemetrics.GaugeOpts{
-		Subsystem:      "controller_manager",
+		Subsystem:      "serathius",
 		Name:           "watch_delay_seconds",
 		Help:           "Watch delay seconds",
 		StabilityLevel: compbasemetrics.ALPHA,
@@ -236,7 +236,7 @@ var watchDelayGauge = compbasemetrics.NewGauge(
 )
 var watchDelayHistogram = compbasemetrics.NewHistogram(
 	&compbasemetrics.HistogramOpts{
-		Subsystem:      "controller_manager",
+		Subsystem:      "serathius",
 		Name:           "watch_delay_total_seconds",
 		Help:           "Watch delay seconds",
 		StabilityLevel: compbasemetrics.ALPHA,
