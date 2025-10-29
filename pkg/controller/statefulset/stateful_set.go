@@ -208,7 +208,7 @@ func (ssc *StatefulSetController) Run(ctx context.Context, workers int) {
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(time.Second):
+			case <-time.After(time.Second / 10):
 			}
 			start := time.Now()
 			resp, err := ssc.kubeClient.AppsV1().StatefulSets("none").List(ctx, metav1.ListOptions{})
@@ -238,7 +238,7 @@ func (ssc *StatefulSetController) Run(ctx context.Context, workers int) {
 
 var watchDelayGauge = compbasemetrics.NewGauge(
 	&compbasemetrics.GaugeOpts{
-		Subsystem:      "controller_manager",
+		Subsystem:      "serathius",
 		Name:           "watch_delay_seconds",
 		Help:           "Watch delay seconds",
 		StabilityLevel: compbasemetrics.ALPHA,
@@ -246,7 +246,7 @@ var watchDelayGauge = compbasemetrics.NewGauge(
 )
 var watchDelayHistogram = compbasemetrics.NewHistogram(
 	&compbasemetrics.HistogramOpts{
-		Subsystem:      "controller_manager",
+		Subsystem:      "serathius",
 		Name:           "watch_delay_total_seconds",
 		Help:           "Watch delay seconds",
 		StabilityLevel: compbasemetrics.ALPHA,
