@@ -62,6 +62,7 @@ type sharedInformerFactory struct {
 	defaultResync    time.Duration
 	customResync     map[reflect.Type]time.Duration
 	transform        cache.TransformFunc
+	name             string
 
 	informers map[reflect.Type]cache.SharedIndexInformer
 	// startedInformers is used for tracking which informers have been started.
@@ -96,6 +97,14 @@ func WithTweakListOptions(tweakListOptions internalinterfaces.TweakListOptionsFu
 func WithNamespace(namespace string) SharedInformerOption {
 	return func(factory *sharedInformerFactory) *sharedInformerFactory {
 		factory.namespace = namespace
+		return factory
+	}
+}
+
+// WithNamespace limits the SharedInformerFactory to the specified namespace.
+func WithName(name string) SharedInformerOption {
+	return func(factory *sharedInformerFactory) *sharedInformerFactory {
+		factory.name = name
 		return factory
 	}
 }
@@ -213,6 +222,9 @@ func (f *sharedInformerFactory) InformerFor(obj runtime.Object, newFunc internal
 	}
 
 	informer = newFunc(f.client, resyncPeriod)
+	if f.name != "" {
+		informer.SetName(f.name)
+	}
 	informer.SetTransform(f.transform)
 	f.informers[informerType] = informer
 
