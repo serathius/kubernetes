@@ -312,6 +312,7 @@ func NewSharedIndexInformerWithOptions(lw ListerWatcher, exampleObject runtime.O
 		defaultEventHandlerResyncPeriod: options.ResyncPeriod,
 		clock:                           realClock,
 		cacheMutationDetector:           NewCacheMutationDetector(fmt.Sprintf("%T", exampleObject)),
+		keyFunc:                         MetaNamespaceKeyFunc,
 	}
 }
 
@@ -449,6 +450,9 @@ type sharedIndexInformer struct {
 	watchErrorHandler WatchErrorHandlerWithContext
 
 	transform TransformFunc
+
+	// keyFunc is called when processing deltas by the underlying process function.
+	keyFunc KeyFunc
 }
 
 // dummyController hides the fact that a SharedInformer is different from a dedicated one
@@ -542,9 +546,10 @@ func (s *sharedIndexInformer) RunWithContext(ctx context.Context) {
 		var fifo Queue
 		if clientgofeaturegate.FeatureGates().Enabled(clientgofeaturegate.InOrderInformers) {
 			fifo = NewRealFIFOWithOptions(RealFIFOOptions{
-				KeyFunction:  MetaNamespaceKeyFunc,
-				KnownObjects: s.indexer,
-				Transformer:  s.transform,
+				KeyFunction:   s.keyFunc,
+				KnownObjects:  s.indexer,
+				Transformer:   s.transform,
+				AtomicReplace: clientgofeaturegate.FeatureGates().Enabled(clientgofeaturegate.AtomicFIFO),
 			})
 		} else {
 			fifo = NewDeltaFIFOWithOptions(DeltaFIFOOptions{
@@ -731,7 +736,7 @@ func (s *sharedIndexInformer) HandleDeltas(obj interface{}, isInInitialList bool
 	defer s.blockDeltas.Unlock()
 
 	if deltas, ok := obj.(Deltas); ok {
-		return processDeltas(s, s.indexer, deltas, isInInitialList)
+		return processDeltas(s, s.indexer, deltas, isInInitialList, s.keyFunc)
 	}
 	return errors.New("object given as Process argument is not Deltas")
 }
@@ -739,7 +744,7 @@ func (s *sharedIndexInformer) HandleDeltas(obj interface{}, isInInitialList bool
 func (s *sharedIndexInformer) HandleBatchDeltas(deltas []Delta, isInInitialList bool) error {
 	s.blockDeltas.Lock()
 	defer s.blockDeltas.Unlock()
-	return processDeltasInBatch(s, s.indexer, deltas, isInInitialList)
+	return processDeltasInBatch(s, s.indexer, deltas, isInInitialList, s.keyFunc)
 }
 
 // Conforms to ResourceEventHandler

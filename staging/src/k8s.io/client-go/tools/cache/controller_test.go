@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -34,6 +35,8 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apimachinery/pkg/watch"
+	clientgofeaturegate "k8s.io/client-go/features"
+	clientgofeaturetesting "k8s.io/client-go/features/testing"
 	fcache "k8s.io/client-go/tools/cache/testing"
 	"k8s.io/klog/v2/ktesting"
 
@@ -68,16 +71,8 @@ func Example() {
 			// Obj is from the Pop method of the Queue we make above.
 			newest := obj.(Deltas).Newest()
 
-			if newest.Type != Deleted {
-				// Update our downstream store.
-				err := downstream.Add(newest.Object)
-				if err != nil {
-					return err
-				}
-
-				// Delete this object.
-				source.Delete(newest.Object.(runtime.Object))
-			} else {
+			switch newest.Type {
+			case Deleted:
 				// Update our downstream store.
 				err := downstream.Delete(newest.Object)
 				if err != nil {
@@ -93,6 +88,23 @@ func Example() {
 
 				// Report this deletion.
 				deletionCounter <- key
+			case AtomicEvent:
+				info := newest.Object.(AtomicInfo)
+				err := downstream.Replace(info.Objects, info.ResourceVersion)
+				if err != nil {
+					return err
+				}
+				for _, obj := range info.Objects {
+					source.Delete(obj.(runtime.Object))
+				}
+			default:
+				// Update our downstream store.
+				err := downstream.Add(newest.Object)
+				if err != nil {
+					return err
+				}
+				// Delete this object.
+				source.Delete(newest.Object.(runtime.Object))
 			}
 			return nil
 		},
@@ -849,7 +861,8 @@ func TestProcessDeltasInBatch(t *testing.T) {
 				dummyListener,
 				mockStore,
 				tc.deltaList,
-				true)
+				true,
+				MetaNamespaceKeyFunc)
 			if tc.assertErr != nil {
 				assert.True(t, tc.assertErr(err))
 			}
@@ -892,4 +905,220 @@ func (m *mockTxnStore) Transaction(txns ...Transaction) *TransactionError {
 	}
 	m.succeedCount = len(txns)
 	return nil
+}
+
+func TestAtomicReplaceEquivalence(t *testing.T) {
+	_, ctx := ktesting.NewTestContext(t)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	// Run a scenario with pod creates/deletes/updates with a relist with simple replace.
+	simpleScenario := setupMockReplaceTester(t, false)
+	testReplaceScenario(t, ctx, simpleScenario)
+	// Obtain the events and items from the store after the scenario.
+	eventsDisabled := simpleScenario.getHistory()
+	itemsDisabled := simpleScenario.getStoredItems()
+
+	simpleScenario.teardown()
+
+	// Run a scenario with pod creates/deletes/updates with a relist with atomic replace.
+	atomicScenario := setupMockReplaceTester(t, true)
+	testReplaceScenario(t, ctx, atomicScenario)
+	// Obtain the events and items from the store after the scenario.
+	eventsEnabled := atomicScenario.getHistory()
+	itemsEnabled := atomicScenario.getStoredItems()
+
+	atomicScenario.teardown()
+
+	// Compare Results
+	// The final state of the store must be identical
+	if !apiequality.Semantic.DeepEqual(itemsEnabled, itemsDisabled) {
+		t.Errorf("Stores diverged!\nEnabled: %+v\nDisabled: %+v", itemsEnabled, itemsDisabled)
+	}
+	// The events generated should be identical
+	if !apiequality.Semantic.DeepEqual(eventsEnabled, eventsDisabled) {
+		t.Errorf("Events diverged!\nEnabled: %+v\nDisabled: %+v", eventsEnabled, eventsDisabled)
+	}
+}
+
+// testReplaceScenario takes a mockReplaceTester and creates a number of pods
+// for the informer to consume. It then drops the watch and
+// creates/updates/deletes/keeps a pod during the dropped watch time. It finally
+// triggers a relist to cause a Replace event to occur.
+func testReplaceScenario(t *testing.T, ctx context.Context, m *mockReplaceTester) {
+	go m.controller.RunWithContext(ctx)
+	if !WaitForCacheSync(ctx.Done(), m.controller.HasSynced) {
+		t.Fatal("Timed out waiting for cache sync")
+	}
+
+	// Set up 3 pods initially
+	pKeep := &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod-keep", Namespace: "default"}}
+	pMod := &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod-mod", Namespace: "default", Labels: map[string]string{"ver": "1"}}}
+	pDel := &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod-del", Namespace: "default"}}
+
+	m.source.Add(pKeep)
+	m.source.Add(pMod)
+	m.source.Add(pDel)
+
+	// Wait for all 3 events to appear
+	if err := wait.PollUntilContextTimeout(ctx, 10*time.Millisecond, 2*time.Second, true, func(_ context.Context) (bool, error) {
+		m.historyLock.Lock()
+		defer m.historyLock.Unlock()
+		return len(m.history) == 3, nil
+	}); err != nil {
+		t.Fatalf("Failed initial sync: %v", err)
+	}
+
+	// Clear history so we only compare what happens during the RESYNC/REPLACE
+	m.clearHistory()
+
+	// Silent Drift (Events missed by controller)
+
+	// Modify: Update pod
+	pModUpdated := pMod.DeepCopy()
+	pModUpdated.Labels["ver"] = "2"
+	m.source.ModifyDropWatch(pModUpdated)
+
+	// Remove pod-del
+	m.source.DeleteDropWatch(pDel)
+
+	// Create pod-add
+	pAdd := &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod-add", Namespace: "default"}}
+	m.source.AddDropWatch(pAdd)
+
+	// Force Relist (Trigger AtomicReplace/Replace)
+	// This simulates the reconnection where the controller discovers the silent changes
+	m.source.ResetWatch()
+
+	err := wait.PollUntilContextTimeout(ctx, 10*time.Millisecond, 5*time.Second, true, func(_ context.Context) (bool, error) {
+		// Check Store Content
+		// pod-del should be GONE
+		_, existsDel, _ := m.store.Get(pDel)
+		if existsDel {
+			return false, nil
+		}
+
+		// pod-add should EXIST
+		_, existsAdd, _ := m.store.Get(pAdd)
+		if !existsAdd {
+			return false, nil
+		}
+
+		// pod-mod should be UPDATED
+		objMod, existsMod, _ := m.store.Get(pMod)
+		if !existsMod || objMod.(*v1.Pod).Labels["ver"] != "2" {
+			return false, nil
+		}
+
+		// pod-keep should EXIST
+		_, existsKeep, _ := m.store.Get(pKeep)
+		if !existsKeep {
+			return false, nil
+		}
+
+		return true, nil
+	})
+
+	if err != nil {
+		t.Fatalf("Controller (AtomicEnabled=%v) failed to reconcile scenario: %v", m.atomic, err)
+	}
+}
+
+type eventRecord struct {
+	Action string
+	Key    string
+}
+
+type mockReplaceTester struct {
+	atomic     bool
+	source     *fcache.FakeControllerSource
+	store      Store
+	controller Controller
+
+	historyLock sync.Mutex
+	history     []eventRecord
+}
+
+func setupMockReplaceTester(t *testing.T, atomic bool) *mockReplaceTester {
+	clientgofeaturetesting.SetFeatureDuringTest(t, clientgofeaturegate.AtomicFIFO, atomic)
+	source := fcache.NewFakeControllerSource()
+	store := NewStore(DeletionHandlingMetaNamespaceKeyFunc)
+
+	m := &mockReplaceTester{
+		atomic: atomic,
+		source: source,
+		store:  store,
+	}
+
+	record := func(action string, obj interface{}) {
+		m.historyLock.Lock()
+		defer m.historyLock.Unlock()
+		key, _ := DeletionHandlingMetaNamespaceKeyFunc(obj)
+		m.history = append(m.history, eventRecord{Action: action, Key: key})
+	}
+
+	handler := ResourceEventHandlerDetailedFuncs{
+		AddFunc: func(obj interface{}, isInInitialList bool) {
+			record("add", obj)
+		},
+		UpdateFunc: func(oldObj, newObj interface{}) {
+			record("update", newObj)
+		},
+		DeleteFunc: func(obj interface{}) {
+			record("delete", obj)
+		},
+	}
+
+	c := newInformer(store, InformerOptions{
+		ListerWatcher: source,
+		ObjectType:    &v1.Pod{},
+		ResyncPeriod:  0,
+		Handler:       handler,
+	})
+	m.controller = c
+	return m
+}
+
+func (m *mockReplaceTester) teardown() {
+	m.source.Shutdown()
+}
+
+func (m *mockReplaceTester) clearHistory() {
+	m.historyLock.Lock()
+	defer m.historyLock.Unlock()
+	m.history = []eventRecord{}
+}
+
+func (m *mockReplaceTester) getHistory() []eventRecord {
+	m.historyLock.Lock()
+	historyCopy := make([]eventRecord, len(m.history))
+	copy(historyCopy, m.history)
+	m.historyLock.Unlock()
+
+	sortEvents := func(events []eventRecord) {
+		sort.Slice(events, func(i, j int) bool {
+			if events[i].Key != events[j].Key {
+				return events[i].Key < events[j].Key
+			}
+			return events[i].Action < events[j].Action
+		})
+	}
+	sortEvents(historyCopy)
+
+	return historyCopy
+}
+
+func (m *mockReplaceTester) getStoredItems() []interface{} {
+	items := m.store.List()
+
+	sortItems := func(items []interface{}) {
+		sort.Slice(items, func(i, j int) bool {
+			keyI, _ := DeletionHandlingMetaNamespaceKeyFunc(items[i])
+			keyJ, _ := DeletionHandlingMetaNamespaceKeyFunc(items[j])
+			return keyI < keyJ
+		})
+	}
+
+	sortItems(items)
+	return items
 }
