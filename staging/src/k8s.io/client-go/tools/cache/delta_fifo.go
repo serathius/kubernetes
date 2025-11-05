@@ -178,6 +178,8 @@ const (
 	// as well. Hence, Replaced is only emitted when the option
 	// EmitDeltaTypeReplaced is true.
 	Replaced DeltaType = "Replaced"
+
+	ReplacedAtomic DeltaType = "ReplacedAtomic"
 	// Sync is for synthetic events during a periodic resync.
 	Sync DeltaType = "Sync"
 )

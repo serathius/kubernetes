@@ -43,6 +43,8 @@ type RealFIFOOptions struct {
 	// If set, will be called for objects before enqueueing them. Please
 	// see the comment on TransformFunc for details.
 	Transformer TransformFunc
+
+	AtomicReplace bool
 }
 
 const (
@@ -86,6 +88,13 @@ type RealFIFO struct {
 
 	// batchSize determines the maximum number of objects we can combine into a batch.
 	batchSize int
+
+	emitReplacedAtomic bool
+}
+
+type ReplacedAtomicInfo struct {
+	ResourceVersion string
+	Objects         []interface{}
 }
 
 var (
@@ -166,6 +175,45 @@ func (f *RealFIFO) addToItems_locked(deltaActionType DeltaType, skipTransform bo
 	f.items = append(f.items, Delta{
 		Type:   deltaActionType,
 		Object: obj,
+	})
+	f.cond.Broadcast()
+
+	return nil
+}
+
+// addReplaceToItemsLocked appends to the delta list.
+func (f *RealFIFO) addReplaceToItemsLocked(objs []interface{}, resourceVersion string) error {
+	// Every object comes through this code path once, so this is a good
+	// place to call the transform func.
+	//
+	// If obj is a DeletedFinalStateUnknown tombstone or the action is a Sync,
+	// then the object have already gone through the transformer.
+	//
+	// If the objects already present in the cache are passed to Replace(),
+	// the transformer must be idempotent to avoid re-mutating them,
+	// or coordinate with all readers from the cache to avoid data races.
+	// Default informers do not pass existing objects to Replace.
+	for i, obj := range objs {
+		if f.transformer != nil {
+			_, isTombstone := obj.(DeletedFinalStateUnknown)
+			if !isTombstone {
+				var err error
+				obj, err = f.transformer(obj)
+				if err != nil {
+					return err
+				}
+				objs[i] = obj
+			}
+		}
+	}
+
+	info := ReplacedAtomicInfo{
+		ResourceVersion: resourceVersion,
+		Objects:         objs,
+	}
+	f.items = append(f.items, Delta{
+		Type:   ReplacedAtomic,
+		Object: info,
 	})
 	f.cond.Broadcast()
 
@@ -281,12 +329,18 @@ func (f *RealFIFO) PopBatch(process ProcessBatchFunc) error {
 	isInInitialList := !f.hasSynced_locked()
 	unique := sets.NewString()
 	deltas := make([]Delta, 0, min(len(f.items), f.batchSize))
-	// only bundle unique items into a batch
+	// only bundle unique items into a batch, always batch atomic replaces separately.
 	for i := 0; i < f.batchSize && i < len(f.items); i++ {
 		if f.initialPopulationCount > 0 && i >= f.initialPopulationCount {
 			break
 		}
 		item := f.items[i]
+		if item.Type == ReplacedAtomic {
+			if len(deltas) == 0 {
+				deltas = append(deltas, item)
+			}
+			break
+		}
 		id, err := f.keyOf(item)
 		if err != nil {
 			// close the batch here if error happens
@@ -354,15 +408,28 @@ func (f *RealFIFO) Replace(newItems []interface{}, resourceVersion string) error
 	queuedKeys := []string{}
 	lastQueuedItemForKey := map[string]Delta{}
 	for _, queuedItem := range queuedItems {
-		queuedKey, err := f.keyOf(queuedItem.Object)
-		if err != nil {
-			return KeyError{queuedItem.Object, err}
+		var objs []interface{}
+		if queuedItem.Type == ReplacedAtomic {
+			info := queuedItem.Object.(ReplacedAtomicInfo)
+			objs = info.Objects
+		} else {
+			objs = []interface{}{
+				queuedItem.Object,
+			}
 		}
 
-		if _, seen := lastQueuedItemForKey[queuedKey]; !seen {
-			queuedKeys = append(queuedKeys, queuedKey)
+		for _, obj := range objs {
+			queuedKey, err := f.keyOf(obj)
+			if err != nil {
+				return KeyError{obj, err}
+			}
+
+			if _, seen := lastQueuedItemForKey[queuedKey]; !seen {
+				queuedKeys = append(queuedKeys, queuedKey)
+			}
+			queuedItem.Object = obj
+			lastQueuedItemForKey[queuedKey] = queuedItem
 		}
-		lastQueuedItemForKey[queuedKey] = queuedItem
 	}
 
 	// all the deletes already in the queue are important. There are two cases
@@ -423,10 +490,17 @@ func (f *RealFIFO) Replace(newItems []interface{}, resourceVersion string) error
 	}
 
 	// now that we have the deletes we need for items, we can add the newItems to the items queue
-	for _, obj := range newItems {
-		retErr := f.addToItems_locked(Replaced, false, obj)
+	if f.emitReplacedAtomic && len(newItems) > 0 {
+		retErr := f.addReplaceToItemsLocked(newItems, resourceVersion)
 		if retErr != nil {
-			return fmt.Errorf("couldn't enqueue object: %w", retErr)
+			return fmt.Errorf("couldn't enqueue objects: %w", retErr)
+		}
+	} else {
+		for _, obj := range newItems {
+			retErr := f.addToItems_locked(Replaced, false, obj)
+			if retErr != nil {
+				return fmt.Errorf("couldn't enqueue object: %w", retErr)
+			}
 		}
 	}
 
@@ -495,9 +569,10 @@ func (f *RealFIFO) Transformer() TransformFunc {
 // process.
 func NewRealFIFO(keyFunc KeyFunc, knownObjects KeyListerGetter, transformer TransformFunc) *RealFIFO {
 	return NewRealFIFOWithOptions(RealFIFOOptions{
-		KeyFunction:  keyFunc,
-		KnownObjects: knownObjects,
-		Transformer:  transformer,
+		KeyFunction:   keyFunc,
+		KnownObjects:  knownObjects,
+		Transformer:   transformer,
+		AtomicReplace: true,
 	})
 }
 
@@ -513,11 +588,12 @@ func NewRealFIFOWithOptions(opts RealFIFOOptions) *RealFIFO {
 	}
 
 	f := &RealFIFO{
-		items:        make([]Delta, 0, 10),
-		keyFunc:      opts.KeyFunction,
-		knownObjects: opts.KnownObjects,
-		transformer:  opts.Transformer,
-		batchSize:    defaultBatchSize,
+		items:              make([]Delta, 0, 10),
+		keyFunc:            opts.KeyFunction,
+		knownObjects:       opts.KnownObjects,
+		transformer:        opts.Transformer,
+		batchSize:          defaultBatchSize,
+		emitReplacedAtomic: opts.AtomicReplace,
 	}
 
 	f.cond.L = &f.lock

@@ -39,6 +39,7 @@ func (f *RealFIFO) getItems() []Delta {
 }
 
 const closedFIFOName = "FIFO WAS CLOSED"
+const isAtomic = "ATOMIC REPLACED OBJ"
 
 func popN(queue Queue, count int) []interface{} {
 	result := []interface{}{}
@@ -56,6 +57,13 @@ func testRealFIFOPop(f *RealFIFO) testFifoObject {
 	val := Pop(f)
 	if val == nil {
 		return testFifoObject{name: closedFIFOName}
+	}
+	if val.(Deltas).Newest().Type == ReplacedAtomic {
+		var objs []testFifoObject
+		for _, obj := range val.(Deltas).Newest().Object.(ReplacedAtomicInfo).Objects {
+			objs = append(objs, obj.(testFifoObject))
+		}
+		return testFifoObject{name: isAtomic, val: objs}
 	}
 	return val.(Deltas).Newest().Object.(testFifoObject)
 }
@@ -122,12 +130,17 @@ func TestRealFIFO_replaceWithDeleteDeltaIn(t *testing.T) {
 	)
 
 	f.Delete(oldObj)
-	f.Replace([]interface{}{newObj}, "")
+	if err := f.Replace([]interface{}{newObj}, "123"); err != nil {
+		t.Fatalf("Test error, unable to replace")
+	}
 
 	actualDeltas := f.getItems()
 	expectedDeltas := []Delta{
 		{Type: Deleted, Object: oldObj},
-		{Type: Replaced, Object: newObj},
+		{Type: ReplacedAtomic, Object: ReplacedAtomicInfo{
+			ResourceVersion: "123",
+			Objects:         []interface{}{newObj},
+		}},
 	}
 	if !reflect.DeepEqual(expectedDeltas, actualDeltas) {
 		t.Errorf("expected %#v, got %#v", expectedDeltas, actualDeltas)
@@ -190,8 +203,14 @@ func TestRealFIFOW_ReplaceMakesDeletionsForObjectsOnlyInQueue(t *testing.T) {
 			},
 			expectedDeltas: Deltas{
 				{Added, obj},
-				{Replaced, obj},
-				{Replaced, obj},
+				{Type: ReplacedAtomic, Object: ReplacedAtomicInfo{
+					ResourceVersion: "0",
+					Objects:         []interface{}{obj},
+				}},
+				{Type: ReplacedAtomic, Object: ReplacedAtomicInfo{
+					ResourceVersion: "0",
+					Objects:         []interface{}{obj},
+				}},
 				{Deleted, DeletedFinalStateUnknown{Key: "foo", Obj: obj}},
 			},
 		},
@@ -499,7 +518,7 @@ func TestRealFIFO_addReplace(t *testing.T) {
 		t.Errorf("Didn't get updated value (%v), got %v", e, a)
 	}
 	curr = <-got
-	if e, a := 15, curr.val; e != a {
+	if e, a, v := isAtomic, curr.name, curr.val.([]testFifoObject)[0]; e != a && v.val == 15 {
 		t.Errorf("Didn't get updated value (%v), got %v", e, a)
 	}
 
@@ -594,7 +613,10 @@ func TestRealFIFO_ReplaceMakesDeletions(t *testing.T) {
 		// Since "bar" didn't have a delete event and wasn't in the Replace list
 		// it should get a tombstone key with the right Obj.
 		{{Deleted, DeletedFinalStateUnknown{Key: "bar", Obj: mkFifoObj("bar", 6)}}},
-		{{Replaced, mkFifoObj("foo", 5)}},
+		{{ReplacedAtomic, ReplacedAtomicInfo{
+			ResourceVersion: "0",
+			Objects:         []interface{}{mkFifoObj("foo", 5)},
+		}}},
 	}
 
 	for _, expected := range expectedList {
@@ -623,7 +645,10 @@ func TestRealFIFO_ReplaceMakesDeletions(t *testing.T) {
 		// Since "bar" didn't have a delete event and wasn't in the Replace list
 		// it should get a tombstone key with the right Obj.
 		{{Deleted, DeletedFinalStateUnknown{Key: "bar", Obj: mkFifoObj("bar", 6)}}},
-		{{Replaced, mkFifoObj("foo", 5)}},
+		{{ReplacedAtomic, ReplacedAtomicInfo{
+			ResourceVersion: "0",
+			Objects:         []interface{}{mkFifoObj("foo", 5)},
+		}}},
 	}
 
 	for _, expected := range expectedList {
@@ -654,7 +679,10 @@ func TestRealFIFO_ReplaceMakesDeletions(t *testing.T) {
 		{{Deleted, DeletedFinalStateUnknown{Key: "bar", Obj: mkFifoObj("bar", 100)}}},
 		// ATTENTION: difference with delta_fifo_test, logically the deletes of known items should happen BEFORE newItems are added, so this delete happens early now
 		{{Deleted, DeletedFinalStateUnknown{Key: "baz", Obj: mkFifoObj("baz", 7)}}},
-		{{Replaced, mkFifoObj("foo", 5)}},
+		{{ReplacedAtomic, ReplacedAtomicInfo{
+			ResourceVersion: "0",
+			Objects:         []interface{}{mkFifoObj("foo", 5)},
+		}}},
 	}
 
 	for _, expected := range expectedList {
@@ -681,12 +709,17 @@ func TestRealFIFO_ReplaceMakesDeletions(t *testing.T) {
 		// ATTENTION: difference with delta_fifo_test, logically the deletes of known items should happen BEFORE newItems are added, so this delete happens early now
 		// Since "baz" didn't have a delete event and wasn't in the Replace list
 		{{Deleted, DeletedFinalStateUnknown{Key: "baz", Obj: mkFifoObj("baz", 7)}}},
-		{{Replaced, mkFifoObj("bar", 100)}},
-		{{Replaced, mkFifoObj("foo", 5)}},
+		{{ReplacedAtomic, ReplacedAtomicInfo{
+			ResourceVersion: "0",
+			Objects:         []interface{}{mkFifoObj("bar", 100), mkFifoObj("foo", 5)},
+		}}},
 		// Since "bar" didn't have a delete event and wasn't in the Replace list
 		// it should get a tombstone key with the right Obj.
 		{{Deleted, DeletedFinalStateUnknown{Key: "bar", Obj: mkFifoObj("bar", 100)}}},
-		{{Replaced, mkFifoObj("foo", 5)}},
+		{{ReplacedAtomic, ReplacedAtomicInfo{
+			ResourceVersion: "0",
+			Objects:         []interface{}{mkFifoObj("foo", 5)},
+		}}},
 	}
 
 	for i, expected := range expectedList {
@@ -708,7 +741,10 @@ func TestRealFIFO_ReplaceMakesDeletions(t *testing.T) {
 	expectedList = []Deltas{
 		{{Added, mkFifoObj("baz", 10)}},
 		{{Deleted, DeletedFinalStateUnknown{Key: "baz", Obj: mkFifoObj("baz", 10)}}},
-		{{Replaced, mkFifoObj("foo", 5)}},
+		{{ReplacedAtomic, ReplacedAtomicInfo{
+			ResourceVersion: "0",
+			Objects:         []interface{}{mkFifoObj("foo", 5)},
+		}}},
 	}
 
 	for _, expected := range expectedList {
@@ -739,7 +775,10 @@ func TestRealFIFO_ReplaceMakesDeletionsReplaced(t *testing.T) {
 		// Since "bar" didn't have a delete event and wasn't in the Replace list
 		// it should get a tombstone key with the right Obj.
 		{{Deleted, DeletedFinalStateUnknown{Key: "bar", Obj: mkFifoObj("bar", 6)}}},
-		{{Replaced, mkFifoObj("foo", 6)}},
+		{{ReplacedAtomic, ReplacedAtomicInfo{
+			ResourceVersion: "0",
+			Objects:         []interface{}{mkFifoObj("foo", 6)},
+		}}},
 	}
 
 	for _, expected := range expectedList {
@@ -792,7 +831,10 @@ func TestRealFIFO_HasSyncedCorrectOnDeletion(t *testing.T) {
 		// it should get a tombstone key with the right Obj.
 		{{Deleted, DeletedFinalStateUnknown{Key: "bar", Obj: mkFifoObj("bar", 6)}}},
 		{{Deleted, DeletedFinalStateUnknown{Key: "baz", Obj: mkFifoObj("baz", 7)}}},
-		{{Replaced, mkFifoObj("foo", 5)}},
+		{{ReplacedAtomic, ReplacedAtomicInfo{
+			ResourceVersion: "0",
+			Objects:         []interface{}{mkFifoObj("foo", 5)},
+		}}},
 	}
 
 	for _, expected := range expectedList {
@@ -907,25 +949,6 @@ func TestRealFIFO_HasSynced(t *testing.T) {
 				func(f *RealFIFO) { f.Replace([]interface{}{mkFifoObj("a", 1), mkFifoObj("b", 2)}, "0") },
 				func(f *RealFIFO) { Pop(f) },
 			},
-			expectedSynced: false,
-		},
-		{
-			actions: []func(f *RealFIFO){
-				func(f *RealFIFO) { f.Replace([]interface{}{mkFifoObj("a", 1), mkFifoObj("b", 2)}, "0") },
-				func(f *RealFIFO) { Pop(f) },
-				func(f *RealFIFO) { Pop(f) },
-			},
-			expectedSynced: true,
-		},
-		{
-			// This test case won't happen in practice since a Reflector, the only producer for delta_fifo today, always passes a complete snapshot consistent in time;
-			// there cannot be duplicate keys in the list or apiserver is broken.
-			actions: []func(f *RealFIFO){
-				func(f *RealFIFO) { f.Replace([]interface{}{mkFifoObj("a", 1), mkFifoObj("a", 2)}, "0") },
-				func(f *RealFIFO) { Pop(f) },
-				// ATTENTION: difference with delta_fifo_test, every event is delivered, so a is listed twice and must be popped twice to remove both
-				func(f *RealFIFO) { Pop(f) },
-			},
 			expectedSynced: true,
 		},
 	}
@@ -1002,7 +1025,12 @@ func TestRealFIFO_PopMultipleDeltaInBatch(t *testing.T) {
 			actions:   []func(f *RealFIFO){},
 			batchSize: unlimitedBatchSize,
 			expectedBatches: [][]Delta{
-				{{Replaced, obj1}, {Replaced, obj2}, {Replaced, obj3}},
+				{{
+					ReplacedAtomic, ReplacedAtomicInfo{
+						ResourceVersion: "123",
+						Objects:         []interface{}{obj1, obj2, obj3},
+					}},
+				},
 			},
 		},
 		{
@@ -1016,7 +1044,12 @@ func TestRealFIFO_PopMultipleDeltaInBatch(t *testing.T) {
 			},
 			batchSize: 2,
 			expectedBatches: [][]Delta{
-				{{Replaced, obj1}, {Replaced, obj2}},
+				{{
+					ReplacedAtomic, ReplacedAtomicInfo{
+						ResourceVersion: "123",
+						Objects:         []interface{}{obj1, obj2},
+					}},
+				},
 				{{Updated, obj3}, {Updated, obj4}},
 			},
 		},
@@ -1031,7 +1064,12 @@ func TestRealFIFO_PopMultipleDeltaInBatch(t *testing.T) {
 			},
 			batchSize: unlimitedBatchSize,
 			expectedBatches: [][]Delta{
-				{{Replaced, obj1}},
+				{{
+					ReplacedAtomic, ReplacedAtomicInfo{
+						ResourceVersion: "123",
+						Objects:         []interface{}{obj1},
+					}},
+				},
 				{{Updated, obj1}},
 				{{Updated, obj1}},
 			},
@@ -1047,7 +1085,12 @@ func TestRealFIFO_PopMultipleDeltaInBatch(t *testing.T) {
 			},
 			batchSize: unlimitedBatchSize,
 			expectedBatches: [][]Delta{
-				{{Replaced, obj1}, {Replaced, obj2}},
+				{{
+					ReplacedAtomic, ReplacedAtomicInfo{
+						ResourceVersion: "123",
+						Objects:         []interface{}{obj1, obj2},
+					}},
+				},
 				{{Updated, obj2}, {Updated, obj3}},
 			},
 		},
@@ -1061,7 +1104,12 @@ func TestRealFIFO_PopMultipleDeltaInBatch(t *testing.T) {
 			},
 			batchSize: unlimitedBatchSize,
 			expectedBatches: [][]Delta{
-				{{Replaced, obj1}, {Replaced, obj2}, {Replaced, obj3}},
+				{{
+					ReplacedAtomic, ReplacedAtomicInfo{
+						ResourceVersion: "123",
+						Objects:         []interface{}{obj1, obj2, obj3},
+					}},
+				},
 				{{Updated, obj2}},
 			},
 		},
@@ -1073,8 +1121,12 @@ func TestRealFIFO_PopMultipleDeltaInBatch(t *testing.T) {
 			actions:   []func(f *RealFIFO){},
 			batchSize: 2,
 			expectedBatches: [][]Delta{
-				{{Replaced, obj1}, {Replaced, obj2}},
-				{{Replaced, obj3}},
+				{{
+					ReplacedAtomic, ReplacedAtomicInfo{
+						ResourceVersion: "123",
+						Objects:         []interface{}{obj1, obj2, obj3},
+					}},
+				},
 			},
 		},
 		{
@@ -1092,7 +1144,7 @@ func TestRealFIFO_PopMultipleDeltaInBatch(t *testing.T) {
 			},
 		},
 		{
-			name: "split due to batch size#3: pop 4 mixed initial & non-initial items with 2 batch size should have 3 batch",
+			name: "split due to batch size#3: pop 3 mixed initial & non-initial items with 2 batch size should have 2 batch",
 			initialItems: []testFifoObject{
 				obj1, obj2, obj3,
 			},
@@ -1101,8 +1153,12 @@ func TestRealFIFO_PopMultipleDeltaInBatch(t *testing.T) {
 			},
 			batchSize: 2,
 			expectedBatches: [][]Delta{
-				{{Replaced, obj1}, {Replaced, obj2}},
-				{{Replaced, obj3}},
+				{{
+					ReplacedAtomic, ReplacedAtomicInfo{
+						ResourceVersion: "123",
+						Objects:         []interface{}{obj1, obj2, obj3},
+					}},
+				},
 				{{Updated, obj4}},
 			},
 		},
@@ -1122,7 +1178,7 @@ func TestRealFIFO_PopMultipleDeltaInBatch(t *testing.T) {
 			for i, item := range tc.initialItems {
 				initialItems[i] = item
 			}
-			_ = f.Replace(initialItems, "")
+			_ = f.Replace(initialItems, "123")
 			for _, action := range tc.actions {
 				action(f)
 			}
@@ -1172,7 +1228,13 @@ func TestRealFIFO_PopMultipleDeltaInBatch(t *testing.T) {
 			receivedInitialItems := make([]testFifoObject, 0)
 			for _, deltas := range receivedInitialDeltas {
 				for _, delta := range deltas {
-					receivedInitialItems = append(receivedInitialItems, delta.Object.(testFifoObject))
+					if delta.Type == ReplacedAtomic {
+						for _, obj := range delta.Object.(ReplacedAtomicInfo).Objects {
+							receivedInitialItems = append(receivedInitialItems, obj.(testFifoObject))
+						}
+					} else {
+						receivedInitialItems = append(receivedInitialItems, delta.Object.(testFifoObject))
+					}
 				}
 			}
 

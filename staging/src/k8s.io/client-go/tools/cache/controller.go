@@ -590,6 +590,33 @@ func processDeltas(
 		obj := d.Object
 
 		switch d.Type {
+		case ReplacedAtomic:
+			info, ok := obj.(ReplacedAtomicInfo)
+			if !ok {
+				return fmt.Errorf("replaced atomic did not contain ReplacedAtomicInfo: %T", obj)
+			}
+			var oldObjs []interface{}
+			for _, newObj := range info.Objects {
+				old, exists, err := clientState.Get(newObj)
+				if err != nil {
+					return err
+				}
+				if !exists {
+					oldObjs = append(oldObjs, nil)
+				} else {
+					oldObjs = append(oldObjs, old)
+				}
+			}
+			if err := clientState.Replace(info.Objects, info.ResourceVersion); err != nil {
+				return err
+			}
+			for i, obj := range info.Objects {
+				if oldObjs[i] == nil {
+					handler.OnAdd(obj, isInInitialList)
+				} else {
+					handler.OnUpdate(oldObjs[i], obj)
+				}
+			}
 		case Sync, Replaced, Added, Updated:
 			if old, exists, err := clientState.Get(obj); err == nil && exists {
 				if err := clientState.Update(obj); err != nil {
@@ -643,11 +670,23 @@ func processDeltasInBatch(
 		}
 		return nil
 	}
+
+	if len(deltas) == 1 && deltas[0].Type == ReplacedAtomic {
+		// Atomic replace is unique in that it should always only have one item in the batch
+		// We can safely return after processing here.
+		if err := processDeltas(handler, clientState, Deltas{deltas[0]}, isInInitialList); err != nil {
+			return err
+		}
+		return nil
+	}
+
 	// deltasList is a list of unique objects
 	for _, d := range deltas {
 		obj := d.Object
 		switch d.Type {
-		case Sync, Replaced, Added, Updated:
+		case ReplacedAtomic:
+			return fmt.Errorf("ReplacedAtomic is not its own batch")
+		case Sync, Added, Updated, Replaced:
 			// it will only return one old object for each because items are unique
 			if old, exists, err := clientState.Get(obj); err == nil && exists {
 				txn := Transaction{
@@ -711,9 +750,10 @@ func newInformer(clientState Store, options InformerOptions) Controller {
 	var fifo Queue
 	if clientgofeaturegate.FeatureGates().Enabled(clientgofeaturegate.InOrderInformers) {
 		fifo = NewRealFIFOWithOptions(RealFIFOOptions{
-			KeyFunction:  MetaNamespaceKeyFunc,
-			KnownObjects: clientState,
-			Transformer:  options.Transform,
+			KeyFunction:   MetaNamespaceKeyFunc,
+			KnownObjects:  clientState,
+			Transformer:   options.Transform,
+			AtomicReplace: clientgofeaturegate.FeatureGates().Enabled(clientgofeaturegate.AtomicReplace),
 		})
 	} else {
 		fifo = NewDeltaFIFOWithOptions(DeltaFIFOOptions{

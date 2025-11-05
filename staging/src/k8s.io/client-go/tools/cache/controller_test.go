@@ -68,16 +68,8 @@ func Example() {
 			// Obj is from the Pop method of the Queue we make above.
 			newest := obj.(Deltas).Newest()
 
-			if newest.Type != Deleted {
-				// Update our downstream store.
-				err := downstream.Add(newest.Object)
-				if err != nil {
-					return err
-				}
-
-				// Delete this object.
-				source.Delete(newest.Object.(runtime.Object))
-			} else {
+			switch newest.Type {
+			case Deleted:
 				// Update our downstream store.
 				err := downstream.Delete(newest.Object)
 				if err != nil {
@@ -93,6 +85,23 @@ func Example() {
 
 				// Report this deletion.
 				deletionCounter <- key
+			case ReplacedAtomic:
+				info := newest.Object.(ReplacedAtomicInfo)
+				err := downstream.Replace(info.Objects, info.ResourceVersion)
+				if err != nil {
+					return err
+				}
+				for _, obj := range info.Objects {
+					source.Delete(obj.(runtime.Object))
+				}
+			default:
+				// Update our downstream store.
+				err := downstream.Add(newest.Object)
+				if err != nil {
+					return err
+				}
+				// Delete this object.
+				source.Delete(newest.Object.(runtime.Object))
 			}
 			return nil
 		},
