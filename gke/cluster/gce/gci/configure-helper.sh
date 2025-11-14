@@ -1821,7 +1821,7 @@ After=network-online.target retag-preloaded-images.service
 [Service]
 Restart=always
 RestartSec=10
-WatchdogSec=20s
+WatchdogSec=90s
 EnvironmentFile=${kubelet_env_file}
 ExecStart=${kubelet_bin} \$KUBELET_OPTS
 
