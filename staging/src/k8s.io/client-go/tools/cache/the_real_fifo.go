@@ -270,19 +270,45 @@ func (f *RealFIFO) IsClosed() bool {
 // update data structures in it that need to be in sync with the queue.
 func (f *RealFIFO) Pop(process PopProcessFunc) (interface{}, error) {
 	f.lock.Lock()
-	defer f.lock.Unlock()
+	delta, isInInitialList, err := f.popLocked()
+	if err != nil {
+		f.lock.Unlock()
+		return nil, err
+	}
+	// Only log traces if the queue depth is greater than 10 and it takes more than
+	// 100 milliseconds to process one item from the queue.
+	// Queue depth never goes high because processing an item is locking the queue,
+	// and new items can't be added until processing finish.
+	// https://github.com/kubernetes/kubernetes/issues/103789
+	if len(f.items) > 10 {
+		id, _ := f.keyOf(delta)
+		trace := utiltrace.New("RealFIFO Pop Process",
+			utiltrace.Field{Key: "ID", Value: id},
+			utiltrace.Field{Key: "Depth", Value: len(f.items)},
+			utiltrace.Field{Key: "Reason", Value: "slow event handlers blocking the queue"})
+		defer trace.LogIfLong(100 * time.Millisecond)
+	}
+	if delta.Type == ReplacedAtomic {
+		f.lock.Unlock()
+		err = process(delta, isInInitialList)
+	} else {
+		err = process(delta, isInInitialList)
+		f.lock.Unlock()
+	}
+	return delta, err
+}
 
+func (f *RealFIFO) popLocked() (Delta, bool, error) {
 	for len(f.items) == 0 {
 		// When the queue is empty, invocation of Pop() is blocked until new item is enqueued.
 		// When Close() is called, the f.closed is set and the condition is broadcasted.
 		// Which causes this loop to continue and return from the Pop().
 		if f.closed {
-			return nil, ErrFIFOClosed
+			return Delta{}, false, ErrFIFOClosed
 		}
 
 		f.cond.Wait()
 	}
-
 	isInInitialList := !f.hasSynced_locked()
 	item := f.items[0]
 	// The underlying array still exists and references this object, so the object will not be garbage collected unless we zero the reference.
@@ -292,35 +318,49 @@ func (f *RealFIFO) Pop(process PopProcessFunc) (interface{}, error) {
 		f.initialPopulationCount--
 	}
 
-	// Only log traces if the queue depth is greater than 10 and it takes more than
-	// 100 milliseconds to process one item from the queue.
-	// Queue depth never goes high because processing an item is locking the queue,
-	// and new items can't be added until processing finish.
-	// https://github.com/kubernetes/kubernetes/issues/103789
-	if len(f.items) > 10 {
-		id, _ := f.keyOf(item)
-		trace := utiltrace.New("RealFIFO Pop Process",
-			utiltrace.Field{Key: "ID", Value: id},
-			utiltrace.Field{Key: "Depth", Value: len(f.items)},
-			utiltrace.Field{Key: "Reason", Value: "slow event handlers blocking the queue"})
-		defer trace.LogIfLong(100 * time.Millisecond)
-	}
-
 	// we wrap in Deltas here to be compatible with preview Pop functions and those interpreting the return value.
-	err := process(Deltas{item}, isInInitialList)
-	return Deltas{item}, err
+	return item, isInInitialList, nil
 }
 
 func (f *RealFIFO) PopBatch(process ProcessBatchFunc) error {
 	f.lock.Lock()
-	defer f.lock.Unlock()
+	deltas, isInInitialList, err := f.popBatchLocked()
+	if err != nil {
+		f.lock.Unlock()
+		return err
+	}
 
+	// Only log traces if the queue depth is greater than 10 and it takes more than
+	// 100 milliseconds to process one item from the queue (with a max of 1 second for the whole batch)
+	// Queue depth never goes high because processing an item is locking the queue,
+	// and new items can't be added until processing finish.
+	// https://github.com/kubernetes/kubernetes/issues/103789
+	if len(f.items) > 10 {
+		id, _ := f.keyOf(deltas[0])
+		trace := utiltrace.New("RealFIFO PopBatch Process",
+			utiltrace.Field{Key: "ID", Value: id},
+			utiltrace.Field{Key: "Depth", Value: len(f.items)},
+			utiltrace.Field{Key: "Reason", Value: "slow event handlers blocking the queue"},
+			utiltrace.Field{Key: "BatchSize", Value: len(deltas)})
+		defer trace.LogIfLong(min(100*time.Millisecond*time.Duration(len(deltas)), time.Second))
+	}
+	if len(deltas) == 1 && deltas[0].Type == ReplacedAtomic {
+		f.lock.Unlock()
+		err = process(deltas, isInInitialList)
+	} else {
+		err = process(deltas, isInInitialList)
+		f.lock.Unlock()
+	}
+	return err
+}
+
+func (f *RealFIFO) popBatchLocked() (Deltas, bool, error) {
 	for len(f.items) == 0 {
 		// When the queue is empty, invocation of Pop() is blocked until new item is enqueued.
 		// When Close() is called, the f.closed is set and the condition is broadcasted.
 		// Which causes this loop to continue and return from the Pop().
 		if f.closed {
-			return ErrFIFOClosed
+			return nil, false, ErrFIFOClosed
 		}
 
 		f.cond.Wait()
@@ -365,24 +405,7 @@ func (f *RealFIFO) PopBatch(process ProcessBatchFunc) error {
 		f.initialPopulationCount -= len(deltas)
 	}
 	f.items = f.items[len(deltas):]
-
-	// Only log traces if the queue depth is greater than 10 and it takes more than
-	// 100 milliseconds to process one item from the queue (with a max of 1 second for the whole batch)
-	// Queue depth never goes high because processing an item is locking the queue,
-	// and new items can't be added until processing finish.
-	// https://github.com/kubernetes/kubernetes/issues/103789
-	if len(f.items) > 10 {
-		id, _ := f.keyOf(deltas[0])
-		trace := utiltrace.New("RealFIFO PopBatch Process",
-			utiltrace.Field{Key: "ID", Value: id},
-			utiltrace.Field{Key: "Depth", Value: len(f.items)},
-			utiltrace.Field{Key: "Reason", Value: "slow event handlers blocking the queue"},
-			utiltrace.Field{Key: "BatchSize", Value: len(deltas)})
-		defer trace.LogIfLong(min(100*time.Millisecond*time.Duration(len(deltas)), time.Second))
-	}
-
-	err := process(deltas, isInInitialList)
-	return err
+	return deltas, isInInitialList, nil
 }
 
 // Replace

@@ -732,7 +732,7 @@ func (s *sharedIndexInformer) HandleDeltas(obj interface{}, isInInitialList bool
 	defer s.blockDeltas.Unlock()
 
 	if deltas, ok := obj.(Deltas); ok {
-		return processDeltas(s, s.indexer, deltas, isInInitialList)
+		return processDeltas(s, s.indexer, deltas, isInInitialList, MetaNamespaceKeyFunc)
 	}
 	return errors.New("object given as Process argument is not Deltas")
 }
@@ -740,7 +740,7 @@ func (s *sharedIndexInformer) HandleDeltas(obj interface{}, isInInitialList bool
 func (s *sharedIndexInformer) HandleBatchDeltas(deltas []Delta, isInInitialList bool) error {
 	s.blockDeltas.Lock()
 	defer s.blockDeltas.Unlock()
-	return processDeltasInBatch(s, s.indexer, deltas, isInInitialList)
+	return processDeltasInBatch(s, s.indexer, deltas, isInInitialList, MetaNamespaceKeyFunc)
 }
 
 // Conforms to ResourceEventHandler
