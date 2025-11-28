@@ -584,6 +584,7 @@ func processDeltas(
 	clientState Store,
 	deltas Deltas,
 	isInInitialList bool,
+	keyFunc KeyFunc,
 ) error {
 	// from oldest to newest
 	for _, d := range deltas {
@@ -595,8 +596,15 @@ func processDeltas(
 			if !ok {
 				return fmt.Errorf("replaced atomic did not contain ReplacedAtomicInfo: %T", obj)
 			}
+			oldKeys := clientState.ListKeys()
+			newKeys := map[string]bool{}
 			var oldObjs []interface{}
 			for _, newObj := range info.Objects {
+				key, err := keyFunc(obj)
+				if err != nil {
+					return err
+				}
+				newKeys[key] = true
 				old, exists, err := clientState.Get(newObj)
 				if err != nil {
 					return err
@@ -609,6 +617,11 @@ func processDeltas(
 			}
 			if err := clientState.Replace(info.Objects, info.ResourceVersion); err != nil {
 				return err
+			}
+			for _, key := range oldKeys {
+				if !newKeys[key] {
+					handler.OnDelete(key)
+				}
 			}
 			for i, obj := range info.Objects {
 				if oldObjs[i] == nil {
@@ -653,6 +666,7 @@ func processDeltasInBatch(
 	clientState Store,
 	deltas []Delta,
 	isInInitialList bool,
+	keyFunc KeyFunc,
 ) error {
 	// from oldest to newest
 	txns := make([]Transaction, 0)
@@ -661,7 +675,7 @@ func processDeltasInBatch(
 	if !txnSupported {
 		var errs []error
 		for _, delta := range deltas {
-			if err := processDeltas(handler, clientState, Deltas{delta}, isInInitialList); err != nil {
+			if err := processDeltas(handler, clientState, Deltas{delta}, isInInitialList, keyFunc); err != nil {
 				errs = append(errs, err)
 			}
 		}
@@ -674,7 +688,7 @@ func processDeltasInBatch(
 	if len(deltas) == 1 && deltas[0].Type == ReplacedAtomic {
 		// Atomic replace is unique in that it should always only have one item in the batch
 		// We can safely return after processing here.
-		if err := processDeltas(handler, clientState, Deltas{deltas[0]}, isInInitialList); err != nil {
+		if err := processDeltas(handler, clientState, Deltas{deltas[0]}, isInInitialList, keyFunc); err != nil {
 			return err
 		}
 		return nil
@@ -772,12 +786,12 @@ func newInformer(clientState Store, options InformerOptions) Controller {
 
 		Process: func(obj interface{}, isInInitialList bool) error {
 			if deltas, ok := obj.(Deltas); ok {
-				return processDeltas(options.Handler, clientState, deltas, isInInitialList)
+				return processDeltas(options.Handler, clientState, deltas, isInInitialList, MetaNamespaceKeyFunc)
 			}
 			return errors.New("object given as Process argument is not Deltas")
 		},
 		ProcessBatch: func(deltaList []Delta, isInInitialList bool) error {
-			return processDeltasInBatch(options.Handler, clientState, deltaList, isInInitialList)
+			return processDeltasInBatch(options.Handler, clientState, deltaList, isInInitialList, MetaNamespaceKeyFunc)
 		},
 	}
 	return New(cfg)

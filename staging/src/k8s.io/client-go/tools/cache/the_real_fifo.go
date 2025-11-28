@@ -393,6 +393,14 @@ func (f *RealFIFO) Replace(newItems []interface{}, resourceVersion string) error
 	f.lock.Lock()
 	defer f.lock.Unlock()
 
+	if f.emitReplacedAtomic {
+		f.items = f.items[:0]
+		if !f.populated {
+			f.populated = true
+		}
+		return f.addReplaceToItemsLocked(newItems, resourceVersion)
+	}
+
 	// determine the keys of everything we're adding.  We cannot add the items until after the synthetic deletes have been
 	// created for items that don't existing in newItems
 	newKeys := sets.Set[string]{}
@@ -408,28 +416,15 @@ func (f *RealFIFO) Replace(newItems []interface{}, resourceVersion string) error
 	queuedKeys := []string{}
 	lastQueuedItemForKey := map[string]Delta{}
 	for _, queuedItem := range queuedItems {
-		var objs []interface{}
-		if queuedItem.Type == ReplacedAtomic {
-			info := queuedItem.Object.(ReplacedAtomicInfo)
-			objs = info.Objects
-		} else {
-			objs = []interface{}{
-				queuedItem.Object,
-			}
+		queuedKey, err := f.keyOf(queuedItem.Object)
+		if err != nil {
+			return KeyError{queuedItem.Object, err}
 		}
 
-		for _, obj := range objs {
-			queuedKey, err := f.keyOf(obj)
-			if err != nil {
-				return KeyError{obj, err}
-			}
-
-			if _, seen := lastQueuedItemForKey[queuedKey]; !seen {
-				queuedKeys = append(queuedKeys, queuedKey)
-			}
-			queuedItem.Object = obj
-			lastQueuedItemForKey[queuedKey] = queuedItem
+		if _, seen := lastQueuedItemForKey[queuedKey]; !seen {
+			queuedKeys = append(queuedKeys, queuedKey)
 		}
+		lastQueuedItemForKey[queuedKey] = queuedItem
 	}
 
 	// all the deletes already in the queue are important. There are two cases
@@ -490,17 +485,10 @@ func (f *RealFIFO) Replace(newItems []interface{}, resourceVersion string) error
 	}
 
 	// now that we have the deletes we need for items, we can add the newItems to the items queue
-	if f.emitReplacedAtomic && len(newItems) > 0 {
-		retErr := f.addReplaceToItemsLocked(newItems, resourceVersion)
+	for _, obj := range newItems {
+		retErr := f.addToItems_locked(Replaced, false, obj)
 		if retErr != nil {
-			return fmt.Errorf("couldn't enqueue objects: %w", retErr)
-		}
-	} else {
-		for _, obj := range newItems {
-			retErr := f.addToItems_locked(Replaced, false, obj)
-			if retErr != nil {
-				return fmt.Errorf("couldn't enqueue object: %w", retErr)
-			}
+			return fmt.Errorf("couldn't enqueue object: %w", retErr)
 		}
 	}
 
@@ -518,6 +506,10 @@ func (f *RealFIFO) Resync() error {
 	// TODO this cannot logically be done by the FIFO, it can only be done by the indexer
 	f.lock.Lock()
 	defer f.lock.Unlock()
+
+	if f.emitReplacedAtomic {
+		return nil
+	}
 
 	if f.knownObjects == nil {
 		return nil
@@ -569,10 +561,9 @@ func (f *RealFIFO) Transformer() TransformFunc {
 // process.
 func NewRealFIFO(keyFunc KeyFunc, knownObjects KeyListerGetter, transformer TransformFunc) *RealFIFO {
 	return NewRealFIFOWithOptions(RealFIFOOptions{
-		KeyFunction:   keyFunc,
-		KnownObjects:  knownObjects,
-		Transformer:   transformer,
-		AtomicReplace: true,
+		KeyFunction:  keyFunc,
+		KnownObjects: knownObjects,
+		Transformer:  transformer,
 	})
 }
 
