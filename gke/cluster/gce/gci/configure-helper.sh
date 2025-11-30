@@ -3154,6 +3154,34 @@ function setup-transparent-hugepage {
   fi
 }
 
+# This is the temporary internal fix when users want to configure vm.overcommit_memory (allowed values: 0, 1, 2)
+# since Kubelet hard-code vm.overcommit_memory=1 in https://github.com/kubernetes/kubernetes/blob/v1.34.1/pkg/kubelet/cm/container_manager_linux.go#L452
+# Long term fix is expected to be added in OSS Kubelet, tracked in https://github.com/kubernetes/kubernetes/issues/135294
+# The is a best-effort fix since we cannot ensure kubelet initialization has finished at this stage.
+function override-kubelet-sysctl {
+  local -r sysctl_overrides="${SYSCTL_OVERRIDES:-}"
+  local -r target_key="vm.overcommit_memory"
+  for item in ${sysctl_overrides//,/ }; do
+    # Check if the item starts with target_key followed by '=' and extract the part after the '='
+    if [[ "${item}" == "${target_key}="* ]]; then
+      local -r target_value="${item#*=}"
+      if [[ "${target_value}" == "0" || "${target_value}" == "2" ]]; then
+        # Print sysctl value to check if kubelet has overridden the sysctl.
+        # If value is 1, it means kubelet has finished now and the override succeeds.
+        # Otherwise kubelet hasn't run and will override customer config later.
+        if current_value=$(sysctl -n "${target_key}" 2>/dev/null); then
+          echo "Existing value of ${target_key} is ${current_value} before override."
+        else
+          echo "Failed to get ${target_key} value before override."
+        fi
+
+        sysctl -w "${target_key}=${target_value}"
+      fi
+      break
+    fi
+  done
+}
+
 ########### Main Function ###########
 function main() {
   echo "Start to configure instance for kubernetes"
@@ -3354,6 +3382,7 @@ function main() {
     if [[ -e "${KUBE_HOME}/bin/gke-internal-configure-helper.sh" ]]; then
         log-wrap 'GKEConfigureNodeProblemDetector' gke-configure-node-problem-detector
     fi
+    log-wrap 'OverrideKubeletSysctl' override-kubelet-sysctl
     log-wrap 'StartNodeProblemDetector' start-node-problem-detector
     if [ -n "${GPU_PARTITION_SIZE:-}" ] || [ -n "${MAX_TIME_SHARED_CLIENTS_PER_GPU:-}" ] ||
      [ -n "${MAX_SHARED_CLIENTS_PER_GPU:-}" ] || [ -n "${GPU_SHARING_STRATEGY:-}" ]; then
