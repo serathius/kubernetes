@@ -17,7 +17,7 @@ limitations under the License.
 package responsewriters
 
 import (
-	"compress/gzip"
+	gzip "github.com/klauspost/compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
