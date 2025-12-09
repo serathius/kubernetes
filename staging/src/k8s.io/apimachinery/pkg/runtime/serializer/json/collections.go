@@ -17,12 +17,14 @@ limitations under the License.
 package json
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"maps"
 	"slices"
 	"sort"
+	"sync"
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/conversion"
@@ -31,6 +33,12 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 )
+
+// WorkerCount is the number of concurrent workers to use for encoding.
+var WorkerCount = 10
+
+// ChunkSize is the number of items to process in a single chunk.
+var ChunkSize = 1000
 
 func streamEncodeCollections(obj runtime.Object, w io.Writer) (bool, error) {
 	list, ok := obj.(*unstructured.UnstructuredList)
@@ -149,12 +157,95 @@ func encodeItemsObjectSlice(w io.Writer, items []runtime.Object) (err error) {
 }
 
 func encodeValues(w io.Writer, items []runtime.Object) (err error) {
-	for _, item := range items {
-		err := encodeValue(w, item, []byte(","))
-		if err != nil {
-			return err
+	if len(items) == 0 {
+		return nil
+	}
+
+	type job struct {
+		index int
+		items []runtime.Object
+	}
+	type result struct {
+		index int
+		data  []byte
+		err   error
+	}
+
+	// If we have fewer items than ChunkSize, just do it synchronously to avoid overhead
+	if len(items) <= ChunkSize {
+		for _, item := range items {
+			if err := encodeValue(w, item, []byte(",")); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	jobs := make(chan job, WorkerCount)
+	results := make(chan result, WorkerCount)
+	var wg sync.WaitGroup
+
+	// Start workers
+	for i := 0; i < WorkerCount; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := range jobs {
+				var buf bytes.Buffer
+				for _, item := range j.items {
+					if err := encodeValue(&buf, item, []byte(",")); err != nil {
+						results <- result{index: j.index, err: err}
+						return
+					}
+				}
+				results <- result{index: j.index, data: buf.Bytes()}
+			}
+		}()
+	}
+
+	// Start feeder
+	go func() {
+		defer close(jobs)
+		for i := 0; i < len(items); i += ChunkSize {
+			end := i + ChunkSize
+			if end > len(items) {
+				end = len(items)
+			}
+			jobs <- job{index: i, items: items[i:end]}
+		}
+	}()
+
+	// Close results when all workers are done
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	// Collect results and write in order
+	buffer := make(map[int]result)
+	nextIndex := 0
+	// We expect ceil(len(items)/ChunkSize) chunks
+	// But we can just track nextIndex which corresponds to item index
+	
+	for r := range results {
+		if r.err != nil {
+			return r.err
+		}
+		buffer[r.index] = r
+		
+		for {
+			if res, ok := buffer[nextIndex]; ok {
+				if _, err := w.Write(res.data); err != nil {
+					return err
+				}
+				delete(buffer, nextIndex)
+				nextIndex += ChunkSize
+			} else {
+				break
+			}
 		}
 	}
+
 	return nil
 }
 
