@@ -722,7 +722,6 @@ func benchmarkSerializeObject(b *testing.B, serializer runtime.SerializerInfo, e
 		}
 	}
 
-
 	b.ResetTimer()
 	responseBytesTotal := 0
 	for b.Loop() {
