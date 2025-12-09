@@ -131,12 +131,12 @@ func encodeItemsObjectSlice(w io.Writer, items []runtime.Object) (err error) {
 	if err != nil {
 		return err
 	}
-	suffix := []byte(",")
-	for i, item := range items {
-		if i == len(items)-1 {
-			suffix = nil
+	if len(items) > 0 {
+		err := encodeValues(w, items[:len(items)-1])
+		if err != nil {
+			return err
 		}
-		err := encodeValue(w, item, suffix)
+		err = encodeValue(w, items[len(items)-1], nil)
 		if err != nil {
 			return err
 		}
@@ -146,6 +146,16 @@ func encodeItemsObjectSlice(w io.Writer, items []runtime.Object) (err error) {
 		return err
 	}
 	return err
+}
+
+func encodeValues(w io.Writer, items []runtime.Object) (err error) {
+	for _, item := range items {
+		err := encodeValue(w, item, []byte(","))
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func streamingEncodeUnstructuredList(w io.Writer, list *unstructured.UnstructuredList) error {
