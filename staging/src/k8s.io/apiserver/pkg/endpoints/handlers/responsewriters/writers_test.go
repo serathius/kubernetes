@@ -32,6 +32,7 @@ import (
 	"os"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -42,6 +43,8 @@ import (
 	testapigroupv1 "k8s.io/apimachinery/pkg/apis/testapigroup/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/runtime/serializer"
+	"k8s.io/apimachinery/pkg/runtime/serializer/cbor"
 	jsonserializer "k8s.io/apimachinery/pkg/runtime/serializer/json"
 	"k8s.io/apimachinery/pkg/runtime/serializer/protobuf"
 	rand2 "k8s.io/apimachinery/pkg/util/rand"
@@ -709,27 +712,22 @@ func toJSON(b *testing.B, list *v1.PodList) []byte {
 	return out
 }
 
-func benchmarkSerializeObject(b *testing.B, payload []byte, gzip bool) {
+func benchmarkSerializeObject(b *testing.B, serializer runtime.SerializerInfo, encoding string, obj runtime.Object) {
 	req := &http.Request{
 		URL: &url.URL{Path: "/path"},
 	}
-	if gzip {
+	if encoding != "" {
 		req.Header = http.Header{
-			"Accept-Encoding": []string{"gzip"},
+			"Accept-Encoding": []string{encoding},
 		}
 	}
 
-	featuregatetesting.SetFeatureGateDuringTest(b, utilfeature.DefaultFeatureGate, features.APIResponseCompression, true)
-
-	encoder := &fakeEncoder{
-		buf: payload,
-	}
 
 	b.ResetTimer()
 	responseBytesTotal := 0
 	for b.Loop() {
 		recorder := httptest.NewRecorder()
-		SerializeObject("application/json", encoder, recorder, req, http.StatusOK, nil /* object */)
+		SerializeObject(serializer.MediaType, serializer.Serializer, recorder, req, http.StatusOK, obj)
 		result := recorder.Result()
 		if result.StatusCode != http.StatusOK {
 			b.Fatalf("incorrect status code: got %v;  want: %v", result.StatusCode, http.StatusOK)
@@ -740,22 +738,23 @@ func benchmarkSerializeObject(b *testing.B, payload []byte, gzip bool) {
 }
 
 func BenchmarkSerializeObject(b *testing.B) {
+	factory := serializer.NewCodecFactory(
+		runtime.NewScheme(), 
+		serializer.WithSerializer(cbor.NewSerializerInfo),
+    serializer.WithStreamingCollectionEncodingToJSON(),
+    serializer.WithStreamingCollectionEncodingToProtobuf(),
+  )
+	mediaTypes := factory.SupportedMediaTypes()
+
 	for _, count := range []int{1_000, 10_000, 100_000} {
 		b.Run(fmt.Sprintf("Count=%d", count), func(b *testing.B) {
-			medias := []struct {
-				name    string
-				convert func(*testing.B, *v1.PodList) []byte
-			}{
-				{"Json", toJSON},
-				{"Protobuf", toProtoBuf},
-			}
 			podList := benchmarkItems(b, "testdata/pod.json", count)
-			for _, media := range medias {
-				b.Run(fmt.Sprintf("MediaType=%s", media.name), func(b *testing.B) {
-					payload := media.convert(b, podList)
-					for _, gzip := range []bool{true, false} {
-						b.Run(fmt.Sprintf("Compression=%v", gzip), func(b *testing.B) {
-							benchmarkSerializeObject(b, payload, gzip)
+			for _, media := range mediaTypes {
+				mediaType := strings.TrimPrefix(media.MediaType, "application/")
+				b.Run(fmt.Sprintf("MediaType=%s", mediaType), func(b *testing.B) {
+					for _, encoding := range []string{"", "gzip"} {
+						b.Run(fmt.Sprintf("Encoding=%v", encoding), func(b *testing.B) {
+							benchmarkSerializeObject(b, media, encoding, podList)
 						})
 					}
 				})
