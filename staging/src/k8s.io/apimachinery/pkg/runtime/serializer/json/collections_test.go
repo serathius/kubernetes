@@ -18,6 +18,7 @@ package json
 
 import (
 	"bytes"
+	gojson "encoding/json"
 	"fmt"
 	"testing"
 
@@ -792,4 +793,58 @@ func TestFuzzCollectionsEncoding(t *testing.T) {
 			}
 		}
 	})
+	t.Run("ConcurrentOrdering", TestConcurrentOrdering)
+}
+
+func TestConcurrentOrdering(t *testing.T) {
+	// Use a large enough number to ensure multiple chunks and workers are used
+	// once concurrency is implemented.
+	// We'll use the default ChunkSize (10000) from the implementation plan as a baseline for this test.
+	const testChunkSize = 10000
+	const totalItems = testChunkSize*10 + 123
+
+	list := &testapigroupv1.CarpList{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "CarpList",
+			APIVersion: "v1",
+		},
+		ListMeta: metav1.ListMeta{
+			ResourceVersion: "1",
+		},
+		Items: make([]testapigroupv1.Carp, totalItems),
+	}
+
+	for i := 0; i < totalItems; i++ {
+		list.Items[i] = testapigroupv1.Carp{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: fmt.Sprintf("carp-%d", i),
+			},
+		}
+	}
+
+	s := NewSerializerWithOptions(DefaultMetaFactory, nil, nil, SerializerOptions{StreamingCollectionsEncoding: true})
+	var buf bytes.Buffer
+	if err := s.Encode(list, &buf); err != nil {
+		t.Fatalf("unexpected error during encoding: %v", err)
+	}
+
+	// Decode and verify order
+	decoded := &testapigroupv1.CarpList{}
+	if err := gojson.Unmarshal(buf.Bytes(), decoded); err != nil {
+		t.Fatalf("unexpected error during decoding: %v", err)
+	}
+
+	if len(decoded.Items) != totalItems {
+		t.Fatalf("expected %d items, got %d", totalItems, len(decoded.Items))
+	}
+
+	for i := 0; i < totalItems; i++ {
+		expectedName := fmt.Sprintf("carp-%d", i)
+		if decoded.Items[i].Name != expectedName {
+			t.Errorf("item %d: expected name %s, got %s", i, expectedName, decoded.Items[i].Name)
+			if i > 10 {
+				t.Fatal("too many ordering errors, aborting test")
+			}
+		}
+	}
 }
