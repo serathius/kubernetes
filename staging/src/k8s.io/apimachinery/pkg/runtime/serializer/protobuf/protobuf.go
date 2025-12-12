@@ -470,6 +470,26 @@ func (s *RawSerializer) doEncode(obj runtime.Object, w io.Writer, memAlloc runti
 	return err
 }
 
+func doEncodeWithHeaderToBuffer(obj any, buffer []byte, field byte, precomputedSize int) (size int, err error) {
+	// Field identifier
+	buffer[0] = field
+	size += 1
+	// Size
+	n := write2VarintGenerated(buffer[size:], precomputedSize)
+	size += n
+	// Obj
+
+	n, err = doEncodeToBuffer(obj, buffer[size:], &precomputedSize)
+	size += n
+	if err != nil {
+		return size, err
+	}
+	if n != precomputedSize {
+		return size, fmt.Errorf("the size value was %d, but doEncode wrote %d bytes to data", precomputedSize, n)
+	}
+	return size, nil
+}
+
 func doEncodeWithHeader(obj any, w io.Writer, field byte, precomputedSize int, memAlloc runtime.MemoryAllocator) (size int, err error) {
 	// Field identifier
 	n, err := w.Write([]byte{field})
@@ -541,6 +561,28 @@ func doEncode(obj any, w io.Writer, precomputedObjSize *int, memAlloc runtime.Me
 			return 0, err
 		}
 		return w.Write(data)
+
+	default:
+		return 0, errNotMarshalable{reflect.TypeOf(obj)}
+	}
+}
+
+func doEncodeToBuffer(obj any, data []byte, precomputedObjSize *int) (int, error) {
+	switch t := obj.(type) {
+	case bufferedReverseMarshaller:
+		// this path performs a single allocation during write only when the Allocator wasn't provided
+		// it also requires the caller to implement the more efficient Size and MarshalToSizedBuffer methods
+		if precomputedObjSize == nil {
+			s := t.Size()
+			precomputedObjSize = &s
+		}
+		return t.MarshalToSizedBuffer(data)
+
+	case bufferedMarshaller:
+		panic("TODO")
+
+	case unbufferedMarshaller:
+		panic("TODO")
 
 	default:
 		return 0, errNotMarshalable{reflect.TypeOf(obj)}

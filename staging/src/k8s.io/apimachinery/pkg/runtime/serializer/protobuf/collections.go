@@ -20,6 +20,7 @@ import (
 	"errors"
 	"io"
 	"math/bits"
+	"sync"
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -35,6 +36,13 @@ var (
 	errListMetaProtobufTag = errors.New(`expected ListMeta protobuf field tag to be "bytes,1,opt,name=metadata"`)
 	errItemsProtobufTag    = errors.New(`expected Items protobuf field tag to be "bytes,2,rep,name=items"`)
 	errItemsSizer          = errors.New(`expected Items elements to implement proto.Sizer`)
+)
+
+var (
+	// WorkerCount is the number of concurrent workers to use for encoding.
+	WorkerCount = 10
+	// ChunkSize is the number of items to process in a single chunk.
+	ChunkSize = 10000
 )
 
 // getStreamingListData implements list extraction logic for protobuf stream serialization.
@@ -141,13 +149,101 @@ func streamingEncodeList(w io.Writer, listData streamingListData, memAlloc runti
 		return size, err
 	}
 	// Items; 0x12 = (2 << 3) | 2; field number: 2, type: 2 (LEN). https://protobuf.dev/programming-guides/encoding/#structure
-	for i, item := range listData.items {
-		n, err := doEncodeWithHeader(item, w, 0x12, listData.itemsSizes[i], memAlloc)
-		size += n
-		if err != nil {
-			return size, err
+	if len(listData.items) <= ChunkSize {
+		for i, item := range listData.items {
+			n, err := doEncodeWithHeader(item, w, 0x12, listData.itemsSizes[i], memAlloc)
+			size += n
+			if err != nil {
+				return size, err
+			}
+		}
+		return size, nil
+	}
+
+	type job struct {
+		index int
+		items []runtime.Object
+		sizes []int
+	}
+	type result struct {
+		index int
+		data  []byte
+		err   error
+	}
+
+	jobs := make(chan job, WorkerCount)
+	results := make(chan result, WorkerCount)
+	var wg sync.WaitGroup
+
+	// Start workers
+	for i := 0; i < WorkerCount; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := range jobs {
+				size := 0
+				for k := range j.items {
+					size += 1 + sovGenerated(uint64(j.sizes[k])) + j.sizes[k]
+				}
+				buf := make([]byte, size)
+				pos := 0
+				for k, item := range j.items {
+					n, err := doEncodeWithHeaderToBuffer(item, buf[pos:pos+1+j.sizes[k] + sovGenerated(uint64(j.sizes[k]))], 0x12, j.sizes[k])
+					if err != nil {
+						results <- result{index: j.index, err: err}
+						return
+					}
+					pos += n
+
+				}
+				results <- result{index: j.index, data: buf}
+			}
+		}()
+	}
+
+	// Start feeder
+	go func() {
+		defer close(jobs)
+		for i := 0; i < len(listData.items); i += ChunkSize {
+			end := i + ChunkSize
+			if end > len(listData.items) {
+				end = len(listData.items)
+			}
+			jobs <- job{index: i, items: listData.items[i:end], sizes: listData.itemsSizes[i:end]}
+		}
+	}()
+
+	// Close results when all workers are done
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	// Collect results and write in order
+	buffer := make(map[int]result)
+	nextIndex := 0
+
+	for r := range results {
+		if r.err != nil {
+			return size, r.err
+		}
+		buffer[r.index] = r
+
+		for {
+			res, ok := buffer[nextIndex]
+			if !ok {
+				break 
+			}
+			n, err := w.Write(res.data)
+			size += n
+			if err != nil {
+				return size, err
+			}
+			delete(buffer, nextIndex)
+			nextIndex += ChunkSize
 		}
 	}
+
 	return size, nil
 }
 
@@ -155,6 +251,12 @@ func writeVarintGenerated(w io.Writer, v int) (int, error) {
 	buf := make([]byte, sovGenerated(uint64(v)))
 	encodeVarintGenerated(buf, len(buf), uint64(v))
 	return w.Write(buf)
+}
+
+func write2VarintGenerated(buf []byte, v int) int {
+	n := sovGenerated(uint64(v))
+	encodeVarintGenerated(buf, n, uint64(v))
+	return n
 }
 
 // sovGenerated is copied from `generated.pb.go` returns size of varint.

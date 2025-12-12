@@ -19,6 +19,7 @@ package protobuf
 import (
 	"bytes"
 	"encoding/base64"
+	"fmt"
 	"io"
 	"os/exec"
 	"testing"
@@ -39,6 +40,7 @@ func TestCollectionsEncoding(t *testing.T) {
 	t.Run("Streaming", func(t *testing.T) {
 		testCollectionsEncoding(t, NewSerializerWithOptions(nil, nil, SerializerOptions{StreamingCollectionsEncoding: true}), true)
 	})
+	t.Run("ConcurrentOrdering", TestConcurrentOrdering)
 }
 
 func testCollectionsEncoding(t *testing.T, s *Serializer, streamingEnabled bool) {
@@ -328,4 +330,64 @@ func (s *countingSizer) DeepCopyObject() runtime.Object {
 
 func (s *countingSizer) GetObjectKind() schema.ObjectKind {
 	return nil
+}
+
+func TestConcurrentOrdering(t *testing.T) {
+	// Use a large enough number to ensure multiple chunks and workers are used
+	// once concurrency is implemented.
+	// We'll use the default ChunkSize (1000) from the implementation plan as a baseline for this test.
+	const testChunkSize = 1000
+	const totalItems = testChunkSize*10 + 123
+
+	list := &testapigroupv1.CarpList{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "CarpList",
+			APIVersion: testapigroupv1.SchemeGroupVersion.String(),
+		},
+		ListMeta: metav1.ListMeta{
+			ResourceVersion: "1",
+		},
+		Items: make([]testapigroupv1.Carp, totalItems),
+	}
+
+	for i := 0; i < totalItems; i++ {
+		list.Items[i] = testapigroupv1.Carp{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: fmt.Sprintf("carp-%d", i),
+			},
+		}
+	}
+
+	scheme := runtime.NewScheme()
+	if err := testapigroupv1.AddToScheme(scheme); err != nil {
+		t.Fatalf("unexpected error adding to scheme: %v", err)
+	}
+
+	s := NewSerializerWithOptions(scheme, scheme, SerializerOptions{StreamingCollectionsEncoding: true})
+	var buf bytes.Buffer
+	if err := s.Encode(list, &buf); err != nil {
+		t.Fatalf("unexpected error during encoding: %v", err)
+	}
+
+	// Decode and verify order
+	decoded := &testapigroupv1.CarpList{}
+	// We use the same serializer to decode
+	_, _, err := s.Decode(buf.Bytes(), nil, decoded)
+	if err != nil {
+		t.Fatalf("unexpected error during decoding: %v", err)
+	}
+
+	if len(decoded.Items) != totalItems {
+		t.Fatalf("expected %d items, got %d", totalItems, len(decoded.Items))
+	}
+
+	for i := 0; i < totalItems; i++ {
+		expectedName := fmt.Sprintf("carp-%d", i)
+		if decoded.Items[i].Name != expectedName {
+			t.Errorf("item %d: expected name %s, got %s", i, expectedName, decoded.Items[i].Name)
+			if i > 10 {
+				t.Fatal("too many ordering errors, aborting test")
+			}
+		}
+	}
 }

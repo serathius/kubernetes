@@ -723,17 +723,18 @@ func benchmarkSerializeObject(b *testing.B, serializer runtime.SerializerInfo, e
 	}
 
 	b.ResetTimer()
-	responseBytesTotal := 0
+	// responseBytesTotal := 0
 	for b.Loop() {
 		recorder := httptest.NewRecorder()
+		recorder.Body = nil
 		SerializeObject(serializer.MediaType, serializer.Serializer, recorder, req, http.StatusOK, obj)
 		result := recorder.Result()
 		if result.StatusCode != http.StatusOK {
 			b.Fatalf("incorrect status code: got %v;  want: %v", result.StatusCode, http.StatusOK)
 		}
-		responseBytesTotal += recorder.Body.Len()
+		// responseBytesTotal += recorder.Body.Len()
 	}
-	b.ReportMetric(float64(responseBytesTotal/b.N), "writtenBytes/op")
+	// b.ReportMetric(float64(responseBytesTotal/b.N), "writtenBytes/op")
 }
 
 func BenchmarkSerializeObject(b *testing.B) {
@@ -745,7 +746,7 @@ func BenchmarkSerializeObject(b *testing.B) {
   )
 	mediaTypes := factory.SupportedMediaTypes()
 
-	for _, count := range []int{1_000, 10_000, 100_000} {
+	for _, count := range []int{1_000, 10_000, 100_000, 1000_000} {
 		b.Run(fmt.Sprintf("Count=%d", count), func(b *testing.B) {
 			podList := benchmarkItems(b, "testdata/pod.json", count)
 			for _, media := range mediaTypes {
