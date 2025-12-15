@@ -45,6 +45,7 @@ func main() {
 	clients := flag.Int("clients", 1, "")
 	acceptEncoding := flag.String("accept-encoding", "", "Accept-Encoding header value")
 	serial := flag.Bool("serial", false, "Run requests serially")
+	podFileName := flag.String("pod-filename", "", "Path to pod.json")
 	flag.Parse()
 	config, err := clientcmd.BuildConfigFromFlags("", filepath.Join(homedir.HomeDir(), ".kube", "config"))
 	if err != nil {
@@ -89,8 +90,16 @@ func main() {
 			fmt.Printf("--qps needs to be set\n")
 			os.Exit(1)
 		}
-		createResources(clientset, dynamicClient, *resource, *objectSize, *objectCount, *namespaces, *qps)
+		if *podFileName != "" && *resource != "pod" {
+			fmt.Printf("--pod-filename can only be used with --resource=pod\n")
+			os.Exit(1)
+		}
+		createResources(clientset, dynamicClient, *resource, *objectSize, *objectCount, *namespaces, *qps, *podFileName)
 		return
+	}
+	if *podFileName != "" {
+		fmt.Printf("--pod-filename can only be used with --create\n")
+		os.Exit(1)
 	}
 	if *qps == 0 && !*serial {
 		fmt.Printf("--qps or --serial needs to be set\n")

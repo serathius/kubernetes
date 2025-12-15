@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
 	"golang.org/x/time/rate"
+	"sigs.k8s.io/yaml"
 
 	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -18,7 +20,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
-func createResources(clientset kubernetes.Interface, dynamicClient *dynamic.DynamicClient, resource string, objectSize, objectCount, namespaces int, qps float32) {
+func createResources(clientset kubernetes.Interface, dynamicClient *dynamic.DynamicClient, resource string, objectSize, objectCount, namespaces int, qps float32, podFilename string) {
 	gvr := schema.GroupVersionResource{
 		Group:    "stable.example.com",
 		Version:  "v1",
@@ -39,7 +41,7 @@ func createResources(clientset kubernetes.Interface, dynamicClient *dynamic.Dyna
 			go func(j int) {
 				defer wg.Done()
 				name := fmt.Sprintf("%d", j)
-				if err := createObject(clientset, dynamicClient, resource, namespace, name, objectSize, gvr); err != nil {
+				if err := createObject(clientset, dynamicClient, resource, namespace, name, objectSize, gvr, podFilename); err != nil {
 					fmt.Printf("failed to create %s %s: %v\n", resource, name, err)
 				}
 				pb.Add(1)
@@ -61,12 +63,18 @@ func ensureNamespace(clientset kubernetes.Interface, namespace string) error {
 	}, 5, time.Second)
 }
 
-func createObject(clientset kubernetes.Interface, dynamicClient *dynamic.DynamicClient, resource, namespace, name string, objectSize int, gvr schema.GroupVersionResource) error {
+func createObject(clientset kubernetes.Interface, dynamicClient *dynamic.DynamicClient, resource, namespace, name string, objectSize int, gvr schema.GroupVersionResource, podFilename string) error {
 	return retry(func() error {
 		var err error
 		switch resource {
 		case "pod":
-			_, err = clientset.CoreV1().Pods(namespace).Create(context.TODO(), randomPod(name, objectSize), metav1.CreateOptions{})
+			var pod *v1.Pod
+			if podFilename != "" {
+				pod = loadPodFromFile(podFilename, name)
+			} else {
+				pod = randomPod(name, objectSize)
+			}
+			_, err = clientset.CoreV1().Pods(namespace).Create(context.TODO(), pod, metav1.CreateOptions{})
 		case "cr":
 			_, err = dynamicClient.Resource(gvr).Namespace(namespace).Create(context.TODO(), randomCR(name, objectSize), metav1.CreateOptions{})
 		case "secret":
@@ -183,6 +191,23 @@ func randomPod(name string, objectSize int) *v1.Pod {
 		})
 	}
 	return pod
+}
+
+func loadPodFromFile(filepath, name string) *v1.Pod {
+	data, err := os.ReadFile(filepath)
+	if err != nil {
+		panic(fmt.Sprintf("failed to read pudzian pod file: %v", err))
+	}
+	var pod v1.Pod
+	if err := yaml.Unmarshal(data, &pod); err != nil {
+		panic(fmt.Sprintf("failed to unmarshal pudzian pod: %v", err))
+	}
+	pod.Name = name
+	pod.Namespace = "" // Clear namespace to let the client set it or use the one passed in Create
+	pod.ResourceVersion = ""
+	pod.UID = ""
+	pod.CreationTimestamp = metav1.Time{}
+	return &pod
 }
 
 func retry(fn func() error, attempts int, delay time.Duration) error {
