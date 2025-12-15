@@ -43,6 +43,7 @@ func main() {
 	limit := flag.Int("limit", 0, "")
 	filter := flag.Bool("filter", false, "")
 	clients := flag.Int("clients", 1, "")
+	acceptEncoding := flag.String("accept-encoding", "", "Accept-Encoding header value")
 	flag.Parse()
 	config, err := clientcmd.BuildConfigFromFlags("", filepath.Join(homedir.HomeDir(), ".kube", "config"))
 	if err != nil {
@@ -206,7 +207,18 @@ func main() {
 			os.Exit(1)
 		}
 	}
-	list(httpClients, path, config, *qps, serverURL, paramStr, *namespaces)
+	switch *acceptEncoding {
+	case "":
+	case "gzip":
+	case "pgzip":
+	case "kgzip":
+	case "s2":
+	default:
+		fmt.Printf(`--accept-encoding should be set to "gzip", "pgzip", "kgzip", or "s2"
+`)
+		os.Exit(1)
+	}
+	list(httpClients, path, config, *qps, serverURL, paramStr, *namespaces, *acceptEncoding)
 	fmt.Printf("Done\n")
 }
 

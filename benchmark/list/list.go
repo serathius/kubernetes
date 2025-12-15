@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,7 +16,7 @@ import (
 	"k8s.io/kubectl/pkg/util/slice"
 )
 
-func list(clients []*http.Client, pathTemplate string, config *rest.Config, qps float32, serverURL *url.URL, params string, namespaces int) {
+func list(clients []*http.Client, pathTemplate string, config *rest.Config, qps float32, serverURL *url.URL, params string, namespaces int, acceptEncoding string) {
 	var wg sync.WaitGroup
 	takeN := int(math.Ceil(float64(qps) / 500))
 	rateLimiter := rate.NewLimiter(rate.Limit(qps), takeN)
@@ -54,7 +55,7 @@ func list(clients []*http.Client, pathTemplate string, config *rest.Config, qps 
 					panic(fmt.Sprintf("Got error creating a request: %v\n", err))
 				}
 				req.Header.Set("Accept", config.ContentType)
-				req.Header.Set("Accept-Encoding", "")
+				req.Header.Set("Accept-Encoding", acceptEncoding)
 				start := time.Now()
 				resp, err := clients[i%len(clients)].Do(req)
 				if err != nil {
@@ -73,7 +74,7 @@ func list(clients []*http.Client, pathTemplate string, config *rest.Config, qps 
 				if resp.StatusCode < http.StatusOK || resp.StatusCode > http.StatusPartialContent {
 					panic(fmt.Sprintf("Got bad status code: %v\n", resp.Status))
 				}
-				if resp.Header.Get("Content-Type") != config.ContentType {
+				if resp.Header.Get("Content-Type") != config.ContentType || (strings.HasSuffix(config.ContentType, "gzip") && resp.Header.Get("Content-Encoding") != "gzip") {
 					panic(fmt.Sprintf("Got bad content type: %q, expected %q\n", resp.Header.Get("Content-Type"), config.ContentType))
 				}
 				var reader io.Reader = resp.Body
