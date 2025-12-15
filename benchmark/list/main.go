@@ -44,6 +44,7 @@ func main() {
 	filter := flag.Bool("filter", false, "")
 	clients := flag.Int("clients", 1, "")
 	acceptEncoding := flag.String("accept-encoding", "", "Accept-Encoding header value")
+	serial := flag.Bool("serial", false, "Run requests serially")
 	flag.Parse()
 	config, err := clientcmd.BuildConfigFromFlags("", filepath.Join(homedir.HomeDir(), ".kube", "config"))
 	if err != nil {
@@ -91,8 +92,12 @@ func main() {
 		createResources(clientset, dynamicClient, *resource, *objectSize, *objectCount, *namespaces, *qps)
 		return
 	}
-	if *qps == 0 {
-		fmt.Printf("--qps needs to be set\n")
+	if *qps == 0 && !*serial {
+		fmt.Printf("--qps or --serial needs to be set\n")
+		os.Exit(1)
+	}
+	if *qps != 0 && *serial {
+		fmt.Printf("Cannot set both --qps and --serial\n")
 		os.Exit(1)
 	}
 	if *clients < 1 {
@@ -218,7 +223,9 @@ func main() {
 `)
 		os.Exit(1)
 	}
-	list(httpClients, path, config, *qps, serverURL, paramStr, *namespaces, *acceptEncoding)
+	lister := NewLister(httpClients, path, config, *qps, serverURL, paramStr, *namespaces, *acceptEncoding, *serial)
+	stats := lister.Run(*serial, *qps)
+	stats.printStats(testDuration)
 	fmt.Printf("Done\n")
 }
 
