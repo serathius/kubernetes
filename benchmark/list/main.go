@@ -46,6 +46,7 @@ func main() {
 	acceptEncoding := flag.String("accept-encoding", "", "Accept-Encoding header value")
 	serial := flag.Bool("serial", false, "Run requests serially")
 	podFileName := flag.String("pod-filename", "", "Path to pod.json")
+	increasedFrameSize := flag.Bool("increased-frame-size", false, "Use increased frame size")
 	flag.Parse()
 	config, err := clientcmd.BuildConfigFromFlags("", filepath.Join(homedir.HomeDir(), ".kube", "config"))
 	if err != nil {
@@ -212,7 +213,7 @@ func main() {
 	paramStr := strings.Join(params, "&")
 	httpClients := make([]*http.Client, *clients)
 	for i := 0; i < *clients; i++ {
-		if err := transportHack(config); err != nil {
+		if err := transportHack(config, *increasedFrameSize); err != nil {
 			panic(err)
 		}
 		httpClients[i], err = rest.HTTPClientFor(config)
@@ -249,7 +250,7 @@ func createToken(clientset kubernetes.Interface, namespace, name string) (string
 	return response.Status.Token, nil
 }
 
-func transportHack(config *rest.Config) error {
+func transportHack(config *rest.Config, increasedFrameSize bool) error {
 	// For the purpose of this test, we want to force that clients
 	// do not share underlying transport (which is a default behavior
 	// in Kubernetes). Thus, we are explicitly creating transport for
@@ -274,11 +275,15 @@ func transportHack(config *rest.Config) error {
 	}
 
 	utilnet.SetOldTransportDefaults(t)
-	_, err = http2.ConfigureTransports(t)
+	t2, err := http2.ConfigureTransports(t)
 	if err != nil {
 		return err
 	}
-	// t2.MaxReadFrameSize = 1 << 20 // 1MB
+	if increasedFrameSize {
+		t2.MaxReadFrameSize = 1 << 24 // 16MB
+	} else {
+		t2.MaxReadFrameSize = 1 << 14 // 16KB (default)
+	}
 	// t2.AllowHTTP = true
 
 	config.Transport = t

@@ -1,19 +1,22 @@
 package main
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"fmt"
 	"io"
 	"math"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/klauspost/compress/s2"
 	"golang.org/x/time/rate"
 	"k8s.io/client-go/rest"
-	"k8s.io/kubectl/pkg/util/slice"
 )
 
 func NewLister(clients []*http.Client, pathTemplate string, config *rest.Config, qps float32, serverURL *url.URL, params string, namespaces int, acceptEncoding string, serial bool) *lister {
@@ -70,6 +73,7 @@ func (l *lister) makeRequest(i int) {
 	}
 	req.Header.Set("Accept", l.config.ContentType)
 	req.Header.Set("Accept-Encoding", l.acceptEncoding)
+	buf := bytes.NewBuffer(make([]byte, 0, 1<<30)) // 1GB
 	start := time.Now()
 	resp, err := l.clients[i%len(l.clients)].Do(req)
 	if err != nil {
@@ -95,12 +99,33 @@ func (l *lister) makeRequest(i int) {
 	// if resp.Header.Get("Content-Encoding") == "s2" {
 	// 	reader = s2.NewReader(resp.Body)
 	// }
-	written, err := io.Copy(io.Discard, reader)
+	written, err := io.Copy(buf, reader)
 	if err != nil {
 		return
 	}
 	latency := time.Since(start)
-	l.stats.Record(latency, written)
+	go func ()  {
+		var uncompressed int64
+		switch resp.Header.Get("Content-Encoding") {
+		case "gzip":
+			gzipReader, err := gzip.NewReader(buf)
+			if err != nil {
+				panic(err)
+			}
+			uncompressed, err = io.Copy(io.Discard, gzipReader)
+			if err != nil {
+				panic(err)
+			}
+		case "s2":
+			uncompressed, err = io.Copy(io.Discard, s2.NewReader(buf))
+			if err != nil {
+				panic(err)
+			}
+		default:
+			uncompressed = written
+		}
+		l.stats.Record(latency, written, uncompressed)
+	}()
 }
 
 func (l *lister) runSerial(start time.Time, testDuration time.Duration) {
@@ -137,16 +162,18 @@ func (l *lister) runParallel(start time.Time, testDuration time.Duration, qps fl
 
 type stats struct {
 	mu         sync.Mutex
-	latencies  []int64
-	latencySum int64
-	sizeSum    int64
+	latencies  []time.Duration
+	latencySum  time.Duration
+	writtenSize    int64
+	decompressedSize int64
 }
 
-func (s *stats) Record(latency time.Duration, written int64) {
+func (s *stats) Record(latency time.Duration, written, decompressed int64) {
 	s.mu.Lock()
-	s.latencySum += int64(latency)
-	s.latencies = append(s.latencies, int64(latency))
-	s.sizeSum += written
+	s.latencySum += latency
+	s.latencies = append(s.latencies, latency)
+	s.writtenSize += written
+	s.decompressedSize += decompressed 
 	s.mu.Unlock()
 }
 
@@ -156,15 +183,20 @@ func (s *stats) printStats(testDuration time.Duration) {
 		return
 	}
 	fmt.Printf("Request Count: %v\n", len(s.latencies))
-	fmt.Printf("Size Average: %v\n", s.sizeSum/int64(len(s.latencies)))
-	fmt.Printf("Latency Average: %v\n", time.Duration(s.latencySum/int64(len(s.latencies))))
-	slice.SortInts64(s.latencies)
-	fmt.Printf("Latency 50%%ile: %v\n", time.Duration(s.latencies[len(s.latencies)/2]))
-	fmt.Printf("Latency 90%%ile: %v\n", time.Duration(s.latencies[len(s.latencies)*9/10]))
+	fmt.Printf("Written Size Average: %v B\n", s.writtenSize/int64(len(s.latencies)))
+	fmt.Printf("Decompressed Size Average: %v B\n", s.decompressedSize/int64(len(s.latencies)))
+	fmt.Printf("Compression Ratio: %.2f\n", float64(s.decompressedSize)/float64(s.writtenSize))
+	fmt.Printf("Throughput: %.2f MB/s\n", float64(s.decompressedSize)/1000/1000/s.latencySum.Seconds())
+	fmt.Printf("Latency Average: %.3f seconds\n", s.latencySum.Seconds() / float64(len(s.latencies)))
+	sort.Slice(s.latencies, func(i, j int) bool {
+		return s.latencies[i] < s.latencies[j]
+	})
+	fmt.Printf("Latency 50%%ile: %.3f seconds\n", s.latencies[len(s.latencies)/2].Seconds())
+	fmt.Printf("Latency 90%%ile: %.3f seconds\n", s.latencies[len(s.latencies)*9/10].Seconds())
 	if len(s.latencies) > 20 {
-		fmt.Printf("Latency 95%%ile: %v\n", time.Duration(s.latencies[len(s.latencies)*19/20]))
-	}
+		fmt.Printf("Latency 95%%ile: %.3f seconds\n", s.latencies[len(s.latencies)*19/20].Seconds())
+	}	
 	if len(s.latencies) > 100 {
-		fmt.Printf("Latency 99%%ile: %v\n", time.Duration(s.latencies[len(s.latencies)*99/100]))
+		fmt.Printf("Latency 99%%ile: %.3f seconds\n", s.latencies[len(s.latencies)*99/100].Seconds())
 	}
 }
