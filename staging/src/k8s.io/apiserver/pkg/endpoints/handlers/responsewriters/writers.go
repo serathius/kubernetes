@@ -28,6 +28,10 @@ import (
 	"sync"
 	"time"
 
+	kgzip "github.com/klauspost/compress/gzip"
+	"github.com/klauspost/compress/s2"
+	"github.com/klauspost/pgzip"
+
 	"go.opentelemetry.io/otel/attribute"
 
 	"k8s.io/apiserver/pkg/features"
@@ -148,6 +152,32 @@ var gzipPool = &sync.Pool{
 	},
 }
 
+var pgzipPool = &sync.Pool{
+	New: func() interface{} {
+		gw, err := pgzip.NewWriterLevel(nil, defaultGzipContentEncodingLevel)
+		if err != nil {
+			panic(err)
+		}
+		return gw
+	},
+}
+
+var kgzipPool = &sync.Pool{
+	New: func() interface{} {
+		gw, err := kgzip.NewWriterLevel(nil, defaultGzipContentEncodingLevel)
+		if err != nil {
+			panic(err)
+		}
+		return gw
+	},
+}
+
+var s2Pool = &sync.Pool{
+	New: func() interface{} {
+		return s2.NewWriter(nil)
+	},
+}
+
 const (
 	// defaultGzipContentEncodingLevel is set to 1 which uses least CPU compared to higher levels, yet offers
 	// similar compression ratios (off by at most 1.5x, but typically within 1.1x-1.3x). For further details see -
@@ -185,6 +215,12 @@ func negotiateContentEncoding(req *http.Request) string {
 		switch strings.TrimSpace(token) {
 		case "gzip":
 			return "gzip"
+		case "pgzip":
+			return "pgzip"
+		case "kgzip":
+			return "kgzip"
+		case "s2":
+			return "s2"
 		}
 	}
 	return ""
@@ -214,8 +250,8 @@ func (w *deferredResponseWriter) Write(p []byte) (n int, err error) {
 		// already written, cannot buffer
 		return w.unbufferedWrite(p)
 
-	case w.contentEncoding != "gzip":
-		// non-gzip, no need to buffer
+	case w.contentEncoding != "gzip" && w.contentEncoding != "pgzip" && w.contentEncoding != "kgzip" && w.contentEncoding != "s2":
+		// non-gzip/s2, no need to buffer
 		return w.unbufferedWrite(p)
 
 	case !w.hasBuffered && len(p) > defaultGzipThresholdBytes:
@@ -267,6 +303,30 @@ func (w *deferredResponseWriter) unbufferedWrite(p []byte) (n int, err error) {
 		gw.Reset(hw)
 
 		w.w = gw
+	case w.contentEncoding == "pgzip" && len(p) > defaultGzipThresholdBytes:
+		header.Set("Content-Encoding", "gzip")
+		header.Add("Vary", "Accept-Encoding")
+
+		gw := pgzipPool.Get().(*pgzip.Writer)
+		gw.Reset(hw)
+
+		w.w = gw
+	case w.contentEncoding == "kgzip" && len(p) > defaultGzipThresholdBytes:
+		header.Set("Content-Encoding", "gzip")
+		header.Add("Vary", "Accept-Encoding")
+
+		gw := kgzipPool.Get().(*kgzip.Writer)
+		gw.Reset(hw)
+
+		w.w = gw
+	case w.contentEncoding == "s2" && len(p) > defaultGzipThresholdBytes:
+		header.Set("Content-Encoding", "s2")
+		header.Add("Vary", "Accept-Encoding")
+
+		sw := s2Pool.Get().(*s2.Writer)
+		sw.Reset(hw)
+
+		w.w = sw
 	default:
 		w.w = hw
 	}
@@ -315,6 +375,18 @@ func (w *deferredResponseWriter) Close() (err error) {
 		err = t.Close()
 		t.Reset(nil)
 		gzipPool.Put(t)
+	case *s2.Writer:
+		err = t.Close()
+		t.Reset(nil)
+		s2Pool.Put(t)
+	case *pgzip.Writer:
+		err = t.Close()
+		t.Reset(nil)
+		pgzipPool.Put(t)
+	case *kgzip.Writer:
+		err = t.Close()
+		t.Reset(nil)
+		kgzipPool.Put(t)
 	}
 	return err
 }

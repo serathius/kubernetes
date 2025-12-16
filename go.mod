@@ -30,12 +30,14 @@ require (
 	github.com/go-logr/logr v1.4.3
 	github.com/go-openapi/jsonreference v0.20.2
 	github.com/godbus/dbus/v5 v5.1.0
+	github.com/gogo/protobuf v1.3.2
 	github.com/google/cadvisor v0.53.0
 	github.com/google/cel-go v0.26.0
 	github.com/google/gnostic-models v0.7.0
 	github.com/google/go-cmp v0.7.0
 	github.com/google/uuid v1.6.0
 	github.com/ishidawataru/sctp v0.0.0-20250521072954-ae8eb7fa7995
+	github.com/klauspost/compress v1.18.2
 	github.com/libopenstorage/openstorage v1.0.0
 	github.com/lithammer/dedent v1.1.0
 	github.com/moby/ipvs v1.1.0
@@ -157,7 +159,6 @@ require (
 	github.com/go-openapi/jsonpointer v0.21.0 // indirect
 	github.com/go-openapi/swag v0.23.0 // indirect
 	github.com/go-task/slim-sprig/v3 v3.0.0 // indirect
-	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang-jwt/jwt/v5 v5.2.2 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/google/btree v1.1.3 // indirect
@@ -173,6 +174,7 @@ require (
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/karrick/godirwalk v1.17.0 // indirect
+	github.com/klauspost/pgzip v1.2.6 // indirect
 	github.com/kylelemons/godebug v1.1.0 // indirect
 	github.com/liggitt/tabwriter v0.0.0-20181228230101-89fcab3d43de // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
