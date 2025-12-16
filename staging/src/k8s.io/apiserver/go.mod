@@ -7,6 +7,7 @@ go 1.25.0
 godebug default=go1.25
 
 require (
+	github.com/andybalholm/brotli v1.2.0
 	github.com/blang/semver/v4 v4.0.0
 	github.com/coreos/go-oidc v2.3.0+incompatible
 	github.com/coreos/go-systemd/v22 v22.5.0
@@ -20,8 +21,11 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/grpc-ecosystem/go-grpc-prometheus v1.2.0
+	github.com/klauspost/compress v1.18.2
+	github.com/klauspost/pgzip v1.2.6
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822
 	github.com/mxk/go-flowrate v0.0.0-20140419014527-cca7078d478f
+	github.com/pierrec/lz4/v4 v4.1.23
 	github.com/spf13/pflag v1.0.9
 	github.com/stretchr/testify v1.11.1
 	go.etcd.io/etcd/api/v3 v3.6.5

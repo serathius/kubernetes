@@ -28,6 +28,14 @@ import (
 	"sync"
 	"time"
 
+	kgzip "github.com/klauspost/compress/gzip"
+	"github.com/klauspost/compress/s2"
+	"github.com/klauspost/compress/zstd"
+	"github.com/klauspost/pgzip"
+
+	"github.com/andybalholm/brotli"
+	"github.com/pierrec/lz4/v4"
+
 	"go.opentelemetry.io/otel/attribute"
 
 	"k8s.io/apiserver/pkg/features"
@@ -148,6 +156,55 @@ var gzipPool = &sync.Pool{
 	},
 }
 
+var pgzipPool = &sync.Pool{
+	New: func() interface{} {
+		gw, err := pgzip.NewWriterLevel(nil, defaultGzipContentEncodingLevel)
+		if err != nil {
+			panic(err)
+		}
+		return gw
+	},
+}
+
+var kgzipPool = &sync.Pool{
+	New: func() interface{} {
+		gw, err := kgzip.NewWriterLevel(nil, defaultGzipContentEncodingLevel)
+		if err != nil {
+			panic(err)
+		}
+		return gw
+	},
+}
+
+var s2Pool = &sync.Pool{
+	New: func() interface{} {
+		return s2.NewWriter(nil)
+	},
+}
+
+var zstdPool = &sync.Pool{
+	New: func() interface{} {
+		// Use Fastest compression for high throughput as requested
+		encoder, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedFastest))
+		if err != nil {
+			panic(err)
+		}
+		return encoder
+	},
+}
+
+var brotliPool = &sync.Pool{
+	New: func() interface{} {
+		return brotli.NewWriterLevel(nil, brotli.BestSpeed)
+	},
+}
+
+var lz4Pool = &sync.Pool{
+	New: func() interface{} {
+		return lz4.NewWriter(nil)
+	},
+}
+
 const (
 	// defaultGzipContentEncodingLevel is set to 1 which uses least CPU compared to higher levels, yet offers
 	// similar compression ratios (off by at most 1.5x, but typically within 1.1x-1.3x). For further details see -
@@ -185,6 +242,18 @@ func negotiateContentEncoding(req *http.Request) string {
 		switch strings.TrimSpace(token) {
 		case "gzip":
 			return "gzip"
+		case "pgzip":
+			return "pgzip"
+		case "kgzip":
+			return "kgzip"
+		case "s2":
+			return "s2"
+		case "zstd":
+			return "zstd"
+		case "br":
+			return "br"
+		case "lz4":
+			return "lz4"
 		}
 	}
 	return ""
@@ -214,8 +283,8 @@ func (w *deferredResponseWriter) Write(p []byte) (n int, err error) {
 		// already written, cannot buffer
 		return w.unbufferedWrite(p)
 
-	case w.contentEncoding != "gzip":
-		// non-gzip, no need to buffer
+	case w.contentEncoding != "gzip" && w.contentEncoding != "pgzip" && w.contentEncoding != "kgzip" && w.contentEncoding != "s2" && w.contentEncoding != "zstd" && w.contentEncoding != "br" && w.contentEncoding != "lz4":
+		// non-gzip/s2, no need to buffer
 		return w.unbufferedWrite(p)
 
 	case !w.hasBuffered && len(p) > defaultGzipThresholdBytes:
@@ -267,6 +336,54 @@ func (w *deferredResponseWriter) unbufferedWrite(p []byte) (n int, err error) {
 		gw.Reset(hw)
 
 		w.w = gw
+	case w.contentEncoding == "pgzip" && len(p) > defaultGzipThresholdBytes:
+		header.Set("Content-Encoding", "gzip")
+		header.Add("Vary", "Accept-Encoding")
+
+		gw := pgzipPool.Get().(*pgzip.Writer)
+		gw.Reset(hw)
+
+		w.w = gw
+	case w.contentEncoding == "kgzip" && len(p) > defaultGzipThresholdBytes:
+		header.Set("Content-Encoding", "gzip")
+		header.Add("Vary", "Accept-Encoding")
+
+		gw := kgzipPool.Get().(*kgzip.Writer)
+		gw.Reset(hw)
+
+		w.w = gw
+	case w.contentEncoding == "s2" && len(p) > defaultGzipThresholdBytes:
+		header.Set("Content-Encoding", "s2")
+		header.Add("Vary", "Accept-Encoding")
+
+		sw := s2Pool.Get().(*s2.Writer)
+		sw.Reset(hw)
+
+		w.w = sw
+	case w.contentEncoding == "zstd" && len(p) > defaultGzipThresholdBytes:
+		header.Set("Content-Encoding", "zstd")
+		header.Add("Vary", "Accept-Encoding")
+
+		zw := zstdPool.Get().(*zstd.Encoder)
+		zw.Reset(hw)
+
+		w.w = zw
+	case w.contentEncoding == "br" && len(p) > defaultGzipThresholdBytes:
+		header.Set("Content-Encoding", "br")
+		header.Add("Vary", "Accept-Encoding")
+
+		bw := brotliPool.Get().(*brotli.Writer)
+		bw.Reset(hw)
+
+		w.w = bw
+	case w.contentEncoding == "lz4" && len(p) > defaultGzipThresholdBytes:
+		header.Set("Content-Encoding", "lz4")
+		header.Add("Vary", "Accept-Encoding")
+
+		lw := lz4Pool.Get().(*lz4.Writer)
+		lw.Reset(hw)
+
+		w.w = lw
 	default:
 		w.w = hw
 	}
@@ -315,6 +432,30 @@ func (w *deferredResponseWriter) Close() (err error) {
 		err = t.Close()
 		t.Reset(nil)
 		gzipPool.Put(t)
+	case *s2.Writer:
+		err = t.Close()
+		t.Reset(nil)
+		s2Pool.Put(t)
+	case *zstd.Encoder:
+		err = t.Close()
+		t.Reset(nil)
+		zstdPool.Put(t)
+	case *brotli.Writer:
+		err = t.Close()
+		t.Reset(nil)
+		brotliPool.Put(t)
+	case *lz4.Writer:
+		err = t.Close()
+		t.Reset(nil)
+		lz4Pool.Put(t)
+	case *pgzip.Writer:
+		err = t.Close()
+		t.Reset(nil)
+		pgzipPool.Put(t)
+	case *kgzip.Writer:
+		err = t.Close()
+		t.Reset(nil)
+		kgzipPool.Put(t)
 	}
 	return err
 }
