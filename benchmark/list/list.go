@@ -2,24 +2,37 @@ package main
 
 import (
 	"bytes"
-	"compress/gzip"
 	"context"
 	"fmt"
 	"io"
 	"math"
+	"mime"
 	"net/http"
 	"net/url"
-	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/klauspost/compress/s2"
+	"github.com/klauspost/pgzip"
 	"golang.org/x/time/rate"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/serializer/streaming"
+	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 )
 
-func NewLister(clients []*http.Client, pathTemplate string, config *rest.Config, qps float32, serverURL *url.URL, params string, namespaces int, acceptEncoding string, serial bool) *lister {
+func NewLister(clients []*http.Client, pathTemplate string, config *rest.Config, qps float32, serverURL *url.URL, params string, namespaces int, acceptEncoding string, serial bool, watchList bool) *lister {
+	negotiatedSerializer := config.NegotiatedSerializer
+	if negotiatedSerializer == nil {
+		negotiatedSerializer = scheme.Codecs
+	}
+	gv := metav1.SchemeGroupVersion
+	if config.GroupVersion != nil {
+		gv = *config.GroupVersion
+	}
 	return &lister{
 		clients:        clients,
 		pathTemplate:   pathTemplate,
@@ -28,7 +41,10 @@ func NewLister(clients []*http.Client, pathTemplate string, config *rest.Config,
 		params:         params,
 		namespaces:     namespaces,
 		acceptEncoding: acceptEncoding,
+		watchList:      watchList,
 		stats:          &stats{},
+		negotiator:     runtime.NewClientNegotiator(negotiatedSerializer, gv),
+		decoder:        scheme.Codecs.DecoderToVersion(scheme.Codecs.UniversalDeserializer(), gv),
 	}
 }
 
@@ -50,13 +66,24 @@ type lister struct {
 	params         string
 	namespaces     int
 	acceptEncoding string
+	watchList      bool
 	stats          *stats
+	negotiator     runtime.ClientNegotiator
+	decoder        runtime.Decoder
 }
 
 func (l *lister) makeRequest(i int) {
 	path := fmt.Sprintf(l.pathTemplate, i%l.namespaces)
-	if l.params != "" {
-		path = fmt.Sprintf("%s?%s", path, l.params)
+	if l.watchList {
+		if l.params != "" {
+			path = fmt.Sprintf("%s?%s&watch=true&allowWatchBookmarks=true&sendInitialEvents=true&resourceVersionMatch=NotOlderThan", path, l.params)
+		} else {
+			path = fmt.Sprintf("%s?watch=true&allowWatchBookmarks=true&sendInitialEvents=true&resourceVersionMatch=NotOlderThan", path)
+		}
+	} else {
+		if l.params != "" {
+			path = fmt.Sprintf("%s?%s", path, l.params)
+		}
 	}
 
 	url, err := url.Parse(path)
@@ -73,7 +100,6 @@ func (l *lister) makeRequest(i int) {
 	}
 	req.Header.Set("Accept", l.config.ContentType)
 	req.Header.Set("Accept-Encoding", l.acceptEncoding)
-	buf := bytes.NewBuffer(make([]byte, 0, 1<<30)) // 1GB
 	start := time.Now()
 	resp, err := l.clients[i%len(l.clients)].Do(req)
 	if err != nil {
@@ -90,42 +116,93 @@ func (l *lister) makeRequest(i int) {
 		return
 	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode > http.StatusPartialContent {
-		panic(fmt.Sprintf("Got bad status code: %v\n", resp.Status))
+		body, err := io.ReadAll(resp.Body)
+		panic(fmt.Sprintf("Got bad status code: %v, body: %s, err: %v\n", resp.Status, string(body), err))
 	}
-	if resp.Header.Get("Content-Type") != l.config.ContentType || (strings.HasSuffix(l.config.ContentType, "gzip") && resp.Header.Get("Content-Encoding") != "gzip") {
+	if !strings.HasPrefix(resp.Header.Get("Content-Type"), l.config.ContentType) {
 		panic(fmt.Sprintf("Got bad content type: %q, expected %q\n", resp.Header.Get("Content-Type"), l.config.ContentType))
 	}
-	var reader io.Reader = resp.Body
-	// if resp.Header.Get("Content-Encoding") == "s2" {
-	// 	reader = s2.NewReader(resp.Body)
-	// }
-	written, err := io.Copy(buf, reader)
+	contentType := resp.Header.Get("Content-Type")
+	mediaType, params, err := mime.ParseMediaType(contentType)
 	if err != nil {
-		return
+		panic(fmt.Sprintf("unexpected content type from the server: %q: %v", contentType, err))
+	}
+
+	compressedBody := &countingReader{r: resp.Body}
+	var reader io.Reader
+	switch resp.Header.Get("Content-Encoding") {
+	case "gzip":
+		var err error
+		reader, err = pgzip.NewReader(compressedBody)
+		if err != nil {
+			panic(fmt.Sprintf("Error creating gzip reader: %v\n", err))
+		}
+	case "s2":
+		reader = s2.NewReader(compressedBody)
+	case "":
+		reader = compressedBody
+	default:
+		panic(fmt.Sprintf("Got bad content encoding: %q, expected gzip or s2\n", resp.Header.Get("Content-Encoding")))
+	}
+	decompressedBody := &countingReader{r: reader}
+
+	switch l.watchList {
+	case true:
+		err = l.handleWatchList(resp, decompressedBody, start, mediaType, params)
+	case false:
+		err = l.handleList(resp, decompressedBody, start)
+	}
+	if err != nil {
+		panic(fmt.Sprintf("Error handling list: %v\n", err))
 	}
 	latency := time.Since(start)
-	go func ()  {
-		var uncompressed int64
-		switch resp.Header.Get("Content-Encoding") {
-		case "gzip":
-			gzipReader, err := gzip.NewReader(buf)
-			if err != nil {
-				panic(err)
+	l.stats.Record(latency, compressedBody.n, decompressedBody.n)
+}
+
+type countingReader struct {
+	r io.Reader
+	n int64
+}
+
+func (r *countingReader) Read(p []byte) (n int, err error) {
+	n, err = r.r.Read(p)
+	r.n += int64(n)
+	return
+}
+
+func (l *lister) handleList(resp *http.Response, reader io.Reader, start time.Time) error {
+	buf := bytes.NewBuffer(nil)
+	_, err := io.Copy(buf, reader)
+	if err != nil {
+		fmt.Printf("Error reading response: %v\n", err)
+		return err
+	}
+	_, _, err = l.decoder.Decode(buf.Bytes(), nil, nil)
+	return err
+}
+
+func (l *lister) handleWatchList(resp *http.Response, reader io.Reader, start time.Time, mediaType string, params map[string]string) error {
+	_, streamingSerializer, framer, err := l.negotiator.StreamDecoder(mediaType, params)
+	if err != nil {
+		return err
+	}
+
+	frameReader := framer.NewFrameReader(io.NopCloser(reader))
+	decoder := streaming.NewDecoder(frameReader, streamingSerializer)
+
+	for {
+		var event metav1.WatchEvent
+		_, _, err := decoder.Decode(nil, &event)
+		if err != nil {
+			if err == io.EOF {
+				panic("Stream ended before getting bookmark")
 			}
-			uncompressed, err = io.Copy(io.Discard, gzipReader)
-			if err != nil {
-				panic(err)
-			}
-		case "s2":
-			uncompressed, err = io.Copy(io.Discard, s2.NewReader(buf))
-			if err != nil {
-				panic(err)
-			}
-		default:
-			uncompressed = written
+			return err
 		}
-		l.stats.Record(latency, written, uncompressed)
-	}()
+		if event.Type == string(watch.Bookmark) {
+			return nil
+		}
+	}
 }
 
 func (l *lister) runSerial(start time.Time, testDuration time.Duration) {
@@ -158,45 +235,4 @@ func (l *lister) runParallel(start time.Time, testDuration time.Duration, qps fl
 		}
 	}
 	wg.Wait()
-}
-
-type stats struct {
-	mu         sync.Mutex
-	latencies  []time.Duration
-	latencySum  time.Duration
-	writtenSize    int64
-	decompressedSize int64
-}
-
-func (s *stats) Record(latency time.Duration, written, decompressed int64) {
-	s.mu.Lock()
-	s.latencySum += latency
-	s.latencies = append(s.latencies, latency)
-	s.writtenSize += written
-	s.decompressedSize += decompressed 
-	s.mu.Unlock()
-}
-
-func (s *stats) printStats(testDuration time.Duration) {
-	fmt.Printf("QPS: %.2f\n", float64(len(s.latencies))/testDuration.Seconds())
-	if len(s.latencies) == 0 {
-		return
-	}
-	fmt.Printf("Request Count: %v\n", len(s.latencies))
-	fmt.Printf("Written Size Average: %v B\n", s.writtenSize/int64(len(s.latencies)))
-	fmt.Printf("Decompressed Size Average: %v B\n", s.decompressedSize/int64(len(s.latencies)))
-	fmt.Printf("Compression Ratio: %.2f\n", float64(s.decompressedSize)/float64(s.writtenSize))
-	fmt.Printf("Throughput: %.2f MB/s\n", float64(s.decompressedSize)/1000/1000/s.latencySum.Seconds())
-	fmt.Printf("Latency Average: %.3f seconds\n", s.latencySum.Seconds() / float64(len(s.latencies)))
-	sort.Slice(s.latencies, func(i, j int) bool {
-		return s.latencies[i] < s.latencies[j]
-	})
-	fmt.Printf("Latency 50%%ile: %.3f seconds\n", s.latencies[len(s.latencies)/2].Seconds())
-	fmt.Printf("Latency 90%%ile: %.3f seconds\n", s.latencies[len(s.latencies)*9/10].Seconds())
-	if len(s.latencies) > 20 {
-		fmt.Printf("Latency 95%%ile: %.3f seconds\n", s.latencies[len(s.latencies)*19/20].Seconds())
-	}	
-	if len(s.latencies) > 100 {
-		fmt.Printf("Latency 99%%ile: %.3f seconds\n", s.latencies[len(s.latencies)*99/100].Seconds())
-	}
 }

@@ -15,6 +15,7 @@ import (
 	"golang.org/x/net/http2"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/apiserver/pkg/storage"
 	"k8s.io/client-go/dynamic"
@@ -47,6 +48,7 @@ func main() {
 	serial := flag.Bool("serial", false, "Run requests serially")
 	podFileName := flag.String("pod-filename", "", "Path to pod.json")
 	increasedFrameSize := flag.Bool("increased-frame-size", false, "Use increased frame size")
+	watchList := flag.Bool("watch-list", false, "Measure latency of WatchList requests")
 	flag.Parse()
 	config, err := clientcmd.BuildConfigFromFlags("", filepath.Join(homedir.HomeDir(), ".kube", "config"))
 	if err != nil {
@@ -172,19 +174,25 @@ func main() {
 	}
 
 	var path string
+	var gv schema.GroupVersion
 	switch *resource {
 	case "secret":
 		path = "/api/v1/namespaces/%d/secrets"
+		gv = schema.GroupVersion{Group: "", Version: "v1"}
 	case "configmap":
 		path = "/api/v1/namespaces/%d/configmaps"
+		gv = schema.GroupVersion{Group: "", Version: "v1"}
 	case "pod":
 		path = "/api/v1/namespaces/%d/pods"
+		gv = schema.GroupVersion{Group: "", Version: "v1"}
 	case "cr":
 		path = "/apis/stable.example.com/v1/namespaces/%d/crontabs"
+		gv = schema.GroupVersion{Group: "stable.example.com", Version: "v1"}
 	default:
 		print("--resource should be set to \"configmap\", \"pod\" or \"cr\"\n")
 		os.Exit(1)
 	}
+	config.GroupVersion = &gv
 	params := []string{}
 	if resourceVersion != "" {
 		params = append(params, fmt.Sprintf("resourceVersion=%s", resourceVersion))
@@ -233,7 +241,7 @@ func main() {
 `)
 		os.Exit(1)
 	}
-	lister := NewLister(httpClients, path, config, *qps, serverURL, paramStr, *namespaces, *acceptEncoding, *serial)
+	lister := NewLister(httpClients, path, config, *qps, serverURL, paramStr, *namespaces, *acceptEncoding, *serial, *watchList)
 	stats := lister.Run(*serial, *qps)
 	stats.printStats(testDuration)
 	fmt.Printf("Done\n")
