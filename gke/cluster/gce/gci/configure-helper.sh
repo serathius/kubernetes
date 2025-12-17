@@ -3159,6 +3159,10 @@ function setup-transparent-hugepage {
 # Long term fix is expected to be added in OSS Kubelet, tracked in https://github.com/kubernetes/kubernetes/issues/135294
 # The is a best-effort fix since we cannot ensure kubelet initialization has finished at this stage.
 function override-kubelet-sysctl {
+  if [[ "${KUBERNETES_MASTER:-}" == "true" ]]; then
+    return
+  fi
+
   local -r sysctl_overrides="${SYSCTL_OVERRIDES:-}"
   local -r target_key="vm.overcommit_memory"
   for item in ${sysctl_overrides//,/ }; do
@@ -3382,7 +3386,6 @@ function main() {
     if [[ -e "${KUBE_HOME}/bin/gke-internal-configure-helper.sh" ]]; then
         log-wrap 'GKEConfigureNodeProblemDetector' gke-configure-node-problem-detector
     fi
-    log-wrap 'OverrideKubeletSysctl' override-kubelet-sysctl
     log-wrap 'StartNodeProblemDetector' start-node-problem-detector
     if [ -n "${GPU_PARTITION_SIZE:-}" ] || [ -n "${MAX_TIME_SHARED_CLIENTS_PER_GPU:-}" ] ||
      [ -n "${MAX_SHARED_CLIENTS_PER_GPU:-}" ] || [ -n "${GPU_SHARING_STRATEGY:-}" ]; then
@@ -3400,6 +3403,9 @@ function main() {
 
   # Wait for all background jobs to finish.
   wait
+  # Run after wait to ensure kubelet initialization has finished.
+  log-wrap 'OverrideKubeletSysctl' override-kubelet-sysctl
+
   echo "Done for the configuration for kubernetes"
 }
 
