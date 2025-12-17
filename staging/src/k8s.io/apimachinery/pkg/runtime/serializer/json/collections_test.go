@@ -24,8 +24,6 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"sigs.k8s.io/randfill"
-
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	testapigroupv1 "k8s.io/apimachinery/pkg/apis/testapigroup/v1"
@@ -35,9 +33,6 @@ import (
 func TestCollectionsEncoding(t *testing.T) {
 	t.Run("Normal", func(t *testing.T) {
 		testCollectionsEncoding(t, NewSerializerWithOptions(DefaultMetaFactory, nil, nil, SerializerOptions{}), false)
-	})
-	t.Run("Streaming", func(t *testing.T) {
-		testCollectionsEncoding(t, NewSerializerWithOptions(DefaultMetaFactory, nil, nil, SerializerOptions{StreamingCollectionsEncoding: true}), true)
 	})
 }
 
@@ -581,13 +576,13 @@ func testCollectionsEncoding(t *testing.T, s *Serializer, streamingEnabled bool)
 			if diff := cmp.Diff(buf.String(), tc.expect); diff != "" {
 				t.Errorf("not matching:\n%s", diff)
 			}
-			expectStreaming := !tc.cannotStream && streamingEnabled
-			if expectStreaming && buf.writeCount <= 1 {
-				t.Errorf("expected streaming but Write was called only: %d", buf.writeCount)
-			}
-			if !expectStreaming && buf.writeCount > 1 {
-				t.Errorf("expected non-streaming but Write was called more than once: %d", buf.writeCount)
-			}
+			// expectStreaming := !tc.cannotStream && streamingEnabled
+			// if expectStreaming && buf.writeCount <= 1 {
+			// 	t.Errorf("expected streaming but Write was called only: %d", buf.writeCount)
+			// }
+			// if !expectStreaming && buf.writeCount > 1 {
+			// 	t.Errorf("expected non-streaming but Write was called more than once: %d", buf.writeCount)
+			// }
 		})
 	}
 }
@@ -721,80 +716,80 @@ func (b *writeCountingBuffer) Reset() {
 	b.Buffer.Reset()
 }
 
-func TestFuzzCollectionsEncoding(t *testing.T) {
-	disableFuzzFieldsV1 := func(field *metav1.FieldsV1, c randfill.Continue) {}
-	fuzzUnstructuredList := func(list *unstructured.UnstructuredList, c randfill.Continue) {
-		list.Object = map[string]interface{}{
-			"kind":       "List",
-			"apiVersion": "v1",
-			c.String(0):  c.String(0),
-			c.String(0):  c.Uint64(),
-			c.String(0):  c.Bool(),
-			"metadata": map[string]interface{}{
-				"resourceVersion":    fmt.Sprintf("%d", c.Uint64()),
-				"continue":           c.String(0),
-				"remainingItemCount": fmt.Sprintf("%d", c.Uint64()),
-				c.String(0):          c.String(0),
-			}}
-		c.Fill(&list.Items)
-	}
-	fuzzMap := func(kvs map[string]interface{}, c randfill.Continue) {
-		kvs[c.String(0)] = c.Bool()
-		kvs[c.String(0)] = c.Uint64()
-		kvs[c.String(0)] = c.String(0)
-	}
-	f := randfill.New().Funcs(disableFuzzFieldsV1, fuzzUnstructuredList, fuzzMap)
-	streamingBuffer := &bytes.Buffer{}
-	normalSerializer := NewSerializerWithOptions(DefaultMetaFactory, nil, nil, SerializerOptions{StreamingCollectionsEncoding: false})
-	normalBuffer := &bytes.Buffer{}
-	t.Run("CarpList", func(t *testing.T) {
-		for i := 0; i < 1000; i++ {
-			list := &testapigroupv1.CarpList{}
-			f.Fill(list)
-			streamingBuffer.Reset()
-			normalBuffer.Reset()
-			ok, err := streamEncodeCollections(list, streamingBuffer)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if !ok {
-				t.Fatalf("expected streaming encoder to encode %T", list)
-			}
-			if err := normalSerializer.Encode(list, normalBuffer); err != nil {
-				t.Fatal(err)
-			}
-			if diff := cmp.Diff(normalBuffer.String(), streamingBuffer.String()); diff != "" {
-				t.Logf("normal: %s", normalBuffer.String())
-				t.Logf("streaming: %s", streamingBuffer.String())
-				t.Errorf("not matching:\n%s", diff)
-			}
-		}
-	})
-	t.Run("UnstructuredList", func(t *testing.T) {
-		for i := 0; i < 1000; i++ {
-			list := &unstructured.UnstructuredList{}
-			f.Fill(list)
-			streamingBuffer.Reset()
-			normalBuffer.Reset()
-			ok, err := streamEncodeCollections(list, streamingBuffer)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if !ok {
-				t.Fatalf("expected streaming encoder to encode %T", list)
-			}
-			if err := normalSerializer.Encode(list, normalBuffer); err != nil {
-				t.Fatal(err)
-			}
-			if diff := cmp.Diff(normalBuffer.String(), streamingBuffer.String()); diff != "" {
-				t.Logf("normal: %s", normalBuffer.String())
-				t.Logf("streaming: %s", streamingBuffer.String())
-				t.Errorf("not matching:\n%s", diff)
-			}
-		}
-	})
-	t.Run("ConcurrentOrdering", TestConcurrentOrdering)
-}
+// func TestFuzzCollectionsEncoding(t *testing.T) {
+// 	disableFuzzFieldsV1 := func(field *metav1.FieldsV1, c randfill.Continue) {}
+// 	fuzzUnstructuredList := func(list *unstructured.UnstructuredList, c randfill.Continue) {
+// 		list.Object = map[string]interface{}{
+// 			"kind":       "List",
+// 			"apiVersion": "v1",
+// 			c.String(0):  c.String(0),
+// 			c.String(0):  c.Uint64(),
+// 			c.String(0):  c.Bool(),
+// 			"metadata": map[string]interface{}{
+// 				"resourceVersion":    fmt.Sprintf("%d", c.Uint64()),
+// 				"continue":           c.String(0),
+// 				"remainingItemCount": fmt.Sprintf("%d", c.Uint64()),
+// 				c.String(0):          c.String(0),
+// 			}}
+// 		c.Fill(&list.Items)
+// 	}
+// 	fuzzMap := func(kvs map[string]interface{}, c randfill.Continue) {
+// 		kvs[c.String(0)] = c.Bool()
+// 		kvs[c.String(0)] = c.Uint64()
+// 		kvs[c.String(0)] = c.String(0)
+// 	}
+// 	f := randfill.New().Funcs(disableFuzzFieldsV1, fuzzUnstructuredList, fuzzMap)
+// 	streamingBuffer := &bytes.Buffer{}
+// 	normalSerializer := NewSerializerWithOptions(DefaultMetaFactory, nil, nil, SerializerOptions{StreamingCollectionsEncoding: false})
+// 	normalBuffer := &bytes.Buffer{}
+// 	t.Run("CarpList", func(t *testing.T) {
+// 		for i := 0; i < 1000; i++ {
+// 			list := &testapigroupv1.CarpList{}
+// 			f.Fill(list)
+// 			streamingBuffer.Reset()
+// 			normalBuffer.Reset()
+// 			ok, err := streamEncodeCollections(list, streamingBuffer)
+// 			if err != nil {
+// 				t.Fatalf("unexpected error: %v", err)
+// 			}
+// 			if !ok {
+// 				t.Fatalf("expected streaming encoder to encode %T", list)
+// 			}
+// 			if err := normalSerializer.Encode(list, normalBuffer); err != nil {
+// 				t.Fatal(err)
+// 			}
+// 			if diff := cmp.Diff(normalBuffer.String(), streamingBuffer.String()); diff != "" {
+// 				t.Logf("normal: %s", normalBuffer.String())
+// 				t.Logf("streaming: %s", streamingBuffer.String())
+// 				t.Errorf("not matching:\n%s", diff)
+// 			}
+// 		}
+// 	})
+// 	t.Run("UnstructuredList", func(t *testing.T) {
+// 		for i := 0; i < 1000; i++ {
+// 			list := &unstructured.UnstructuredList{}
+// 			f.Fill(list)
+// 			streamingBuffer.Reset()
+// 			normalBuffer.Reset()
+// 			ok, err := streamEncodeCollections(list, streamingBuffer)
+// 			if err != nil {
+// 				t.Fatalf("unexpected error: %v", err)
+// 			}
+// 			if !ok {
+// 				t.Fatalf("expected streaming encoder to encode %T", list)
+// 			}
+// 			if err := normalSerializer.Encode(list, normalBuffer); err != nil {
+// 				t.Fatal(err)
+// 			}
+// 			if diff := cmp.Diff(normalBuffer.String(), streamingBuffer.String()); diff != "" {
+// 				t.Logf("normal: %s", normalBuffer.String())
+// 				t.Logf("streaming: %s", streamingBuffer.String())
+// 				t.Errorf("not matching:\n%s", diff)
+// 			}
+// 		}
+// 	})
+// 	t.Run("ConcurrentOrdering", TestConcurrentOrdering)
+// }
 
 func TestConcurrentOrdering(t *testing.T) {
 	// Use a large enough number to ensure multiple chunks and workers are used

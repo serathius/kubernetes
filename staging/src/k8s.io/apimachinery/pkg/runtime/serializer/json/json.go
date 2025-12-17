@@ -17,9 +17,12 @@ limitations under the License.
 package json
 
 import (
-	"encoding/json"
 	"io"
 	"strconv"
+
+	json "github.com/go-json-experiment/json"
+	"github.com/go-json-experiment/json/jsontext"
+	jsonv1 "github.com/go-json-experiment/json/v1"
 
 	kjson "sigs.k8s.io/json"
 	"sigs.k8s.io/yaml"
@@ -237,25 +240,24 @@ func (s *Serializer) doEncode(obj runtime.Object, w io.Writer) error {
 		return err
 	}
 
+	var options []jsontext.Options
+	// Enable EscapeForHTML to match encoding/json behavior (it defaults to true).
+	options = append(options,
+		json.Deterministic(true),
+		jsontext.EscapeForHTML(true),
+		json.FormatNilSliceAsNull(true),
+		json.OmitZeroStructFields(false),
+		jsonv1.OmitEmptyWithLegacyDefinition(true),
+		jsonv1.ReportErrorsWithLegacySemantics(true),
+		jsonv1.EscapeInvalidUTF8(true),
+		jsonv1.FormatBytesWithLegacySemantics(true),
+		jsontext.PreserveRawStrings(true),
+	)
 	if s.options.Pretty {
-		data, err := json.MarshalIndent(obj, "", "  ")
-		if err != nil {
-			return err
-		}
-		_, err = w.Write(data)
-		return err
+		options = append(options, jsontext.WithIndent("  "))
 	}
-	if s.options.StreamingCollectionsEncoding {
-		ok, err := streamEncodeCollections(obj, w)
-		if err != nil {
-			return err
-		}
-		if ok {
-			return nil
-		}
-	}
-	encoder := json.NewEncoder(w)
-	return encoder.Encode(obj)
+	encoder := jsontext.NewEncoder(w)
+	return json.MarshalEncode(encoder, obj, options...)
 }
 
 // IsStrict indicates whether the serializer
