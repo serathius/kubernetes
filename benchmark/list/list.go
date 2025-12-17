@@ -14,6 +14,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-json-experiment/json"
+
 	"github.com/andybalholm/brotli"
 	kgzip "github.com/klauspost/compress/gzip"
 	"github.com/klauspost/compress/s2"
@@ -21,6 +23,7 @@ import (
 	"github.com/klauspost/pgzip"
 	"github.com/pierrec/lz4/v4"
 	"golang.org/x/time/rate"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer/streaming"
@@ -145,7 +148,7 @@ func (l *lister) makeRequest(i int) {
 			panic(fmt.Sprintf("Error decompressing response: %v\n", err))
 		}
 		decompressedBody := &countingReader{r: decompressedReader}
-		err = l.handleList(decompressedBody)
+		err = l.handleList(decompressedBody, mediaType)
 		l.stats.Record(time.Since(start), compressedBody.byteCounter, decompressedBody.byteCounter)
 	}
 	if err != nil {
@@ -205,7 +208,14 @@ func (r *countingReader) Read(p []byte) (n int, err error) {
 	return
 }
 
-func (l *lister) handleList(reader io.Reader) error {
+func (l *lister) handleList(reader io.Reader, mediaType string) error {
+	if mediaType == "application/json" {
+		out := corev1.PodList{}
+		err := json.UnmarshalRead(reader, &out)
+		if err != nil {
+			return err
+		}
+	}
 	buf := bytes.NewBuffer(nil)
 	_, err := io.Copy(buf, reader)
 	if err != nil {
