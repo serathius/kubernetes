@@ -95,14 +95,9 @@ function setup-os-params {
 
   # Tuning node kernel parameteres and apply the node-pool level overrides on
   # GKE.
-  # For clusters after 1.35, sysctl tunning on node is migrated to gke-node-internal-config installable container.
   if [[ -e "${KUBE_HOME}/bin/gke-internal-configure-helper.sh" ]]; then
     if [[ "${KUBERNETES_MASTER:-false}" == "false" ]]; then
-      if installable-component-exists "gke-node-internal-config"; then
-        process-installables "gke-node-internal-config"
-      else
-        gke-configure-node-sysctls
-      fi
+      gke-configure-node-sysctls
     fi
   fi
 }
@@ -1797,12 +1792,6 @@ function start-kubelet {
   local kubelet_bin="${KUBE_HOME}/bin/kubelet"
   local -r kubelet_env_file="/etc/default/kubelet"
 
-  local -r pod_sysctl_tmp_file="/tmp/pod-sysctls"
-  if installable-component-exists "gke-node-internal-config" && [[ -f "$pod_sysctl_tmp_file" ]]; then
-    POD_SYSCTLS=$(cat "${pod_sysctl_tmp_file}")
-    rm -f "${pod_sysctl_tmp_file}"
-  fi
-
   if [[ "${ENABLE_GCFS:-""}" == "true" ]]; then
     # Use Riptide-snapshotter as image service proxy on Riptide nodes.
     # This is needed for image pull secret support on Riptide nodes.
@@ -1810,8 +1799,7 @@ function start-kubelet {
     kubelet_image_service_endpoint="--image-service-endpoint=unix:///run/containerd-gcfs-grpc/containerd-gcfs-grpc.sock"
   fi
 
-  # For clusters before 1.35, POD_SYSCTLS is set in function configure-node-sysctls.
-  # For clusters after 1.35, POD_SYSCTLS is written to /tmp/pod-sysctls inside gke-node-internal-config installable container
+  # POD_SYSCTLS is set in function configure-node-sysctls.
   local kubelet_opts="${KUBELET_ARGS} ${KUBELET_CONFIG_FILE_ARG:-} --pod-sysctls='${POD_SYSCTLS:-}' ${kubelet_image_service_endpoint:-}"
   if [[ -n "${KUBELET_VERSION:-}" ]]; then
     kubelet_opts="${kubelet_opts} --version=${KUBELET_VERSION}"
