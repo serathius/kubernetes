@@ -13,8 +13,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/andybalholm/brotli"
 	"github.com/klauspost/compress/s2"
+	"github.com/klauspost/compress/zstd"
 	"github.com/klauspost/pgzip"
+	"github.com/pierrec/lz4/v4"
 	"golang.org/x/time/rate"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -139,10 +142,20 @@ func (l *lister) makeRequest(i int) {
 		}
 	case "s2":
 		reader = s2.NewReader(compressedBody)
+	case "zstd":
+		var err error
+		reader, err = zstd.NewReader(compressedBody)
+		if err != nil {
+			panic(fmt.Sprintf("Error creating zstd reader: %v\n", err))
+		}
+	case "br":
+		reader = brotli.NewReader(compressedBody)
+	case "lz4":
+		reader = lz4.NewReader(compressedBody)
 	case "":
 		reader = compressedBody
 	default:
-		panic(fmt.Sprintf("Got bad content encoding: %q, expected gzip or s2\n", resp.Header.Get("Content-Encoding")))
+		panic(fmt.Sprintf("Got bad content encoding: %q, expected gzip, s2, zstd, br, or lz4\n", resp.Header.Get("Content-Encoding")))
 	}
 	decompressedBody := &countingReader{r: reader}
 

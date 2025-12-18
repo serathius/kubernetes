@@ -236,8 +236,11 @@ func main() {
 	case "pgzip":
 	case "kgzip":
 	case "s2":
+	case "zstd":
+	case "br":
+	case "lz4":
 	default:
-		fmt.Printf(`--accept-encoding should be set to "gzip", "pgzip", "kgzip", or "s2"
+		fmt.Printf(`--accept-encoding should be set to "gzip", "pgzip", "kgzip", "s2", "zstd", "br", or "lz4"
 `)
 		os.Exit(1)
 	}
