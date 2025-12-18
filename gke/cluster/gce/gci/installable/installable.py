@@ -33,6 +33,7 @@ import logging
 import os
 import subprocess
 import sys
+import tempfile
 import urllib3
 import hashlib
 from pathlib import Path
@@ -198,6 +199,8 @@ class GCS:
 
           with open(install_path, 'wb') as f:
               f.write(response.data)
+              f.flush()
+              os.fsync(f.fileno())
 
           return install_path
 
@@ -335,14 +338,19 @@ class AppPkg(Installable):
 
   def download(self):
     """Downloads the underlying file using gcs."""
+    file_path = self.get_file_path()
+    file_dir = Path(file_path).parent
+    file_dir.mkdir(parents=True, exist_ok=True)
+    temp = tempfile.NamedTemporaryFile(dir=file_dir, delete=False)
+    temp_path = temp.name
     try:
-      file_path = self.get_file_path()
-      gcs.download(self.get_url(), file_path)
-      validate_checksum(file_path, self.digest_algo(), self.digest())
-      os.chmod(file_path, self.get_mode())
+      gcs.download(self.get_url(), temp_path)
+      validate_checksum(temp_path, self.digest_algo(), self.digest())
+      os.chmod(temp_path, self.get_mode())
+      os.replace(temp_path, file_path)
     except Exception as e:
-      if os.path.exists(file_path):
-        os.remove(file_path)
+      if os.path.exists(temp_path):
+        os.remove(temp_path)
       raise
 
   def is_preloaded(self) -> bool:
