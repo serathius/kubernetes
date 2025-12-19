@@ -132,32 +132,11 @@ func (l *lister) makeRequest(i int) {
 	}
 
 	compressedBody := &countingReader{r: resp.Body}
-	var reader io.Reader
-	switch resp.Header.Get("Content-Encoding") {
-	case "gzip":
-		var err error
-		reader, err = pgzip.NewReader(compressedBody)
-		if err != nil {
-			panic(fmt.Sprintf("Error creating gzip reader: %v\n", err))
-		}
-	case "s2":
-		reader = s2.NewReader(compressedBody)
-	case "zstd":
-		var err error
-		reader, err = zstd.NewReader(compressedBody)
-		if err != nil {
-			panic(fmt.Sprintf("Error creating zstd reader: %v\n", err))
-		}
-	case "br":
-		reader = brotli.NewReader(compressedBody)
-	case "lz4":
-		reader = lz4.NewReader(compressedBody)
-	case "":
-		reader = compressedBody
-	default:
-		panic(fmt.Sprintf("Got bad content encoding: %q, expected gzip, s2, zstd, br, or lz4\n", resp.Header.Get("Content-Encoding")))
+	decompressedReader, err := decompress(compressedBody, resp.Header.Get("Content-Encoding"))
+	if err != nil {
+		panic(fmt.Sprintf("Error decompressing response: %v\n", err))
 	}
-	decompressedBody := &countingReader{r: reader}
+	decompressedBody := &countingReader{r: decompressedReader}
 
 	var latency time.Duration
 	switch l.watchList {
@@ -179,17 +158,46 @@ func (l *lister) makeRequest(i int) {
 			panic(fmt.Sprintf("Error decoding list: %v\n", err))
 		}
 	}
-	l.stats.Record(latency, compressedBody.n, decompressedBody.n)
+	l.stats.Record(latency, compressedBody.byteCounter, decompressedBody.byteCounter)
+}
+
+func decompress(compressedBody io.Reader, contentEncoding string) (io.Reader, error) {
+	var reader io.Reader
+	switch contentEncoding {
+	case "gzip":
+		var err error
+		reader, err = pgzip.NewReader(compressedBody)
+		if err != nil {
+			return nil, fmt.Errorf("Error creating gzip reader: %v", err)
+		}
+	case "s2":
+		reader = s2.NewReader(compressedBody)
+	case "zstd":
+		var err error
+		reader, err = zstd.NewReader(compressedBody)
+		if err != nil {
+			return nil, fmt.Errorf("Error creating zstd reader: %v", err)
+		}
+	case "br":
+		reader = brotli.NewReader(compressedBody)
+	case "lz4":
+		reader = lz4.NewReader(compressedBody)
+	case "":
+		reader = compressedBody
+	default:
+		return nil, fmt.Errorf("Got bad content encoding: %q, expected gzip, s2, zstd, br, or lz4", contentEncoding)
+	}
+	return reader, nil
 }
 
 type countingReader struct {
 	r io.Reader
-	n int64
+	byteCounter int64
 }
 
 func (r *countingReader) Read(p []byte) (n int, err error) {
 	n, err = r.r.Read(p)
-	r.n += int64(n)
+	r.byteCounter += int64(n)
 	return
 }
 
