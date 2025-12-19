@@ -159,16 +159,26 @@ func (l *lister) makeRequest(i int) {
 	}
 	decompressedBody := &countingReader{r: reader}
 
+	var latency time.Duration
 	switch l.watchList {
 	case true:
-		err = l.handleWatchList(resp, decompressedBody, start, mediaType, params)
+		err = l.handleWatchList(decompressedBody, mediaType, params)
+		latency = time.Since(start)
+		if err != nil {
+			panic(fmt.Sprintf("Error handling watch list: %v\n", err))
+		}
 	case false:
-		err = l.handleList(resp, decompressedBody, start)
+		data, err := l.handleList(decompressedBody)
+		// Calculate latency before decoding
+		latency = time.Since(start)
+		if err != nil {
+			panic(fmt.Sprintf("Error handling list: %v\n", err))
+		}
+		_, _, err = l.decoder.Decode(data, nil, nil)
+		if err != nil {
+			panic(fmt.Sprintf("Error decoding list: %v\n", err))
+		}
 	}
-	if err != nil {
-		panic(fmt.Sprintf("Error handling list: %v\n", err))
-	}
-	latency := time.Since(start)
 	l.stats.Record(latency, compressedBody.n, decompressedBody.n)
 }
 
@@ -183,18 +193,17 @@ func (r *countingReader) Read(p []byte) (n int, err error) {
 	return
 }
 
-func (l *lister) handleList(resp *http.Response, reader io.Reader, start time.Time) error {
+func (l *lister) handleList(reader io.Reader) ([]byte, error) {
 	buf := bytes.NewBuffer(nil)
 	_, err := io.Copy(buf, reader)
 	if err != nil {
 		fmt.Printf("Error reading response: %v\n", err)
-		return err
+		return nil, err
 	}
-	_, _, err = l.decoder.Decode(buf.Bytes(), nil, nil)
-	return err
+	return buf.Bytes(), err
 }
 
-func (l *lister) handleWatchList(resp *http.Response, reader io.Reader, start time.Time, mediaType string, params map[string]string) error {
+func (l *lister) handleWatchList(reader io.Reader, mediaType string, params map[string]string) error {
 	_, streamingSerializer, framer, err := l.negotiator.StreamDecoder(mediaType, params)
 	if err != nil {
 		return err
