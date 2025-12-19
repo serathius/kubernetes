@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/andybalholm/brotli"
+	kgzip "github.com/klauspost/compress/gzip"
 	"github.com/klauspost/compress/s2"
 	"github.com/klauspost/compress/zstd"
 	"github.com/klauspost/pgzip"
@@ -132,39 +134,40 @@ func (l *lister) makeRequest(i int) {
 	}
 
 	compressedBody := &countingReader{r: resp.Body}
-	decompressedReader, err := decompress(compressedBody, resp.Header.Get("Content-Encoding"))
+	decompressedReader, err := decompress(compressedBody, l.acceptEncoding)
 	if err != nil {
 		panic(fmt.Sprintf("Error decompressing response: %v\n", err))
 	}
 	decompressedBody := &countingReader{r: decompressedReader}
 
-	var latency time.Duration
 	switch l.watchList {
 	case true:
 		err = l.handleWatchList(decompressedBody, mediaType, params)
-		latency = time.Since(start)
-		if err != nil {
-			panic(fmt.Sprintf("Error handling watch list: %v\n", err))
-		}
 	case false:
-		data, err := l.handleList(decompressedBody)
-		// Calculate latency before decoding
-		latency = time.Since(start)
-		if err != nil {
-			panic(fmt.Sprintf("Error handling list: %v\n", err))
-		}
-		_, _, err = l.decoder.Decode(data, nil, nil)
-		if err != nil {
-			panic(fmt.Sprintf("Error decoding list: %v\n", err))
-		}
+		err = l.handleList(decompressedBody)
 	}
-	l.stats.Record(latency, compressedBody.byteCounter, decompressedBody.byteCounter)
+	if err != nil {
+		panic(fmt.Sprintf("Error handling watch list: %v\n", err))
+	}
+	l.stats.Record(time.Since(start), compressedBody.byteCounter, decompressedBody.byteCounter)
 }
 
 func decompress(compressedBody io.Reader, contentEncoding string) (io.Reader, error) {
 	var reader io.Reader
 	switch contentEncoding {
 	case "gzip":
+		var err error
+		reader, err = gzip.NewReader(compressedBody)
+		if err != nil {
+			return nil, fmt.Errorf("Error creating gzip reader: %v", err)
+		}
+	case "kgzip":
+		var err error
+		reader, err = kgzip.NewReader(compressedBody)
+		if err != nil {
+			return nil, fmt.Errorf("Error creating gzip reader: %v", err)
+		}
+	case "pgzip":
 		var err error
 		reader, err = pgzip.NewReader(compressedBody)
 		if err != nil {
@@ -201,14 +204,17 @@ func (r *countingReader) Read(p []byte) (n int, err error) {
 	return
 }
 
-func (l *lister) handleList(reader io.Reader) ([]byte, error) {
+func (l *lister) handleList(reader io.Reader) error {
 	buf := bytes.NewBuffer(nil)
 	_, err := io.Copy(buf, reader)
 	if err != nil {
-		fmt.Printf("Error reading response: %v\n", err)
-		return nil, err
+		return err
 	}
-	return buf.Bytes(), err
+	_, _, err = l.decoder.Decode(buf.Bytes(), nil, nil)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (l *lister) handleWatchList(reader io.Reader, mediaType string, params map[string]string) error {
