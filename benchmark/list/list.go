@@ -134,22 +134,23 @@ func (l *lister) makeRequest(i int) {
 	}
 
 	compressedBody := &countingReader{r: resp.Body}
-	decompressedReader, err := decompress(compressedBody, l.acceptEncoding)
-	if err != nil {
-		panic(fmt.Sprintf("Error decompressing response: %v\n", err))
-	}
-	decompressedBody := &countingReader{r: decompressedReader}
 
 	switch l.watchList {
 	case true:
-		err = l.handleWatchList(decompressedBody, mediaType, params)
+		err = l.handleWatchList(compressedBody, mediaType, params, l.acceptEncoding)
+		l.stats.Record(time.Since(start), compressedBody.byteCounter, 0)
 	case false:
+		decompressedReader, err := decompress(compressedBody, l.acceptEncoding)
+		if err != nil {
+			panic(fmt.Sprintf("Error decompressing response: %v\n", err))
+		}
+		decompressedBody := &countingReader{r: decompressedReader}
 		err = l.handleList(decompressedBody)
+		l.stats.Record(time.Since(start), compressedBody.byteCounter, decompressedBody.byteCounter)
 	}
 	if err != nil {
 		panic(fmt.Sprintf("Error handling watch list: %v\n", err))
 	}
-	l.stats.Record(time.Since(start), compressedBody.byteCounter, decompressedBody.byteCounter)
 }
 
 func decompress(compressedBody io.Reader, contentEncoding string) (io.Reader, error) {
@@ -217,10 +218,13 @@ func (l *lister) handleList(reader io.Reader) error {
 	return nil
 }
 
-func (l *lister) handleWatchList(reader io.Reader, mediaType string, params map[string]string) error {
+func (l *lister) handleWatchList(reader io.Reader, mediaType string, params map[string]string, acceptEncoding string) error {
 	_, streamingSerializer, framer, err := l.negotiator.StreamDecoder(mediaType, params)
 	if err != nil {
 		return err
+	}
+	if acceptEncoding == "s2" {
+		reader = s2.NewReader(reader)
 	}
 
 	frameReader := framer.NewFrameReader(io.NopCloser(reader))

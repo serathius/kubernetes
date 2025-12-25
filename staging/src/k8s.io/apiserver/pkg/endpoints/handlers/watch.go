@@ -21,8 +21,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 
+	"github.com/klauspost/compress/s2"
 	"golang.org/x/net/websocket"
 
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -218,8 +220,18 @@ func (s *WatchServer) HandleHTTP(w http.ResponseWriter, req *http.Request) {
 		s.Scope.err(errors.NewInternalError(err), w, req)
 		return
 	}
+	var writer io.Writer = w
+	if req.Header.Get("Accept-Encoding") == "s2" {
+		s2writer := s2Pool.Get().(*s2.Writer)
+		s2writer.Reset(w)
+		writer = s2writer
+		defer func() {
+			s2writer.Flush()
+			s2Pool.Put(s2writer)
+		}()
+	}
 
-	framer := s.Framer.NewFrameWriter(w)
+	framer := s.Framer.NewFrameWriter(writer)
 	if framer == nil {
 		// programmer error
 		err := fmt.Errorf("no stream framing support is available for media type %q", s.MediaType)
@@ -227,6 +239,7 @@ func (s *WatchServer) HandleHTTP(w http.ResponseWriter, req *http.Request) {
 		s.Scope.err(errors.NewBadRequest(err.Error()), w, req)
 		return
 	}
+
 
 	// ensure the connection times out
 	timeoutCh, cleanup := s.TimeoutFactory.TimeoutCh()
@@ -330,6 +343,12 @@ func (s *WatchServer) HandleWS(ws *websocket.Conn) {
 			}
 		}
 	}
+}
+
+var s2Pool = &sync.Pool{
+	New: func() interface{} {
+		return s2.NewWriter(nil)
+	},
 }
 
 type websocketFramer struct {
