@@ -42,6 +42,7 @@ import (
 	"k8s.io/apiserver/pkg/storage"
 	"k8s.io/apiserver/pkg/storage/cacher/metrics"
 	"k8s.io/apiserver/pkg/storage/cacher/progress"
+	cacherstore "k8s.io/apiserver/pkg/storage/cacher/store"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/client-go/tools/cache"
 	featuregatetesting "k8s.io/component-base/featuregate/testing"
@@ -69,8 +70,8 @@ func makeTestPodDetails(name string, resourceVersion uint64, nodeName string, la
 	}
 }
 
-func makeTestStoreElement(pod *v1.Pod) *storeElement {
-	return &storeElement{
+func makeTestStoreElement(pod *v1.Pod) *cacherstore.Element {
+	return &cacherstore.Element{
 		Key:    "/prefix/ns/" + pod.Name,
 		Object: pod,
 		Labels: labels.Set(pod.Labels),
@@ -243,14 +244,14 @@ func TestWatchCacheBasic(t *testing.T) {
 	store.Add(makeTestPod("pod2", 5))
 	store.Add(makeTestPod("pod3", 6))
 	{
-		expected := map[string]storeElement{
+		expected := map[string]cacherstore.Element{
 			"/prefix/ns/pod1": *makeTestStoreElement(makeTestPod("pod1", 4)),
 			"/prefix/ns/pod2": *makeTestStoreElement(makeTestPod("pod2", 5)),
 			"/prefix/ns/pod3": *makeTestStoreElement(makeTestPod("pod3", 6)),
 		}
-		items := make(map[string]storeElement)
+		items := make(map[string]cacherstore.Element)
 		for _, item := range store.List() {
-			elem := item.(*storeElement)
+			elem := item.(*cacherstore.Element)
 			items[elem.Key] = *elem
 		}
 		if !apiequality.Semantic.DeepEqual(expected, items) {
@@ -264,13 +265,13 @@ func TestWatchCacheBasic(t *testing.T) {
 		makeTestPod("pod5", 8),
 	}, "8")
 	{
-		expected := map[string]storeElement{
+		expected := map[string]cacherstore.Element{
 			"/prefix/ns/pod4": *makeTestStoreElement(makeTestPod("pod4", 7)),
 			"/prefix/ns/pod5": *makeTestStoreElement(makeTestPod("pod5", 8)),
 		}
-		items := make(map[string]storeElement)
+		items := make(map[string]cacherstore.Element)
 		for _, item := range store.List() {
-			elem := item.(*storeElement)
+			elem := item.(*cacherstore.Element)
 			items[elem.Key] = *elem
 		}
 		if !apiequality.Semantic.DeepEqual(expected, items) {
@@ -1338,7 +1339,7 @@ func TestCacheSnapshots(t *testing.T) {
 	assert.True(t, found, "Expected store to not include rev 100")
 	elements := lister.ListPrefix("", "")
 	assert.Len(t, elements, 1)
-	assert.Equal(t, makeTestPod("foo", 100), elements[0].(*storeElement).Object)
+	assert.Equal(t, makeTestPod("foo", 100), elements[0].(*cacherstore.Element).Object)
 
 	t.Log("Overflow cache to remove rev 100")
 	require.NoError(t, store.Add(makeTestPod("foo", 400)))
@@ -1350,7 +1351,7 @@ func TestCacheSnapshots(t *testing.T) {
 	assert.True(t, found, "Expected store to still keep rev 200")
 	elements = lister.ListPrefix("", "")
 	assert.Len(t, elements, 1)
-	assert.Equal(t, makeTestPod("foo", 200), elements[0].(*storeElement).Object)
+	assert.Equal(t, makeTestPod("foo", 200), elements[0].(*cacherstore.Element).Object)
 
 	t.Log("Test cache on rev 300")
 	lister, found = store.snapshots.GetLessOrEqual(300)
@@ -1363,7 +1364,7 @@ func TestCacheSnapshots(t *testing.T) {
 	assert.True(t, found, "Expected store to still keep rev 400")
 	elements = lister.ListPrefix("", "")
 	assert.Len(t, elements, 1)
-	assert.Equal(t, makeTestPod("foo", 400), elements[0].(*storeElement).Object)
+	assert.Equal(t, makeTestPod("foo", 400), elements[0].(*cacherstore.Element).Object)
 
 	t.Log("Add event outside the event fresh window to force cache capacity downsize")
 	assert.Equal(t, 3, store.capacity)
@@ -1379,7 +1380,7 @@ func TestCacheSnapshots(t *testing.T) {
 	assert.True(t, found, "Expected store to still keep rev 500")
 	elements = lister.ListPrefix("", "")
 	assert.Len(t, elements, 1)
-	assert.Equal(t, makeTestPod("foo", 500), elements[0].(*storeElement).Object)
+	assert.Equal(t, makeTestPod("foo", 500), elements[0].(*cacherstore.Element).Object)
 
 	t.Log("Add event to force capacity upsize")
 	require.NoError(t, store.Update(makeTestPod("foo", 600)))
@@ -1391,7 +1392,7 @@ func TestCacheSnapshots(t *testing.T) {
 	assert.True(t, found, "Expected replace to be snapshotted")
 	elements = lister.ListPrefix("", "")
 	assert.Len(t, elements, 1)
-	assert.Equal(t, makeTestPod("foo", 600), elements[0].(*storeElement).Object)
+	assert.Equal(t, makeTestPod("foo", 600), elements[0].(*cacherstore.Element).Object)
 
 	t.Log("Replace cache to remove history")
 	_, found = store.snapshots.GetLessOrEqual(500)
@@ -1408,5 +1409,5 @@ func TestCacheSnapshots(t *testing.T) {
 	assert.True(t, found, "Expected replace to be snapshotted")
 	elements = lister.ListPrefix("", "")
 	assert.Len(t, elements, 1)
-	assert.Equal(t, makeTestPod("foo", 600), elements[0].(*storeElement).Object)
+	assert.Equal(t, makeTestPod("foo", 600), elements[0].(*cacherstore.Element).Object)
 }
