@@ -18,74 +18,15 @@ package cacher
 
 import (
 	"context"
-	"fmt"
 	"testing"
 	"time"
 
 	clientv3 "go.etcd.io/etcd/client/v3"
 
-	"k8s.io/apimachinery/pkg/api/apitesting"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/runtime/serializer"
-	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
-	"k8s.io/apiserver/pkg/apis/example"
-	examplev1 "k8s.io/apiserver/pkg/apis/example/v1"
-	example2v1 "k8s.io/apiserver/pkg/apis/example2/v1"
 	"k8s.io/apiserver/pkg/storage"
 	"k8s.io/apiserver/pkg/storage/etcd3"
-	etcd3testing "k8s.io/apiserver/pkg/storage/etcd3/testing"
 	storagetesting "k8s.io/apiserver/pkg/storage/testing"
-	"k8s.io/apiserver/pkg/storage/value/encrypt/identity"
-	"k8s.io/utils/clock"
 )
-
-var (
-	scheme   = runtime.NewScheme()
-	codecs   = serializer.NewCodecFactory(scheme)
-	errDummy = fmt.Errorf("dummy error")
-)
-
-func init() {
-	metav1.AddToGroupVersion(scheme, metav1.SchemeGroupVersion)
-	utilruntime.Must(example.AddToScheme(scheme))
-	utilruntime.Must(examplev1.AddToScheme(scheme))
-	utilruntime.Must(example2v1.AddToScheme(scheme))
-}
-
-func newPod() runtime.Object     { return &example.Pod{} }
-func newPodList() runtime.Object { return &example.PodList{} }
-
-func newEtcdTestStorage(t testing.TB, prefix string) (*etcd3testing.EtcdTestServer, storage.Interface) {
-	server, _ := etcd3testing.NewUnsecuredEtcd3TestClientServer(t)
-	versioner := storage.APIObjectVersioner{}
-	codec := apitesting.TestCodec(codecs, examplev1.SchemeGroupVersion)
-	compactor := etcd3.NewCompactor(server.V3Client.Client, 0, clock.RealClock{}, nil)
-	t.Cleanup(compactor.Stop)
-	storage, err := etcd3.New(
-		server.V3Client,
-		compactor,
-		codec,
-		newPod,
-		newPodList,
-		prefix,
-		"/pods/",
-		schema.GroupResource{Resource: "pods"},
-		identity.NewEncryptCheckTransformer(),
-		etcd3.NewDefaultLeaseManagerConfig(),
-		etcd3.NewDefaultDecoder(codec, versioner),
-		versioner)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(storage.Close)
-	return server, storage
-}
-
-func computePodKey(obj *example.Pod) string {
-	return fmt.Sprintf("/pods/%s/%s", obj.Namespace, obj.Name)
-}
 
 func compactWatch(c *CacheDelegator, client *clientv3.Client) storagetesting.Compaction {
 	return func(ctx context.Context, t *testing.T, resourceVersion string) {
