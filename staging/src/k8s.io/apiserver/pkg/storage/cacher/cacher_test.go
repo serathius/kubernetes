@@ -92,91 +92,91 @@ func checkStorageInvariants(ctx context.Context, t *testing.T, key string) {
 }
 
 func TestCreate(t *testing.T) {
-	ctx, cacher, terminate := testSetup(t)
+	ctx, cacher, _, terminate := testSetup(t)
 	t.Cleanup(terminate)
 	storagetesting.RunTestCreate(ctx, t, cacher, checkStorageInvariants)
 }
 
 func TestCreateWithTTL(t *testing.T) {
-	ctx, cacher, terminate := testSetup(t)
+	ctx, cacher, _, terminate := testSetup(t)
 	t.Cleanup(terminate)
 	storagetesting.RunTestCreateWithTTL(ctx, t, cacher)
 }
 
 func TestCreateWithKeyExist(t *testing.T) {
-	ctx, cacher, terminate := testSetup(t)
+	ctx, cacher, _, terminate := testSetup(t)
 	t.Cleanup(terminate)
 	storagetesting.RunTestCreateWithKeyExist(ctx, t, cacher)
 }
 
 func TestGet(t *testing.T) {
-	ctx, cacher, terminate := testSetup(t)
+	ctx, cacher, _, terminate := testSetup(t)
 	t.Cleanup(terminate)
 	storagetesting.RunTestGet(ctx, t, cacher)
 }
 
 func TestUnconditionalDelete(t *testing.T) {
-	ctx, cacher, terminate := testSetup(t)
+	ctx, cacher, _, terminate := testSetup(t)
 	t.Cleanup(terminate)
 	storagetesting.RunTestUnconditionalDelete(ctx, t, cacher)
 }
 
 func TestConditionalDelete(t *testing.T) {
-	ctx, cacher, terminate := testSetup(t)
+	ctx, cacher, _, terminate := testSetup(t)
 	t.Cleanup(terminate)
 	storagetesting.RunTestConditionalDelete(ctx, t, cacher)
 }
 
 func TestDeleteWithSuggestion(t *testing.T) {
-	ctx, cacher, terminate := testSetup(t)
+	ctx, cacher, _, terminate := testSetup(t)
 	t.Cleanup(terminate)
 	storagetesting.RunTestDeleteWithSuggestion(ctx, t, cacher)
 }
 
 func TestDeleteWithSuggestionAndConflict(t *testing.T) {
-	ctx, cacher, terminate := testSetup(t)
+	ctx, cacher, _, terminate := testSetup(t)
 	t.Cleanup(terminate)
 	storagetesting.RunTestDeleteWithSuggestionAndConflict(ctx, t, cacher)
 }
 
 func TestDeleteWithSuggestionOfDeletedObject(t *testing.T) {
-	ctx, cacher, terminate := testSetup(t)
+	ctx, cacher, _, terminate := testSetup(t)
 	t.Cleanup(terminate)
 	storagetesting.RunTestDeleteWithSuggestionOfDeletedObject(ctx, t, cacher)
 }
 
 func TestValidateDeletionWithSuggestion(t *testing.T) {
-	ctx, cacher, terminate := testSetup(t)
+	ctx, cacher, _, terminate := testSetup(t)
 	t.Cleanup(terminate)
 	storagetesting.RunTestValidateDeletionWithSuggestion(ctx, t, cacher)
 }
 
 func TestValidateDeletionWithOnlySuggestionValid(t *testing.T) {
-	ctx, cacher, terminate := testSetup(t)
+	ctx, cacher, _, terminate := testSetup(t)
 	t.Cleanup(terminate)
 	storagetesting.RunTestValidateDeletionWithOnlySuggestionValid(ctx, t, cacher)
 }
 
 func TestDeleteWithConflict(t *testing.T) {
-	ctx, cacher, terminate := testSetup(t)
+	ctx, cacher, _, terminate := testSetup(t)
 	t.Cleanup(terminate)
 	storagetesting.RunTestDeleteWithConflict(ctx, t, cacher)
 }
 
 func TestPreconditionalDeleteWithSuggestion(t *testing.T) {
-	ctx, cacher, terminate := testSetup(t)
+	ctx, cacher, _, terminate := testSetup(t)
 	t.Cleanup(terminate)
 	storagetesting.RunTestPreconditionalDeleteWithSuggestion(ctx, t, cacher)
 }
 
 func TestPreconditionalDeleteWithSuggestionPass(t *testing.T) {
-	ctx, cacher, terminate := testSetup(t)
+	ctx, cacher, _, terminate := testSetup(t)
 	t.Cleanup(terminate)
 	storagetesting.RunTestPreconditionalDeleteWithOnlySuggestionPass(ctx, t, cacher)
 }
 
 func TestListPaging(t *testing.T) {
-	ctx, cacher, terminate := testSetup(t)
+	ctx, cacher, _, terminate := testSetup(t)
 	t.Cleanup(terminate)
 	storagetesting.RunTestListPaging(ctx, t, cacher)
 }
@@ -192,21 +192,21 @@ func TestLists(t *testing.T) {
 				}
 				t.Run("List", func(t *testing.T) {
 					t.Parallel()
-					ctx, cacher, server, terminate := testSetupWithEtcdServer(t)
+					ctx, cacher, server, terminate := testSetup(t)
 					t.Cleanup(terminate)
 					storagetesting.RunTestList(ctx, t, cacher, compactStore(cacher, server.V3Client.Client), true, server.V3Client.Kubernetes.(*storagetesting.KubernetesRecorder))
 				})
 
 				t.Run("ConsistentList", func(t *testing.T) {
 					t.Parallel()
-					ctx, cacher, server, terminate := testSetupWithEtcdServer(t)
+					ctx, cacher, server, terminate := testSetup(t)
 					t.Cleanup(terminate)
 					storagetesting.RunTestConsistentList(ctx, t, cacher, increaseRVFunc(server.V3Client.Client), true, consistentRead, listFromCacheSnapshot)
 				})
 
 				t.Run("GetListNonRecursive", func(t *testing.T) {
 					t.Parallel()
-					ctx, cacher, server, terminate := testSetupWithEtcdServer(t)
+					ctx, cacher, server, terminate := testSetup(t)
 					t.Cleanup(terminate)
 					storagetesting.RunTestGetListNonRecursive(ctx, t, increaseRVFunc(server.V3Client.Client), cacher)
 				})
@@ -218,14 +218,14 @@ func TestLists(t *testing.T) {
 func TestCompactRevision(t *testing.T) {
 	// Test requires store to observe extenal changes to compaction revision, requiring dedicated watch on compact key which is enabled by ListFromCacheSnapshot.
 	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.ListFromCacheSnapshot, true)
-	ctx, cacher, server, terminate := testSetupWithEtcdServer(t)
+	ctx, cacher, server, terminate := testSetup(t)
 	t.Cleanup(terminate)
 	storagetesting.RunTestCompactRevision(ctx, t, cacher, increaseRVFunc(server.V3Client.Client), compactStore(cacher, server.V3Client.Client))
 }
 
 func TestMarkConsistent(t *testing.T) {
 	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.ListFromCacheSnapshot, true)
-	ctx, cacher, server, terminate := testSetupWithEtcdServer(t)
+	ctx, cacher, server, terminate := testSetup(t)
 	t.Cleanup(terminate)
 	recorder := server.V3Client.Kubernetes.(*storagetesting.KubernetesRecorder)
 
@@ -312,7 +312,7 @@ func etcdListRequests(t *testing.T, ctx context.Context, store storage.Interface
 }
 
 func TestGetListRecursivePrefix(t *testing.T) {
-	ctx, store, terminate := testSetup(t)
+	ctx, store, _, terminate := testSetup(t)
 	t.Cleanup(terminate)
 	storagetesting.RunTestGetListRecursivePrefix(ctx, t, store)
 }
@@ -322,19 +322,19 @@ func checkStorageCalls(t *testing.T, pageSize, estimatedProcessedObjects uint64)
 }
 
 func TestListContinuation(t *testing.T) {
-	ctx, cacher, terminate := testSetup(t)
+	ctx, cacher, _, terminate := testSetup(t)
 	t.Cleanup(terminate)
 	storagetesting.RunTestListContinuation(ctx, t, cacher, checkStorageCalls)
 }
 
 func TestListPaginationRareObject(t *testing.T) {
-	ctx, cacher, terminate := testSetup(t)
+	ctx, cacher, _, terminate := testSetup(t)
 	t.Cleanup(terminate)
 	storagetesting.RunTestListPaginationRareObject(ctx, t, cacher, checkStorageCalls)
 }
 
 func TestListContinuationWithFilter(t *testing.T) {
-	ctx, cacher, terminate := testSetup(t)
+	ctx, cacher, _, terminate := testSetup(t)
 	t.Cleanup(terminate)
 	storagetesting.RunTestListContinuationWithFilter(ctx, t, cacher, checkStorageCalls)
 }
@@ -348,7 +348,7 @@ func TestListResourceVersionMatch(t *testing.T) {
 }
 
 func TestNamespaceScopedList(t *testing.T) {
-	ctx, cacher, terminate := testSetup(t, withNodeNameAndNamespaceIndex)
+	ctx, cacher, _, terminate := testSetup(t, withNodeNameAndNamespaceIndex)
 	t.Cleanup(terminate)
 	storagetesting.RunTestNamespaceScopedList(ctx, t, cacher)
 }
@@ -358,7 +358,7 @@ func TestGuaranteedUpdate(t *testing.T) {
 }
 
 func TestGuaranteedUpdateWithTTL(t *testing.T) {
-	ctx, cacher, terminate := testSetup(t)
+	ctx, cacher, _, terminate := testSetup(t)
 	t.Cleanup(terminate)
 	storagetesting.RunTestGuaranteedUpdateWithTTL(ctx, t, cacher)
 }
@@ -368,13 +368,13 @@ func TestGuaranteedUpdateChecksStoredData(t *testing.T) {
 }
 
 func TestGuaranteedUpdateWithConflict(t *testing.T) {
-	ctx, cacher, terminate := testSetup(t)
+	ctx, cacher, _, terminate := testSetup(t)
 	t.Cleanup(terminate)
 	storagetesting.RunTestGuaranteedUpdateWithConflict(ctx, t, cacher)
 }
 
 func TestGuaranteedUpdateWithSuggestionAndConflict(t *testing.T) {
-	ctx, cacher, terminate := testSetup(t)
+	ctx, cacher, _, terminate := testSetup(t)
 	t.Cleanup(terminate)
 	storagetesting.RunTestGuaranteedUpdateWithSuggestionAndConflict(ctx, t, cacher)
 }
@@ -387,44 +387,44 @@ func TestStats(t *testing.T) {
 	for _, sizeBasedListCostEstimate := range []bool{true, false} {
 		t.Run(fmt.Sprintf("SizeBasedListCostEstimate=%v", sizeBasedListCostEstimate), func(t *testing.T) {
 			featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.SizeBasedListCostEstimate, sizeBasedListCostEstimate)
-			ctx, cacher, terminate := testSetup(t)
+			ctx, cacher, _, terminate := testSetup(t)
 			t.Cleanup(terminate)
 			storagetesting.RunTestStats(ctx, t, cacher, codecs.LegacyCodec(examplev1.SchemeGroupVersion), identity.NewEncryptCheckTransformer(), sizeBasedListCostEstimate)
 		})
 	}
 }
 func TestKeySchema(t *testing.T) {
-	ctx, cacher, terminate := testSetup(t)
+	ctx, cacher, _, terminate := testSetup(t)
 	t.Cleanup(terminate)
 	storagetesting.RunTestKeySchema(ctx, t, cacher)
 }
 
 func TestWatch(t *testing.T) {
-	ctx, cacher, terminate := testSetup(t)
+	ctx, cacher, _, terminate := testSetup(t)
 	t.Cleanup(terminate)
 	storagetesting.RunTestWatch(ctx, t, cacher)
 }
 
 func TestWatchFromZero(t *testing.T) {
-	ctx, cacher, server, terminate := testSetupWithEtcdServer(t)
+	ctx, cacher, server, terminate := testSetup(t)
 	t.Cleanup(terminate)
 	storagetesting.RunTestWatchFromZero(ctx, t, cacher, compactWatch(cacher, server.V3Client.Client))
 }
 
 func TestDeleteTriggerWatch(t *testing.T) {
-	ctx, cacher, terminate := testSetup(t)
+	ctx, cacher, _, terminate := testSetup(t)
 	t.Cleanup(terminate)
 	storagetesting.RunTestDeleteTriggerWatch(ctx, t, cacher)
 }
 
 func TestWatchFromNonZero(t *testing.T) {
-	ctx, cacher, terminate := testSetup(t)
+	ctx, cacher, _, terminate := testSetup(t)
 	t.Cleanup(terminate)
 	storagetesting.RunTestWatchFromNonZero(ctx, t, cacher)
 }
 
 func TestDelayedWatchDelivery(t *testing.T) {
-	ctx, cacher, terminate := testSetup(t)
+	ctx, cacher, _, terminate := testSetup(t)
 	t.Cleanup(terminate)
 	storagetesting.RunTestDelayedWatchDelivery(ctx, t, cacher)
 }
@@ -438,49 +438,49 @@ func TestWatchContextCancel(t *testing.T) {
 }
 
 func TestWatcherTimeout(t *testing.T) {
-	ctx, cacher, terminate := testSetup(t)
+	ctx, cacher, _, terminate := testSetup(t)
 	t.Cleanup(terminate)
 	storagetesting.RunTestWatcherTimeout(ctx, t, cacher)
 }
 
 func TestWatchDeleteEventObjectHaveLatestRV(t *testing.T) {
-	ctx, cacher, terminate := testSetup(t)
+	ctx, cacher, _, terminate := testSetup(t)
 	t.Cleanup(terminate)
 	storagetesting.RunTestWatchDeleteEventObjectHaveLatestRV(ctx, t, cacher)
 }
 
 func TestWatchInitializationSignal(t *testing.T) {
-	ctx, cacher, terminate := testSetup(t)
+	ctx, cacher, _, terminate := testSetup(t)
 	t.Cleanup(terminate)
 	storagetesting.RunTestWatchInitializationSignal(ctx, t, cacher)
 }
 
 func TestClusterScopedWatch(t *testing.T) {
-	ctx, cacher, terminate := testSetup(t, withClusterScopedKeyFunc, withNodeNameAndNamespaceIndex)
+	ctx, cacher, _, terminate := testSetup(t, withClusterScopedKeyFunc, withNodeNameAndNamespaceIndex)
 	t.Cleanup(terminate)
 	storagetesting.RunTestClusterScopedWatch(ctx, t, cacher)
 }
 
 func TestNamespaceScopedWatch(t *testing.T) {
-	ctx, cacher, terminate := testSetup(t, withNodeNameAndNamespaceIndex)
+	ctx, cacher, _, terminate := testSetup(t, withNodeNameAndNamespaceIndex)
 	t.Cleanup(terminate)
 	storagetesting.RunTestNamespaceScopedWatch(ctx, t, cacher)
 }
 
 func TestWatchDispatchBookmarkEvents(t *testing.T) {
-	ctx, cacher, terminate := testSetup(t)
+	ctx, cacher, _, terminate := testSetup(t)
 	t.Cleanup(terminate)
 	storagetesting.RunTestWatchDispatchBookmarkEvents(ctx, t, cacher, true)
 }
 
 func TestWatchBookmarksWithCorrectResourceVersion(t *testing.T) {
-	ctx, cacher, terminate := testSetup(t)
+	ctx, cacher, _, terminate := testSetup(t)
 	t.Cleanup(terminate)
 	storagetesting.RunTestOptionalWatchBookmarksWithCorrectResourceVersion(ctx, t, cacher)
 }
 
 func TestSendInitialEventsBackwardCompatibility(t *testing.T) {
-	ctx, store, terminate := testSetup(t)
+	ctx, store, _, terminate := testSetup(t)
 	t.Cleanup(terminate)
 	storagetesting.RunSendInitialEventsBackwardCompatibility(ctx, t, store)
 }
@@ -556,12 +556,8 @@ func withNodeNameAndNamespaceIndex(options *setupOptions) {
 	}
 }
 
-func testSetup(t *testing.T, opts ...setupOption) (context.Context, *CacheDelegator, tearDownFunc) {
-	ctx, cacher, _, tearDown := testSetupWithEtcdServer(t, opts...)
-	return ctx, cacher, tearDown
-}
 
-func testSetupWithEtcdServer(t testing.TB, opts ...setupOption) (context.Context, *CacheDelegator, *etcd3testing.EtcdTestServer, tearDownFunc) {
+func testSetup(t testing.TB, opts ...setupOption) (context.Context, *CacheDelegator, *etcd3testing.EtcdTestServer, tearDownFunc) {
 	setupOpts := setupOptions{}
 	opts = append([]setupOption{withDefaults}, opts...)
 	for _, opt := range opts {
@@ -627,7 +623,7 @@ func testSetupWithEtcdServer(t testing.TB, opts ...setupOption) (context.Context
 }
 
 func testSetupWithEtcdAndCreateWrapper(t *testing.T, opts ...setupOption) (storage.Interface, tearDownFunc) {
-	_, cacher, _, tearDown := testSetupWithEtcdServer(t, opts...)
+	_, cacher, _, tearDown := testSetup(t, opts...)
 
 	if !utilfeature.DefaultFeatureGate.Enabled(features.ResilientWatchCacheInitialization) {
 		if err := cacher.cacher.ready.wait(context.TODO()); err != nil {
@@ -687,7 +683,7 @@ func BenchmarkStoreCreateList(b *testing.B) {
 							if useIndex {
 								opts = append(opts, withNodeNameAndNamespaceIndex)
 							}
-							ctx, cacher, _, terminate := testSetupWithEtcdServer(b, opts...)
+							ctx, cacher, _, terminate := testSetup(b, opts...)
 							b.Cleanup(terminate)
 							storagetesting.RunBenchmarkStoreListCreate(ctx, b, cacher, rvm)
 						})
@@ -741,7 +737,7 @@ func BenchmarkStoreList(b *testing.B) {
 			for _, store := range storeOptions {
 				b.Run(fmt.Sprintf("Store=%s", store.name), func(b *testing.B) {
 					featuregatetesting.SetFeatureGateDuringTest(b, utilfeature.DefaultFeatureGate, features.BtreeWatchCache, store.btreeEnabled)
-					ctx, cacher, _, terminate := testSetupWithEtcdServer(b, withNodeNameAndNamespaceIndex)
+					ctx, cacher, _, terminate := testSetup(b, withNodeNameAndNamespaceIndex)
 					b.Cleanup(terminate)
 					var out example.Pod
 					for _, pod := range data.Pods {
@@ -764,7 +760,7 @@ func BenchmarkStoreList(b *testing.B) {
 func BenchmarkStoreStats(b *testing.B) {
 	klog.SetLogger(logr.Discard())
 	data := storagetesting.PrepareBenchchmarkData(50, 3_000, 5_000)
-	ctx, cacher, _, terminate := testSetupWithEtcdServer(b)
+	ctx, cacher, _, terminate := testSetup(b)
 	b.Cleanup(terminate)
 	var out example.Pod
 	for _, pod := range data.Pods {

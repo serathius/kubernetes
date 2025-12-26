@@ -272,7 +272,7 @@ func TestConsistencyCheckerListOpts(t *testing.T) {
 }
 
 func TestConsistencyCheckerDigestMatches(t *testing.T) {
-	ctx, store, terminate := testSetup(t)
+	ctx, store, _, terminate := testSetup(t)
 	t.Cleanup(terminate)
 
 	var out example.Pod

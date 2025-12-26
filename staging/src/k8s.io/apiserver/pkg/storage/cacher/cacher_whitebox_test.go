@@ -3119,7 +3119,7 @@ func forceRequestWatchProgressSupport(t *testing.T) {
 }
 
 func TestListIndexer(t *testing.T) {
-	ctx, cacher, terminate := testSetup(t, withNodeNameAndNamespaceIndex)
+	ctx, cacher, _, terminate := testSetup(t, withNodeNameAndNamespaceIndex)
 	t.Cleanup(terminate)
 	tests := []struct {
 		name               string
