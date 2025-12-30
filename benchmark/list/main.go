@@ -173,52 +173,15 @@ func main() {
 		config.TLSClientConfig.KeyData = []byte("")
 	}
 
-	var path string
-	var gv schema.GroupVersion
 	switch *resource {
-	case "secret":
-		path = "/api/v1/namespaces/%d/secrets"
-		gv = schema.GroupVersion{Group: "", Version: "v1"}
-	case "configmap":
-		path = "/api/v1/namespaces/%d/configmaps"
-		gv = schema.GroupVersion{Group: "", Version: "v1"}
-	case "pod":
-		path = "/api/v1/namespaces/%d/pods"
-		gv = schema.GroupVersion{Group: "", Version: "v1"}
+	case "secret", "configmap", "pod":
+		config.GroupVersion = &schema.GroupVersion{Group: "", Version: "v1"}
 	case "cr":
-		path = "/apis/stable.example.com/v1/namespaces/%d/crontabs"
-		gv = schema.GroupVersion{Group: "stable.example.com", Version: "v1"}
+		config.GroupVersion = &schema.GroupVersion{Group: "stable.example.com", Version: "v1"}
 	default:
-		print("--resource should be set to \"configmap\", \"pod\" or \"cr\"\n")
+		fmt.Println("resource should be set to \"configmap\", \"pod\" or \"cr\"")
 		os.Exit(1)
 	}
-	config.GroupVersion = &gv
-	params := []string{}
-	if resourceVersion != "" {
-		params = append(params, fmt.Sprintf("resourceVersion=%s", resourceVersion))
-	}
-	if resourceVersionMatch != "" {
-		params = append(params, fmt.Sprintf("resourceVersionMatch=%s", resourceVersionMatch))
-	}
-	if continueToken != "" {
-		params = append(params, fmt.Sprintf("continue=%s", continueToken))
-	}
-	if *pretty {
-		if *contentType != "json" {
-			panic("Pretty only supported for JSON")
-		}
-		params = append(params, "pretty=1")
-	}
-	if *limit != 0 {
-		if *limit < 0 {
-			panic("limit cannot be negative")
-		}
-		params = append(params, fmt.Sprintf("limit=%d", *limit))
-	}
-	if *filter {
-		params = append(params, "labelSelector=app%3D0")
-	}
-	paramStr := strings.Join(params, "&")
 	httpClients := make([]*http.Client, *clients)
 	for i := 0; i < *clients; i++ {
 		if err := transportHack(config, *increasedFrameSize); err != nil {
@@ -240,11 +203,29 @@ func main() {
 	case "br":
 	case "lz4":
 	default:
-		fmt.Printf(`--accept-encoding should be set to "gzip", "pgzip", "kgzip", "s2", "zstd", "br", or "lz4"
-`)
+		fmt.Printf("accept encoding should be set to \"gzip\", \"pgzip\", \"kgzip\", \"s2\", \"zstd\", \"br\", or \"lz4\"")
 		os.Exit(1)
 	}
-	lister := NewLister(httpClients, path, config, *qps, serverURL, paramStr, *namespaces, *acceptEncoding, *serial, *watchList)
+	lister, err := NewLister(httpClients, serverURL, ListOptions{
+		ResourceVersion: resourceVersion,
+		ResourceVersionMatch: resourceVersionMatch,
+		ContinueToken: continueToken,
+		Resource: *resource,
+		Pretty: *pretty,
+		ContentType: config.ContentType,
+		Limit: *limit,
+		Filter: *filter,
+		Config: config,
+		QPS: *qps,
+		Namespaces: *namespaces,
+		AcceptEncoding: *acceptEncoding,
+		Serial: *serial,
+		WatchList: *watchList,
+	})
+	if err != nil {
+		fmt.Printf("failed to create lister: %s\n", err)
+		os.Exit(1)
+	}
 	stats := lister.Run(*serial, *qps)
 	stats.printStats(testDuration)
 	fmt.Printf("Done\n")

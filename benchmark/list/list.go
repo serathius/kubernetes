@@ -32,28 +32,82 @@ import (
 	"k8s.io/client-go/rest"
 )
 
-func NewLister(clients []*http.Client, pathTemplate string, config *rest.Config, qps float32, serverURL *url.URL, params string, namespaces int, acceptEncoding string, serial bool, watchList bool) *lister {
-	negotiatedSerializer := config.NegotiatedSerializer
+type ListOptions struct {
+	Resource string
+	ResourceVersion string
+	ResourceVersionMatch string
+	ContinueToken string
+	Pretty bool
+	ContentType string
+	Limit int
+	Filter bool
+	Config *rest.Config
+	QPS float32
+	Namespaces int
+	AcceptEncoding string
+	Serial bool
+	WatchList bool
+}
+
+func NewLister(clients []*http.Client, serverURL *url.URL, options ListOptions) (*lister, error) {
+	var pathTemplate string
+	switch options.Resource {
+	case "secret":
+		pathTemplate = "/api/v1/namespaces/%d/secrets"
+	case "configmap":
+		pathTemplate = "/api/v1/namespaces/%d/configmaps"
+	case "pod":
+		pathTemplate = "/api/v1/namespaces/%d/pods"
+	case "cr":
+		pathTemplate = "/apis/stable.example.com/v1/namespaces/%d/crontabs"
+	default:
+		return nil, fmt.Errorf("resource should be set to \"configmap\", \"pod\" or \"cr\"")
+	}
+	params := []string{}
+	if options.ResourceVersion != "" {
+		params = append(params, fmt.Sprintf("resourceVersion=%s", options.ResourceVersion))
+	}
+	if options.ResourceVersionMatch != "" {
+		params = append(params, fmt.Sprintf("resourceVersionMatch=%s", options.ResourceVersionMatch))
+	}
+	if options.ContinueToken != "" {
+		params = append(params, fmt.Sprintf("continue=%s", options.ContinueToken))
+	}
+	if options.Pretty {
+		if options.ContentType != "json" {
+			panic("Pretty only supported for JSON")
+		}
+		params = append(params, "pretty=1")
+	}
+	if options.Limit != 0 {
+		if options.Limit < 0 {
+			panic("limit cannot be negative")
+		}
+		params = append(params, fmt.Sprintf("limit=%d", options.Limit))
+	}
+	if options.Filter {
+		params = append(params, "labelSelector=app%3D0")
+	}
+	paramStr := strings.Join(params, "&")
+	negotiatedSerializer := options.Config.NegotiatedSerializer
 	if negotiatedSerializer == nil {
 		negotiatedSerializer = scheme.Codecs
 	}
 	gv := metav1.SchemeGroupVersion
-	if config.GroupVersion != nil {
-		gv = *config.GroupVersion
+	if options.Config.GroupVersion != nil {
+		gv = *options.Config.GroupVersion
 	}
+
 	return &lister{
 		clients:        clients,
 		pathTemplate:   pathTemplate,
-		config:         config,
+		params:         paramStr,
 		serverURL:      serverURL,
-		params:         params,
-		namespaces:     namespaces,
-		acceptEncoding: acceptEncoding,
-		watchList:      watchList,
+		options:        options,
 		stats:          &stats{},
 		negotiator:     runtime.NewClientNegotiator(negotiatedSerializer, gv),
 		decoder:        scheme.Codecs.DecoderToVersion(scheme.Codecs.UniversalDeserializer(), gv),
-	}
+	}, nil
 }
 
 func (l *lister) Run(serial bool, qps float32) *stats {
@@ -67,22 +121,19 @@ func (l *lister) Run(serial bool, qps float32) *stats {
 }
 
 type lister struct {
+	options        ListOptions
 	clients        []*http.Client
 	pathTemplate   string
-	config         *rest.Config
 	serverURL      *url.URL
 	params         string
-	namespaces     int
-	acceptEncoding string
-	watchList      bool
 	stats          *stats
 	negotiator     runtime.ClientNegotiator
 	decoder        runtime.Decoder
 }
 
 func (l *lister) makeRequest(i int) {
-	path := fmt.Sprintf(l.pathTemplate, i%l.namespaces)
-	if l.watchList {
+	path := fmt.Sprintf(l.pathTemplate, i%l.options.Namespaces)
+	if l.options.WatchList {
 		if l.params != "" {
 			path = fmt.Sprintf("%s?%s&watch=true&allowWatchBookmarks=true&sendInitialEvents=true&resourceVersionMatch=NotOlderThan", path, l.params)
 		} else {
@@ -106,8 +157,8 @@ func (l *lister) makeRequest(i int) {
 	if err != nil {
 		panic(fmt.Sprintf("Got error creating a request: %v\n", err))
 	}
-	req.Header.Set("Accept", l.config.ContentType)
-	req.Header.Set("Accept-Encoding", l.acceptEncoding)
+	req.Header.Set("Accept", l.options.ContentType)
+	req.Header.Set("Accept-Encoding", l.options.AcceptEncoding)
 	start := time.Now()
 	resp, err := l.clients[i%len(l.clients)].Do(req)
 	if err != nil {
@@ -127,8 +178,8 @@ func (l *lister) makeRequest(i int) {
 		body, err := io.ReadAll(resp.Body)
 		panic(fmt.Sprintf("Got bad status code: %v, body: %s, err: %v\n", resp.Status, string(body), err))
 	}
-	if !strings.HasPrefix(resp.Header.Get("Content-Type"), l.config.ContentType) {
-		panic(fmt.Sprintf("Got bad content type: %q, expected %q\n", resp.Header.Get("Content-Type"), l.config.ContentType))
+	if !strings.HasPrefix(resp.Header.Get("Content-Type"), l.options.ContentType) {
+		panic(fmt.Sprintf("Got bad content type: %q, expected %q\n", resp.Header.Get("Content-Type"), l.options.ContentType))
 	}
 	contentType := resp.Header.Get("Content-Type")
 	mediaType, params, err := mime.ParseMediaType(contentType)
@@ -137,22 +188,22 @@ func (l *lister) makeRequest(i int) {
 	}
 
 	compressedBody := &countingReader{r: resp.Body}
-
-	switch l.watchList {
-	case true:
-		err = l.handleWatchList(compressedBody, mediaType, params, l.acceptEncoding)
+	if l.options.WatchList {
+		err = l.handleWatchList(compressedBody, mediaType, params, l.options.AcceptEncoding)
 		l.stats.Record(time.Since(start), compressedBody.byteCounter, 0)
-	case false:
-		decompressedReader, err := decompress(compressedBody, l.acceptEncoding)
 		if err != nil {
-			panic(fmt.Sprintf("Error decompressing response: %v\n", err))
+			panic(fmt.Sprintf("Error handling watch list: %v\n", err))
 		}
-		decompressedBody := &countingReader{r: decompressedReader}
-		err = l.handleList(decompressedBody, mediaType)
-		l.stats.Record(time.Since(start), compressedBody.byteCounter, decompressedBody.byteCounter)
 	}
+	decompressedReader, err := decompress(compressedBody, l.options.AcceptEncoding)
 	if err != nil {
-		panic(fmt.Sprintf("Error handling watch list: %v\n", err))
+		panic(fmt.Sprintf("Error decompressing response: %v\n", err))
+	}
+	decompressedBody := &countingReader{r: decompressedReader}
+	err = l.handleList(decompressedBody, mediaType)
+	l.stats.Record(time.Since(start), compressedBody.byteCounter, decompressedBody.byteCounter)
+	if err != nil {
+		panic(fmt.Sprintf("Error handling list: %v\n", err))
 	}
 }
 
@@ -209,12 +260,17 @@ func (r *countingReader) Read(p []byte) (n int, err error) {
 }
 
 func (l *lister) handleList(reader io.Reader, mediaType string) error {
-	if mediaType == "application/json" {
-		out := corev1.PodList{}
-		err := json.UnmarshalRead(reader, &out)
-		if err != nil {
-			return err
+	if mediaType == "application/json" && false {
+		var out interface{}
+		switch l.options.Resource {
+		case "pod":
+			out = corev1.PodList{}
+		case "secret":
+			out = corev1.SecretList{}
+		default:
+			return fmt.Errorf("Unhandled resource: %q", l.options.Resource)
 		}
+		return json.UnmarshalRead(reader, &out)
 	}
 	buf := bytes.NewBuffer(nil)
 	_, err := io.Copy(buf, reader)
