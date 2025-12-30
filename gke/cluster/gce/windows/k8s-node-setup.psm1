@@ -1734,17 +1734,25 @@ function Configure_Containerd {
   $config_dir = [System.IO.Path]::GetDirectoryName($config_path)
   New-Item $config_dir -ItemType 'directory' -Force | Out-Null
   Set-Content ${config_path} @"
-[plugins.scheduler]
+version = 2
+required_plugins = ["io.containerd.grpc.v1.cri"]
+# Kubernetes doesn't use containerd restart manager.
+disabled_plugins = ["io.containerd.internal.v1.restart"]
+
+[plugins."io.containerd.gc.v1.scheduler"]
   schedule_delay = '0s'
   startup_delay = '0s'
-[plugins.cri]
+
+[plugins."io.containerd.grpc.v1.cri"]
   sandbox_image = 'INFRA_CONTAINER_IMAGE'
-[plugins.cri.containerd]
+
+[plugins."io.containerd.grpc.v1.cri".containerd]
   snapshotter = 'windows'
   default_runtime_name = 'runhcs-wcow-process'
   disable_snapshot_annotations = true
   discard_unpacked_layers = true
-[plugins.cri.cni]
+
+[plugins."io.containerd.grpc.v1.cri".cni]
   bin_dir = 'CNI_BIN_DIR'
   conf_dir = 'CNI_CONF_DIR'
 "@.replace('INFRA_CONTAINER_IMAGE', ${env:INFRA_CONTAINER}).`
