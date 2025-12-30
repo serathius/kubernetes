@@ -167,6 +167,7 @@ func (l *lister) makeRequest(i int) {
 		fmt.Printf("Error: %v\n", err)
 		return
 	}
+	l.stats.RecordReadingHeaders(time.Since(start))
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusTooManyRequests {
 		fmt.Print("Too many requests\n")
@@ -189,22 +190,22 @@ func (l *lister) makeRequest(i int) {
 		panic(fmt.Sprintf("unexpected content type from the server: %q: %v", contentType, err))
 	}
 
-	compressedBody := &countingReader{r: resp.Body}
+	responseReader := &countingReader{r: resp.Body}
 	if l.options.WatchList {
-		err = l.handleWatchList(compressedBody, mediaType, params, l.options.AcceptEncoding)
-		l.stats.Record(time.Since(start), compressedBody.byteCounter, 0)
+		err = l.handleWatchList(responseReader, mediaType, params, l.options.AcceptEncoding)
+		l.stats.RecordResponse(time.Since(start), responseReader.byteCounter, responseReader.byteCounter)
 		if err != nil {
 			panic(fmt.Sprintf("Error handling watch list: %v\n", err))
 		}
 		return
 	}
-	decompressedReader, err := decompress(compressedBody, l.options.AcceptEncoding)
+	decompressedReader, err := decompress(responseReader, l.options.AcceptEncoding)
 	if err != nil {
 		panic(fmt.Sprintf("Error decompressing response: %v\n", err))
 	}
 	decompressedBody := &countingReader{r: decompressedReader}
 	err = l.handleList(decompressedBody, mediaType)
-	l.stats.Record(time.Since(start), compressedBody.byteCounter, decompressedBody.byteCounter)
+	l.stats.RecordResponse(time.Since(start), responseReader.byteCounter, decompressedBody.byteCounter)
 	if err != nil {
 		panic(fmt.Sprintf("Error handling list: %v\n", err))
 	}
@@ -264,42 +265,51 @@ func (r *countingReader) Read(p []byte) (n int, err error) {
 
 func (l *lister) handleList(reader io.Reader, mediaType string) error {
 	buf := bytes.NewBuffer(nil)
-	if mediaType == "application/json" {
-		var out interface{}
-		switch l.options.Resource {
-		case "pod":
-			out = corev1.PodList{}
-		case "secret":
-			out = corev1.SecretList{}
-		default:
-			return fmt.Errorf("Unhandled resource: %q", l.options.Resource)
-		}
-		switch l.options.Decode {
-		case "decoder":
-		case "v1":
-			_, err := io.Copy(buf, reader)
-			if err != nil {
-				return err
-			}
-			return json.Unmarshal(buf.Bytes(), &out)
-		case "v2":
-			_, err := io.Copy(buf, reader)
-			if err != nil {
-				return err
-			}
-			return jsonv2.Unmarshal(buf.Bytes(), &out)
-		case "v2stream":
-			return jsonv2.UnmarshalRead(reader, &out)
-		default:
-			return fmt.Errorf("Got bad decode option: %q, expected v1, v2, or v2stream", l.options.Decode)
-		}
+	var out interface{}
+	switch l.options.Resource {
+	case "pod":
+		out = corev1.PodList{}
+	case "secret":
+		out = corev1.SecretList{}
+	default:
+		return fmt.Errorf("Unhandled resource: %q", l.options.Resource)
 	}
-	_, err := io.Copy(buf, reader)
-	if err != nil {
+	start := time.Now()
+	switch l.options.Decode {
+	case "decoder", "v1", "v2":
+		_, err := io.Copy(buf, reader)
+		if err != nil {
+			return err
+		}
+	case "v2stream":
+	default:
+		return fmt.Errorf("Got bad decode option: %q, expected v1, v2, or v2stream", l.options.Decode)
+	}
+	l.stats.RecordReadingBody(time.Since(start))
+
+	decode := l.options.Decode
+	if mediaType != "application/json" {
+		decode = "decoder"
+	}
+	start = time.Now()
+	switch decode {
+	case "decoder":
+		_, _, err := l.decoder.Decode(buf.Bytes(), nil, nil)
+		l.stats.RecordDecodingBody(time.Since(start))
 		return err
+	case "v1":
+		err := json.Unmarshal(buf.Bytes(), &out)
+		l.stats.RecordDecodingBody(time.Since(start))
+		return err
+	case "v2":
+		err := jsonv2.Unmarshal(buf.Bytes(), &out)
+		l.stats.RecordDecodingBody(time.Since(start))
+		return err
+	case "v2stream":
+		return jsonv2.UnmarshalRead(reader, &out)
+	default:
+		return fmt.Errorf("Got bad decode option: %q, expected v1, v2, or v2stream", l.options.Decode)
 	}
-	_, _, err = l.decoder.Decode(buf.Bytes(), nil, nil)
-	return err
 }
 
 func (l *lister) handleWatchList(reader io.Reader, mediaType string, params map[string]string, acceptEncoding string) error {
