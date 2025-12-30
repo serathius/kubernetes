@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"math"
@@ -14,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/go-json-experiment/json"
+	jsonv2 "github.com/go-json-experiment/json"
 
 	"github.com/andybalholm/brotli"
 	kgzip "github.com/klauspost/compress/gzip"
@@ -47,6 +48,7 @@ type ListOptions struct {
 	AcceptEncoding string
 	Serial bool
 	WatchList bool
+	Decode string
 }
 
 func NewLister(clients []*http.Client, serverURL *url.URL, options ListOptions) (*lister, error) {
@@ -194,6 +196,7 @@ func (l *lister) makeRequest(i int) {
 		if err != nil {
 			panic(fmt.Sprintf("Error handling watch list: %v\n", err))
 		}
+		return
 	}
 	decompressedReader, err := decompress(compressedBody, l.options.AcceptEncoding)
 	if err != nil {
@@ -260,7 +263,8 @@ func (r *countingReader) Read(p []byte) (n int, err error) {
 }
 
 func (l *lister) handleList(reader io.Reader, mediaType string) error {
-	if mediaType == "application/json" && false {
+	buf := bytes.NewBuffer(nil)
+	if mediaType == "application/json" {
 		var out interface{}
 		switch l.options.Resource {
 		case "pod":
@@ -270,18 +274,32 @@ func (l *lister) handleList(reader io.Reader, mediaType string) error {
 		default:
 			return fmt.Errorf("Unhandled resource: %q", l.options.Resource)
 		}
-		return json.UnmarshalRead(reader, &out)
+		switch l.options.Decode {
+		case "decoder":
+		case "v1":
+			_, err := io.Copy(buf, reader)
+			if err != nil {
+				return err
+			}
+			return json.Unmarshal(buf.Bytes(), &out)
+		case "v2":
+			_, err := io.Copy(buf, reader)
+			if err != nil {
+				return err
+			}
+			return jsonv2.Unmarshal(buf.Bytes(), &out)
+		case "v2stream":
+			return jsonv2.UnmarshalRead(reader, &out)
+		default:
+			return fmt.Errorf("Got bad decode option: %q, expected v1, v2, or v2stream", l.options.Decode)
+		}
 	}
-	buf := bytes.NewBuffer(nil)
 	_, err := io.Copy(buf, reader)
 	if err != nil {
 		return err
 	}
 	_, _, err = l.decoder.Decode(buf.Bytes(), nil, nil)
-	if err != nil {
-		return err
-	}
-	return nil
+	return err
 }
 
 func (l *lister) handleWatchList(reader io.Reader, mediaType string, params map[string]string, acceptEncoding string) error {

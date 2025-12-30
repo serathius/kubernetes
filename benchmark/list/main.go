@@ -49,6 +49,7 @@ func main() {
 	podFileName := flag.String("pod-filename", "", "Path to pod.json")
 	increasedFrameSize := flag.Bool("increased-frame-size", false, "Use increased frame size")
 	watchList := flag.Bool("watch-list", false, "Measure latency of WatchList requests")
+	decode := flag.String("decode", "decoder", "decoder, v1, v2, v2stream")
 	flag.Parse()
 	config, err := clientcmd.BuildConfigFromFlags("", filepath.Join(homedir.HomeDir(), ".kube", "config"))
 	if err != nil {
@@ -57,6 +58,10 @@ func main() {
 	}
 	config.QPS = -1
 	config.Burst = 1
+	if *decode != "decoder" && *contentType != "json" {
+		fmt.Printf("other decoders are only supported for json\n")
+		os.Exit(1)
+	}
 	switch *contentType {
 	case "json":
 		config.ContentType = "application/json"
@@ -221,6 +226,7 @@ func main() {
 		AcceptEncoding: *acceptEncoding,
 		Serial: *serial,
 		WatchList: *watchList,
+		Decode: *decode,
 	})
 	if err != nil {
 		fmt.Printf("failed to create lister: %s\n", err)
