@@ -27,8 +27,8 @@ import (
 )
 
 var listers = 100
-var requestTimeout = time.Minute
-var testDuration = requestTimeout + 20*time.Second
+var requestTimeout = time.Second * 10
+var testDuration = requestTimeout
 
 func main() {
 	contentType := flag.String("content-type", "", "json or protobuf")

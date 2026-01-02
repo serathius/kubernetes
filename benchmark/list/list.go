@@ -167,7 +167,7 @@ func (l *lister) makeRequest(i int) {
 		fmt.Printf("Error: %v\n", err)
 		return
 	}
-	l.stats.RecordReadingHeaders(time.Since(start))
+	readingHeaderLatency := time.Since(start)
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusTooManyRequests {
 		fmt.Print("Too many requests\n")
@@ -189,11 +189,14 @@ func (l *lister) makeRequest(i int) {
 	if err != nil {
 		panic(fmt.Sprintf("unexpected content type from the server: %q: %v", contentType, err))
 	}
-
-	responseReader := &countingReader{r: resp.Body}
+	responseReader := &TraceReader{next: resp.Body}
 	if l.options.WatchList {
-		err = l.handleWatchList(responseReader, mediaType, params, l.options.AcceptEncoding)
-		l.stats.RecordResponse(time.Since(start), responseReader.byteCounter, responseReader.byteCounter)
+		err = l.handleWatchList(responseReader, mediaType, params)
+		latency := time.Since(start)
+		l.stats.RecordReadingHeaders(readingHeaderLatency)
+		l.stats.RecordReadingResponse(responseReader.duration, responseReader.bytes)
+		l.stats.RecordDecodingBody(latency - responseReader.duration - readingHeaderLatency)
+		l.stats.RecordRequestLatency(latency)
 		if err != nil {
 			panic(fmt.Sprintf("Error handling watch list: %v\n", err))
 		}
@@ -203,9 +206,17 @@ func (l *lister) makeRequest(i int) {
 	if err != nil {
 		panic(fmt.Sprintf("Error decompressing response: %v\n", err))
 	}
-	decompressedBody := &countingReader{r: decompressedReader}
-	err = l.handleList(decompressedBody, mediaType)
-	l.stats.RecordResponse(time.Since(start), responseReader.byteCounter, decompressedBody.byteCounter)
+	decompressedBody := &TraceReader{next: decompressedReader}
+	bufferingDuration, err := l.handleList(decompressedBody, mediaType)
+	requestLatency := time.Since(start)
+	l.stats.RecordReadingHeaders(readingHeaderLatency)
+	l.stats.RecordReadingResponse(responseReader.duration, responseReader.bytes)
+	l.stats.RecordDecompressing(decompressedBody.duration - responseReader.duration, decompressedBody.bytes)
+	if bufferingDuration != 0 {
+		l.stats.RecordBuffering(bufferingDuration - decompressedBody.duration)
+	}
+	l.stats.RecordDecodingBody(requestLatency - bufferingDuration - readingHeaderLatency)
+	l.stats.RecordRequestLatency(requestLatency)
 	if err != nil {
 		panic(fmt.Sprintf("Error handling list: %v\n", err))
 	}
@@ -252,18 +263,29 @@ func decompress(compressedBody io.Reader, contentEncoding string) (io.Reader, er
 	return reader, nil
 }
 
-type countingReader struct {
-	r io.Reader
-	byteCounter int64
+func NewTraceReader(name string, next io.Reader) *TraceReader {
+	return &TraceReader{
+		name: name,
+		next: next,
+	}
 }
 
-func (r *countingReader) Read(p []byte) (n int, err error) {
-	n, err = r.r.Read(p)
-	r.byteCounter += int64(n)
-	return
+type TraceReader struct {
+	name string
+	duration time.Duration	
+	bytes int64
+	next io.Reader
 }
 
-func (l *lister) handleList(reader io.Reader, mediaType string) error {
+func (t *TraceReader) Read(p []byte) (n int, err error) {
+	start := time.Now()
+	n, err = t.next.Read(p)
+	t.duration += time.Since(start)
+	t.bytes += int64(n)
+	return n, err
+}
+
+func (l *lister) handleList(reader io.Reader, mediaType string) (bufferDuration time.Duration, err error) {
 	buf := bytes.NewBuffer(nil)
 	var out interface{}
 	switch l.options.Resource {
@@ -272,55 +294,48 @@ func (l *lister) handleList(reader io.Reader, mediaType string) error {
 	case "secret":
 		out = corev1.SecretList{}
 	default:
-		return fmt.Errorf("Unhandled resource: %q", l.options.Resource)
+		return bufferDuration, fmt.Errorf("Unhandled resource: %q", l.options.Resource)
 	}
 	start := time.Now()
 	switch l.options.Decode {
 	case "decoder", "v1", "v2":
 		_, err := io.Copy(buf, reader)
 		if err != nil {
-			return err
+			return bufferDuration, err
 		}
+		bufferDuration = time.Since(start)
 	case "v2stream":
 	default:
-		return fmt.Errorf("Got bad decode option: %q, expected v1, v2, or v2stream", l.options.Decode)
+		return bufferDuration, fmt.Errorf("Got bad decode option: %q, expected v1, v2, or v2stream", l.options.Decode)
 	}
-	l.stats.RecordReadingBody(time.Since(start))
 
 	decode := l.options.Decode
 	if mediaType != "application/json" {
 		decode = "decoder"
 	}
-	start = time.Now()
 	switch decode {
 	case "decoder":
 		_, _, err := l.decoder.Decode(buf.Bytes(), nil, nil)
-		l.stats.RecordDecodingBody(time.Since(start))
-		return err
+		return bufferDuration, err
 	case "v1":
 		err := json.Unmarshal(buf.Bytes(), &out)
-		l.stats.RecordDecodingBody(time.Since(start))
-		return err
+		return bufferDuration, err
 	case "v2":
 		err := jsonv2.Unmarshal(buf.Bytes(), &out)
-		l.stats.RecordDecodingBody(time.Since(start))
-		return err
+		return bufferDuration, err
 	case "v2stream":
-		return jsonv2.UnmarshalRead(reader, &out)
+		err := jsonv2.UnmarshalRead(reader, &out)
+		return bufferDuration, err
 	default:
-		return fmt.Errorf("Got bad decode option: %q, expected v1, v2, or v2stream", l.options.Decode)
+		return bufferDuration, fmt.Errorf("Got bad decode option: %q, expected v1, v2, or v2stream", l.options.Decode)
 	}
 }
 
-func (l *lister) handleWatchList(reader io.Reader, mediaType string, params map[string]string, acceptEncoding string) error {
+func (l *lister) handleWatchList(reader io.Reader, mediaType string, params map[string]string) error {
 	_, streamingSerializer, framer, err := l.negotiator.StreamDecoder(mediaType, params)
 	if err != nil {
 		return err
 	}
-	if acceptEncoding == "s2" {
-		reader = s2.NewReader(reader)
-	}
-
 	frameReader := framer.NewFrameReader(io.NopCloser(reader))
 	decoder := streaming.NewDecoder(frameReader, streamingSerializer)
 

@@ -8,26 +8,40 @@ import (
 )
 
 type stats struct {
-	mu               sync.Mutex
-	responseLatency  histogram
-	headersLatency   histogram
-	readLatency      histogram
-	decodeLatency    histogram
-	writtenSize      int64
-	decompressedSize int64
+	mu                     sync.Mutex
+	requestLatency         histogram
+	headersLatency         histogram
+	readingResponseLatency histogram
+	decompressLatency      histogram
+	bufferingLatency       histogram
+	decodeLatency          histogram
+	writtenSize            int64
+	decompressedSize       int64
 }
 
-func (s *stats) RecordResponse(latency time.Duration, written, decompressed int64) {
+func (s *stats) RecordReadingHeaders(latency time.Duration) {
 	s.mu.Lock()
-	s.responseLatency.Record(latency)
-	s.writtenSize += written
-	s.decompressedSize += decompressed
+	s.headersLatency.Record(latency)
 	s.mu.Unlock()
 }
 
-func (s *stats) RecordReadingBody(latency time.Duration) {
+func (s *stats) RecordReadingResponse(latency time.Duration, bytes int64) {
 	s.mu.Lock()
-	s.readLatency.Record(latency)
+	s.readingResponseLatency.Record(latency)
+	s.writtenSize += bytes
+	s.mu.Unlock()
+}
+
+func (s *stats) RecordDecompressing(latency time.Duration, bytes int64) {
+	s.mu.Lock()
+	s.decompressLatency.Record(latency)
+	s.decompressedSize += bytes
+	s.mu.Unlock()
+}
+
+func (s *stats) RecordBuffering(latency time.Duration) {
+	s.mu.Lock()
+	s.bufferingLatency.Record(latency)
 	s.mu.Unlock()
 }
 
@@ -37,28 +51,44 @@ func (s *stats) RecordDecodingBody(latency time.Duration) {
 	s.mu.Unlock()
 }
 
-func (s *stats) RecordReadingHeaders(latency time.Duration) {
+func (s *stats) RecordRequestLatency(latency time.Duration) {
 	s.mu.Lock()
-	s.headersLatency.Record(latency)
+	s.requestLatency.Record(latency)
 	s.mu.Unlock()
 }
 
 func (s *stats) printStats(testDuration time.Duration) {
-	fmt.Printf("QPS: %.2f\n", float64(s.responseLatency.Len())/testDuration.Seconds())
-	if s.responseLatency.Len() == 0 {
+	fmt.Printf("QPS: %.2f\n", float64(s.requestLatency.Len())/testDuration.Seconds())
+	if s.requestLatency.Len() == 0 {
 		return
 	}
-	fmt.Printf("Request Count: %v\n", s.responseLatency.Len())
-	fmt.Printf("Written Size Average: %v B\n", s.writtenSize/int64(s.responseLatency.Len()))
-	fmt.Printf("Decompressed Size Average: %v B\n", s.decompressedSize/int64(s.responseLatency.Len()))
-	fmt.Printf("Compression Ratio: %.2f\n", float64(s.decompressedSize)/float64(s.writtenSize))
-	fmt.Printf("Throughput: %.2f MB/s\n", float64(s.decompressedSize)/1000/1000/s.responseLatency.Sum().Seconds())
-	fmt.Printf("Request Latency Average: %.3f seconds\n", s.responseLatency.Average().Seconds())
+	fmt.Printf("Request Count: %v\n", s.requestLatency.Len())
+	if s.writtenSize != 0 {
+		fmt.Printf("Written Size Average: %v B\n", s.writtenSize/int64(s.requestLatency.Len()))
+	}
+	if s.decompressedSize != 0 {
+		fmt.Printf("Decompressed Size Average: %v B\n", s.decompressedSize/int64(s.requestLatency.Len()))
+	}
+	if s.writtenSize != 0 && s.decompressedSize != 0 {
+		fmt.Printf("Compression Ratio: %.2f\n", float64(s.decompressedSize)/float64(s.writtenSize))
+	}
+	if s.decompressedSize != 0 {
+		fmt.Printf("Throughput: %.2f MB/s\n", float64(s.decompressedSize)/1000/1000/s.requestLatency.Sum().Seconds())
+	} else if s.writtenSize != 0 {
+		fmt.Printf("Throughput: %.2f MB/s\n", float64(s.writtenSize)/1000/1000/s.requestLatency.Sum().Seconds())
+	}
+	fmt.Printf("Request Latency Average: %.3f seconds\n", s.requestLatency.Average().Seconds())
 	if s.headersLatency.Len() > 0 {
 		fmt.Printf("- Headers: %.3f seconds\n", s.headersLatency.Average().Seconds())
 	}
-	if s.readLatency.Len() > 0 {
-		fmt.Printf("- Read: %.3f seconds\n", s.readLatency.Average().Seconds())
+	if s.readingResponseLatency.Len() > 0 {
+		fmt.Printf("- Read: %.3f seconds\n", s.readingResponseLatency.Average().Seconds())
+	}
+	if s.decompressLatency.Len() > 0 {
+		fmt.Printf("- Decompress: %.3f seconds\n", s.decompressLatency.Average().Seconds())
+	}
+	if s.bufferingLatency.Len() > 0 {
+		fmt.Printf("- Buffering: %.3f seconds\n", s.bufferingLatency.Average().Seconds())
 	}
 	if s.decodeLatency.Len() > 0 {
 		fmt.Printf("- Decode: %.3f seconds\n", s.decodeLatency.Average().Seconds())
