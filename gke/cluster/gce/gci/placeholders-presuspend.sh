@@ -162,19 +162,21 @@ EOF
 
   log "Continuing the placeholder bootstrapping after resume..."
 
-  # Resize stateful partition to utilize any expanded disk space.
-  log "Attempting to resize stateful partition using COS service..."
-  systemctl start --no-block resize-stateful-partition.service
-
   # b/365605093 - On resume, gve must be reloaded because mac address is changed on resume and must be refreshed
   log "Reloading gvnic"
   modprobe gve
 
-  log "Wait for systemd-networkd-wait-online..."
-  systemctl restart systemd-networkd-wait-online.service
-
-  log "Wait for gcr connectivity..."
-  systemctl restart gcr-wait-online.service
+  # 1. Re-run the resize-stateful-partition.service to ensure that the stateful
+  # partition is properly resized
+  # 2. Re-run the systemd-networkd-wait-online.service to ensure network is
+  # properly configured after resume. See b/365605093.
+  # 3. Re-run the gcr-wait-online.service to ensure the connectivity is
+  # established.
+  # 4. Re-run the google-guest-agent.service to ensure that the guest agent is
+  # configured with the correct VM metadata.
+  log "Restarting services..."
+  # Restart the services in parallel to speed up the process.
+  systemctl restart resize-stateful-partition.service systemd-networkd-wait-online.service gcr-wait-online.service google-guest-agent.service
 
   # Ensure this is a node with GPUs before querying GPU version from node label &
   # conducting mount binding to /bin/nvidia
@@ -190,9 +192,6 @@ EOF
   else
     log "No NVIDIA GPU detected. Skipping GPU-related operations."
   fi
-
-  log "Restart google-guest-agent.service..."
-  systemctl restart google-guest-agent.service
 
   log "Done with placeholders-presuspend.sh"
 }

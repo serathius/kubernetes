@@ -70,7 +70,6 @@ write_files:
       [Unit]
       Description=Download and install k8s binaries and configurations
       After=placeholders-presuspend-setup.service
-      After=resize-stateful-partition.service
 
       [Service]
       Environment=KUBERNETES_MASTER=false
