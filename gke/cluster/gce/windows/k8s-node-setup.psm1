@@ -490,19 +490,27 @@ function Start-GKEMetadataServer {
   $per_attempt_wait_seconds = 30
   Do {
     $attempt += 1
-    # Sometimes observed the service becomes "Stopped" if something goes wrong.
-    # Start-Service is called each attempt in case that happens.
-    # This cmdlet is Idempotent and can be redundantly called even if
-    # the service is already running.
-    Start-Service gke-metadata-server
-    $service = Get-Service -Name gke-metadata-server
     try {
+      # Sometimes observed the service becomes "Stopped" if something goes wrong.
+      # Start-Service is called each attempt in case that happens.
+      # This cmdlet is Idempotent and can be redundantly called even if
+      # the service is already running. Start-Service can throw an error if
+      # the service fails to start.
+      Start-Service gke-metadata-server
+      $service = Get-Service -Name gke-metadata-server
       $service.WaitForStatus("Running", (New-TimeSpan -Seconds $per_attempt_wait_seconds))
       Log-Output "Service gke-metadata-server is running."
       break
     }
     catch {
       Log-Output "Timeout or error waiting for service gke-metadata-server. Attempt $attempt of $max_start_attempts"
+      # Event getter to help debug the most recent exception(s).
+      # This will print a pretty list of the 5 most recent events from
+      # "Service Control Manager" which should contain the underlying reason
+      # for an exception being thrown. The IDs 70XX correspond to common
+      # startup failure reasons.
+      Log-Output "Printing recent windows SCM events for debugging purposes, some MAY be relevent to the gke-metadata-server error: "
+      Get-WinEvent -FilterHashtable @{LogName='System'; ProviderName='Service Control Manager'; ID=7000,7009,7023,7024} -MaxEvents 5 | Select-Object TimeCreated, Id, Message | Format-List
     }
   } while($attempt -le $max_start_attempts)
 
