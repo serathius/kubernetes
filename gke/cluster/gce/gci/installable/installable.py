@@ -231,24 +231,30 @@ class Ctr:
     result = subprocess.run(
       args=cmd,
       check=False, # Don't raise error if nothing to remove
-      stdout=sys.stdout,
-      stderr=sys.stderr,
+      capture_output=True,
     )
+    err = result.stderr.decode('utf-8')
+    expected = f'not found'
     if result.returncode == 0:
       LOGGER.warning(f'Hung ctr snapshot {container_name} exists. Cleaning it up.')
+    elif expected not in err.split(':')[-1]:
+      LOGGER.warning(f'Deleting snapshot failed: {err}')
+
     cmd = ['ctr', '-n', INSTALLABLE_NAMESPACE, 'container', 'delete', container_name]
-    result =subprocess.run(
+    result = subprocess.run(
       args=cmd,
       check=False, # Don't raise error if nothing to remove
-      stdout=sys.stdout,
-      stderr=sys.stderr,
+      capture_output=True,
     )
+    err = result.stderr.decode('utf-8')
     if result.returncode == 0:
       LOGGER.warning(f'Hung ctr container {container_name} exists. Cleaning it up.')
+    elif expected not in err.split(':')[-1]:
+      LOGGER.warning(f'Deleting container failed: {err}')
 
   def run(self, container_name: str, url: str, ctr_args: list, container_args: list) -> subprocess.CompletedProcess:
     self.remove_container_if_exist(container_name)
-    cmd = ['ctr', '-n', INSTALLABLE_NAMESPACE, 'run', '--rm']
+    cmd = ['ctr', '-n', INSTALLABLE_NAMESPACE, 'run', '--rm', '--mount', 'type=cgroup,dst=/sys/fs/cgroup']
     cmd.extend(ctr_args)
     cmd.extend([url, container_name])
     cmd.extend(container_args)
@@ -270,8 +276,6 @@ class Ctr:
     subprocess.run(
       args=cmd,
       check=True,
-      stdout=subprocess.PIPE,
-      stderr=subprocess.PIPE,
     )
 
   def retag(self, preloaded_url: str, dst_url: str):

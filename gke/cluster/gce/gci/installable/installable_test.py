@@ -125,7 +125,7 @@ class AppPkgTests(unittest.TestCase):
     inst = json.loads(apppkg_content)
     apppkg = installable.parse_installable(inst)
     if apppkg.is_preloaded():
-      os.remove(os.path.join(apppkg.content["installPrefix"], apppkg.get_url().split('/')[-1]))
+      os.remove(apppkg.get_file_path())
 
   def test_parse(self):
     """Tests that a given appPkg blob parses into a AppPkg object."""
@@ -228,7 +228,6 @@ class ContainerTests(unittest.TestCase):
         "ctrArgs":["--rm", "--mount", "type=bind,src=/,dst=/host,options=rbind", "--privileged"]
       }
     }"""
-
 
     if is_fake():
       raise unittest.SkipTest('Test is not hermetic and should be skipped in fakes.')
@@ -475,6 +474,30 @@ class CtrTests(unittest.TestCase):
     )
     self.assertEqual(result.returncode, 0, msg=result)
     self.assertEqual(host_content, result.stdout.decode('utf-8'))
+
+  def test_cgroup_passed(self):
+    """Tests that a ctr passes the proper cgroup settings."""
+    cmd = ['stat', '-fc', '%T', '/sys/fs/cgroup/']
+    result = subprocess.run(
+      args=cmd,
+      capture_output=True,
+    )
+    self.assertEqual(result.returncode, 0, msg=result)
+    want = result.stdout.decode('utf-8').strip()
+
+    result = installable.ctr.run(
+      container_name='mount_container',
+      url=self.bash_image,
+      ctr_args=[],
+      container_args=[
+        '/bin/sh',
+        '-c',
+        f'stat -fc %T /sys/fs/cgroup/'
+      ],
+    )
+    self.assertEqual(result.returncode, 0, msg=result)
+    got = result.stdout.decode('utf-8').strip()
+    self.assertEqual(got, want)
 
 fake_creds = "fake_creds"
 
