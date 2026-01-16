@@ -1120,16 +1120,21 @@ function retag-docker-image {
   local -r img_tag=$2
   local -r dest_tag=$3
   local -r dest_registry=$4
-  echo "Retagging all images with prefix: ${img_prefix} and tag: ${img_tag} with new tag: ${dest_tag} and new registry: ${dest_registry}"
+  echo "Retagging all images with prefix: ${img_prefix} and tag: ${img_tag} with new tag: ${dest_tag} and new registry: ${dest_registry}, and adding a CPU architecture-less tag of each"
   local src_img=""
   for src_img in $(ctr -n=k8s.io images list -q | grep "/${img_prefix}" | grep ":${img_tag}$"); do
+    # Replace ":$img_tag" with ":$dest_tag"
     dest_img=${src_img/:${img_tag}/:${dest_tag}}
-    dest_img=${dest_registry}/${dest_img##*/}
-    if [[ "${dest_img}" != "${src_img}" ]]; then
-      cmd="ctr -n=k8s.io image tag --force ${src_img} ${dest_img}"
-      echo "Retag command: ${cmd}"
-      ${cmd}
-    fi
+    # ${dest_img##*/} takes the suffix after the prefix */, i.e. everything after the first '/'
+    dest_img_arch=${dest_registry}/${dest_img##*/}
+    dest_img_no_arch=${dest_registry}/${img_prefix}:${dest_tag}
+    for dest_img in ${dest_img_arch} ${dest_img_no_arch}; do
+      if [[ "${dest_img}" != "${src_img}" ]]; then
+        cmd="ctr -n=k8s.io image tag --force ${src_img} ${dest_img}"
+        echo "Retag command: ${cmd}"
+        ${cmd}
+      fi
+    done
   done
 }
 
