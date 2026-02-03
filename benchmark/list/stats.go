@@ -78,20 +78,20 @@ func (s *stats) printStats(testDuration time.Duration) {
 		fmt.Printf("Throughput: %.2f MB/s\n", float64(s.writtenSize)/1000/1000/s.requestLatency.Sum().Seconds())
 	}
 	fmt.Printf("Request Latency Average: %.3f seconds\n", s.requestLatency.Average().Seconds())
-	if s.headersLatency.Len() > 0 {
-		fmt.Printf("- Headers: %.3f seconds\n", s.headersLatency.Average().Seconds())
+	var averageSum time.Duration
+	type averageName struct {
+		name string
+		histogram histogram
 	}
-	if s.readingResponseLatency.Len() > 0 {
-		fmt.Printf("- Read: %.3f seconds\n", s.readingResponseLatency.Average().Seconds())
+	for _, latency := range []averageName{{"Headers", s.headersLatency}, {"Reading Response", s.readingResponseLatency}, {"Decompressing", s.decompressLatency}, {"Buffering", s.bufferingLatency}, {"Decoding Body", s.decodeLatency}} {
+		if latency.histogram.Len() > 0 {
+			fmt.Printf("- %v: %.3f seconds\n", latency.name, latency.histogram.Average().Seconds())
+			averageSum += latency.histogram.Average()
+		}
 	}
-	if s.decompressLatency.Len() > 0 {
-		fmt.Printf("- Decompress: %.3f seconds\n", s.decompressLatency.Average().Seconds())
-	}
-	if s.bufferingLatency.Len() > 0 {
-		fmt.Printf("- Buffering: %.3f seconds\n", s.bufferingLatency.Average().Seconds())
-	}
-	if s.decodeLatency.Len() > 0 {
-		fmt.Printf("- Decode: %.3f seconds\n", s.decodeLatency.Average().Seconds())
+	unaccountedLatency := s.requestLatency.Average()-averageSum
+	if unaccountedLatency >= time.Millisecond {
+		fmt.Printf("WARNING: Error in latency accounting: Unaccounted %.3f seconds\n", unaccountedLatency.Seconds())
 	}
 }
 

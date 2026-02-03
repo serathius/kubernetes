@@ -189,33 +189,28 @@ func (l *lister) makeRequest(i int) {
 	if err != nil {
 		panic(fmt.Sprintf("unexpected content type from the server: %q: %v", contentType, err))
 	}
-	responseReader := &TraceReader{next: resp.Body}
-	if l.options.WatchList {
-		err = l.handleWatchList(responseReader, mediaType, params)
-		latency := time.Since(start)
-		l.stats.RecordReadingHeaders(readingHeaderLatency)
-		l.stats.RecordReadingResponse(responseReader.duration, responseReader.bytes)
-		l.stats.RecordDecodingBody(latency - responseReader.duration - readingHeaderLatency)
-		l.stats.RecordRequestLatency(latency)
-		if err != nil {
-			panic(fmt.Sprintf("Error handling watch list: %v\n", err))
-		}
-		return
-	}
-	decompressedReader, err := decompress(responseReader, l.options.AcceptEncoding)
+	responseReadingStats := &TraceReader{next: resp.Body}
+	decompressedReader, err := decompress(responseReadingStats, l.options.AcceptEncoding)
 	if err != nil {
 		panic(fmt.Sprintf("Error decompressing response: %v\n", err))
 	}
-	decompressedBody := &TraceReader{next: decompressedReader}
-	bufferingDuration, err := l.handleList(decompressedBody, mediaType)
+	decompressionStats := &TraceReader{next: decompressedReader}
+	var bufferingDuration time.Duration
+	if l.options.WatchList {
+		err = l.handleWatchList(decompressionStats, mediaType, params)
+	} else {
+		bufferingDuration, err = l.handleList(decompressionStats, mediaType)
+	}
 	requestLatency := time.Since(start)
 	l.stats.RecordReadingHeaders(readingHeaderLatency)
-	l.stats.RecordReadingResponse(responseReader.duration, responseReader.bytes)
-	l.stats.RecordDecompressing(decompressedBody.duration - responseReader.duration, decompressedBody.bytes)
+	l.stats.RecordReadingResponse(responseReadingStats.duration, responseReadingStats.bytes)
+	l.stats.RecordDecompressing(decompressionStats.duration - responseReadingStats.duration, decompressionStats.bytes)
 	if bufferingDuration != 0 {
-		l.stats.RecordBuffering(bufferingDuration - decompressedBody.duration)
+		l.stats.RecordBuffering(bufferingDuration - decompressionStats.duration)
+		l.stats.RecordDecodingBody(requestLatency - bufferingDuration - readingHeaderLatency)
+	} else {
+		l.stats.RecordDecodingBody(requestLatency - readingHeaderLatency - decompressionStats.duration)
 	}
-	l.stats.RecordDecodingBody(requestLatency - bufferingDuration - readingHeaderLatency)
 	l.stats.RecordRequestLatency(requestLatency)
 	if err != nil {
 		panic(fmt.Sprintf("Error handling list: %v\n", err))
