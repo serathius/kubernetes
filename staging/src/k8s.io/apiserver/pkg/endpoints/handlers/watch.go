@@ -17,6 +17,7 @@ limitations under the License.
 package handlers
 
 import (
+	"compress/gzip"
 	"context"
 	"fmt"
 	"io"
@@ -24,7 +25,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/andybalholm/brotli"
+	kgzip "github.com/klauspost/compress/gzip"
 	"github.com/klauspost/compress/s2"
+	"github.com/klauspost/compress/zstd"
+	"github.com/klauspost/pgzip"
+	"github.com/pierrec/lz4/v4"
 	"golang.org/x/net/websocket"
 
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -213,22 +219,73 @@ func (s *WatchServer) HandleHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 	}()
 
-	flusher, ok := w.(http.Flusher)
+	httpFlusher, ok := w.(http.Flusher)
 	if !ok {
 		err := fmt.Errorf("unable to start watch - can't get http.Flusher: %#v", w)
 		utilruntime.HandleError(err)
 		s.Scope.err(errors.NewInternalError(err), w, req)
 		return
 	}
-	var writer io.Writer = w
-	if req.Header.Get("Accept-Encoding") == "s2" {
-		s2writer := s2Pool.Get().(*s2.Writer)
-		s2writer.Reset(w)
-		writer = s2writer
+	compressionFlusher := func() error { return nil }
+	var writer io.Writer
+	switch req.Header.Get("Accept-Encoding") {
+	case "pgzip":
+		gw := pgzipPool.Get().(*pgzip.Writer)
+		gw.Reset(w)
+		compressionFlusher = gw.Flush
+		writer = gw
 		defer func() {
-			s2writer.Flush()
-			s2Pool.Put(s2writer)
+			gw.Close()
+			pgzipPool.Put(gw)
 		}()
+
+	case "kgzip":
+		gw := kgzipPool.Get().(*kgzip.Writer)
+		gw.Reset(w)
+		compressionFlusher = gw.Flush
+		writer = gw
+		defer func() {
+			gw.Close()
+			kgzipPool.Put(gw)
+		}()
+	case "s2":
+		gw := s2Pool.Get().(*s2.Writer)
+		gw.Reset(w)
+		compressionFlusher = gw.Flush
+		writer = gw
+		defer func() {
+			gw.Close()
+			s2Pool.Put(gw)
+		}()
+	case "zstd":
+		zw := zstdPool.Get().(*zstd.Encoder)
+		zw.Reset(w)
+		compressionFlusher = zw.Flush
+		writer = zw
+		defer func() {
+			zw.Close()
+			zstdPool.Put(zw)
+		}()
+	case "br":
+		bw := brotliPool.Get().(*brotli.Writer)
+		bw.Reset(w)
+		compressionFlusher = bw.Flush
+		writer = bw
+		defer func() {
+			bw.Close()
+			brotliPool.Put(bw)
+		}()
+	case "lz4":
+		lw := lz4Pool.Get().(*lz4.Writer)
+		lw.Reset(w)
+		compressionFlusher = lw.Flush
+		writer = lw
+		defer func() {
+			lw.Close()
+			lz4Pool.Put(lw)
+		}()
+	default:
+		writer = w
 	}
 
 	framer := s.Framer.NewFrameWriter(writer)
@@ -240,7 +297,6 @@ func (s *WatchServer) HandleHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-
 	// ensure the connection times out
 	timeoutCh, cleanup := s.TimeoutFactory.TimeoutCh()
 	defer cleanup()
@@ -249,7 +305,7 @@ func (s *WatchServer) HandleHTTP(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", s.MediaType)
 	w.Header().Set("Transfer-Encoding", "chunked")
 	w.WriteHeader(http.StatusOK)
-	flusher.Flush()
+	httpFlusher.Flush()
 
 	gvr := s.Scope.Resource
 	watchEncoder := newWatchEncoder(req.Context(), gvr, s.EmbeddedEncoder, s.Encoder, framer)
@@ -286,7 +342,12 @@ func (s *WatchServer) HandleHTTP(w http.ResponseWriter, req *http.Request) {
 			}
 
 			if len(ch) == 0 {
-				flusher.Flush()
+				err := compressionFlusher()
+				if err != nil {
+					utilruntime.HandleError(err)
+					return
+				}
+				httpFlusher.Flush()
 			}
 			if isWatchListLatencyRecordingRequired {
 				metrics.RecordWatchListLatency(req.Context(), s.Scope.Resource, s.metricsScope)
@@ -394,4 +455,57 @@ func shouldRecordWatchListLatency(event watch.Event) bool {
 		return false
 	}
 	return hasAnnotation
+}
+
+var gzipPool = &sync.Pool{
+	New: func() interface{} {
+		gw, err := gzip.NewWriterLevel(nil, 1)
+		if err != nil {
+			panic(err)
+		}
+		return gw
+	},
+}
+
+var pgzipPool = &sync.Pool{
+	New: func() interface{} {
+		gw, err := pgzip.NewWriterLevel(nil, 1)
+		if err != nil {
+			panic(err)
+		}
+		return gw
+	},
+}
+
+var kgzipPool = &sync.Pool{
+	New: func() interface{} {
+		gw, err := kgzip.NewWriterLevel(nil, 1)
+		if err != nil {
+			panic(err)
+		}
+		return gw
+	},
+}
+
+var zstdPool = &sync.Pool{
+	New: func() interface{} {
+		// Use Fastest compression for high throughput as requested
+		encoder, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedFastest))
+		if err != nil {
+			panic(err)
+		}
+		return encoder
+	},
+}
+
+var brotliPool = &sync.Pool{
+	New: func() interface{} {
+		return brotli.NewWriterLevel(nil, brotli.BestSpeed)
+	},
+}
+
+var lz4Pool = &sync.Pool{
+	New: func() interface{} {
+		return lz4.NewWriter(nil)
+	},
 }
