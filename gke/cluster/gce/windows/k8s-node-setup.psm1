@@ -1760,6 +1760,11 @@ disabled_plugins = ["io.containerd.internal.v1.restart"]
   disable_snapshot_annotations = true
   discard_unpacked_layers = true
 
+# Avoid logging of potentially sensitive data from the hcsshim library used
+# by containerd.
+[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runhcs-wcow-process.options]
+  LogLevel = "warning"
+
 [plugins."io.containerd.grpc.v1.cri".cni]
   bin_dir = 'CNI_BIN_DIR'
   conf_dir = 'CNI_CONF_DIR'
