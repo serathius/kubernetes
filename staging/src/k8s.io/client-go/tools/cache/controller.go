@@ -708,7 +708,7 @@ func newInformer(clientState Store, options InformerOptions) Controller {
 	// KeyLister, that way resync operations will result in the correct set
 	// of update/delete deltas.
 
-	fifo := newQueueFIFO(clientState, options.Transform)
+	fifo := newQueueFIFO(clientState, options.Transform, GetInformerLengthReporter(options.ObjectType))
 
 	cfg := &Config{
 		Queue:            fifo,
@@ -730,12 +730,13 @@ func newInformer(clientState Store, options InformerOptions) Controller {
 	return New(cfg)
 }
 
-func newQueueFIFO(clientState Store, transform TransformFunc) Queue {
+func newQueueFIFO(clientState Store, transform TransformFunc, reportLength func(length float64)) Queue {
 	if clientgofeaturegate.FeatureGates().Enabled(clientgofeaturegate.InOrderInformers) {
 		return NewRealFIFOWithOptions(RealFIFOOptions{
 			KeyFunction:  MetaNamespaceKeyFunc,
 			KnownObjects: clientState,
 			Transformer:  transform,
+			ReportLength: reportLength,
 		})
 	} else {
 		return NewDeltaFIFOWithOptions(DeltaFIFOOptions{
