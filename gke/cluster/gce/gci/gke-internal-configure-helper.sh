@@ -1034,8 +1034,10 @@ Environment=GOGC=10
 EOF
 
   if [[ -n "${GCFSD_ADC_CONFIG:-}" ]]; then
+  # Set GCFSD_METRICS_ADC_CONFIG_PATH instead of GOOGLE_APPLICATION_CREDENTIALS
+  # so that the node p4sa is only used for metrics. See go/omg93012-scratch
   cat <<EOF >>/etc/systemd/system/gcfsd.service
-Environment="GOOGLE_APPLICATION_CREDENTIALS=${gcfsd_application_default_credentials_config_path}"
+Environment="GCFSD_METRICS_ADC_CONFIG_PATH=${gcfsd_application_default_credentials_config_path}"
 EOF
   fi
 
@@ -1079,8 +1081,10 @@ Environment=HOME=/root
 EOF
 
   if [[ -n "${GCFS_SNAPSHOTTER_ADC_CONFIG:-}" ]]; then
+  # Set GCFS_SNAPSHOTTER_METRICS_ADC_CONFIG_PATH instead of GOOGLE_APPLICATION_CREDENTIALS
+  # so that the node p4sa is only used for metrics. See go/omg93012-scratch
   cat <<EOF >>/etc/systemd/system/gcfs-snapshotter.service
-Environment="GOOGLE_APPLICATION_CREDENTIALS=${gcfs_snapshotter_application_default_credentials_config_path}"
+Environment="GCFS_SNAPSHOTTER_METRICS_ADC_CONFIG_PATH=${gcfs_snapshotter_application_default_credentials_config_path}"
 EOF
   fi
 
