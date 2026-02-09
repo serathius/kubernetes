@@ -430,10 +430,10 @@ class Container(Installable):
     container_args = run_spec.get('containerArgs', [])
     out = ctr.run(self.name(), self.get_url(), ctr_args=ctr_args,  container_args=container_args)
     if out.returncode != 0:
+      if out.stdout is not None:
+        LOGGER.info(out.stdout)
       msg = out.stderr.strip() if out.stderr is not None else ""
       raise CtrError(f'Failed to run container: return_code: {out.returncode} msg: {msg}')
-    if out.stdout is not None:
-      LOGGER.debug(out.stdout)
     LOGGER.info(f'Running container {self.get_url()} succeeded.')
 
 def parse_installable(inst: dict) -> Installable:
