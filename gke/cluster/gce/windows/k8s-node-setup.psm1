@@ -1763,7 +1763,7 @@ disabled_plugins = ["io.containerd.internal.v1.restart"]
 # Avoid logging of potentially sensitive data from the hcsshim library used
 # by containerd.
 [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runhcs-wcow-process.options]
-  LogLevel = "warning"
+  ScrubLogs = true
 
 [plugins."io.containerd.grpc.v1.cri".cni]
   bin_dir = 'CNI_BIN_DIR'
