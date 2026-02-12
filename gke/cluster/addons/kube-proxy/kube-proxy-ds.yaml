@@ -36,7 +36,7 @@ spec:
         operator: "Exists"
       containers:
       - name: kube-proxy
-        image: {{pillar['kube_docker_registry']}}/kube-proxy-{{pillar['host_arch']}}:{{pillar['kube-proxy_docker_tag']}}
+        image: {{pillar['kube_docker_registry']}}/kube-proxy:{{pillar['kube-proxy_docker_tag']}}
         resources:
           requests:
             cpu: {{ cpurequest }}
