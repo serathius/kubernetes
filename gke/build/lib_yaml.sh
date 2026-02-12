@@ -6,9 +6,8 @@ set -o pipefail
 
 function _yq()
 {
-  # If there is a local version of yq, use that instead of spawning a temporary
-  # container.
-  if 2>/dev/null >&2 command -v yq; then
+  # If there is a local 3.x yq, use that instead of spawning a temporary container.
+  if 2>/dev/null >&2 command -v yq && [[ "$(yq --version)" =~ v3\. ]]; then
     yq "$@"
   else
     # This is version 3.4.1 of yq.
