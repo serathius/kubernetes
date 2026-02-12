@@ -28,4 +28,5 @@ trap 'git worktree remove -f "${tmpdir:?}"; rm -rf "${tmpdir:?}"' EXIT
 cd "${tmpdir:?}" || exit
 # remove gke-internal files before running upstream linter
 rm -rf ./gke/
+rm ./Makefile
 hack/verify-boilerplate.sh

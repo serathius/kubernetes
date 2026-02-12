@@ -828,7 +828,6 @@ set_global_vars()
 set_compiler_image_tag()
 {
   local golang_image_full
-  local golang_tag
 
   golang_image_full="${__golang_image}"
   # split image:tag, on the image side

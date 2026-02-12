@@ -54,7 +54,7 @@ build-env:
       #
       # Set the <VALUE> to something low like `go1.13.0' to allow
       # experimentation with a wide range of go compilers.
-      # golang-image: "google-go.pkg.dev/golang:1.22.12@sha256:b991cc299ef80ca0b592d796be3e5376e023a0db3237d46384d69a8579c95b69"
+      golang-image: "google-go.pkg.dev/golang:1.25.3@sha256:35b566f68e22be2310b4538a5c2102c0331a960a69a98b7c473d3d378ba6decf"
   # This is a separate image that is used for the package-tarballs.sh step,
   # which requires Docker.
   docker-image:
