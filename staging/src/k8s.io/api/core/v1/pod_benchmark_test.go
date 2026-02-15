@@ -8,6 +8,7 @@ import (
 	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/runtime/serializer/protobuf"
+	"k8s.io/apimachinery/pkg/util/intern"
 	"k8s.io/apimachinery/pkg/util/yaml"
 )
 
@@ -37,7 +38,13 @@ func BenchmarkPodDecode(b *testing.B) {
 	AddToScheme(scheme)
 	codec := protobuf.NewRawSerializer(scheme, scheme)
 
+	intern.SetInternObjectStrings(b, false)
+
 	b.Run("Intern=False", func(b *testing.B) {
+		benchmarkPodDecode(b, codec.Decode, protoData)
+	})
+	b.Run("Intern=ObjectStrings", func(b *testing.B) {
+		intern.SetInternObjectStrings(b, true)
 		benchmarkPodDecode(b, codec.Decode, protoData)
 	})
 }

@@ -28,6 +28,7 @@ import (
 	resource "k8s.io/apimachinery/pkg/api/resource"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/intern"
 
 	math_bits "math/bits"
 	reflect "reflect"
@@ -49790,6 +49791,7 @@ func (m *PhotonPersistentDiskVolumeSource) Unmarshal(dAtA []byte) error {
 	return nil
 }
 func (m *Pod) Unmarshal(dAtA []byte) error {
+	defer intern.InternObjectStrings(m)
 	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
