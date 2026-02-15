@@ -757,7 +757,7 @@ func (w *watcher) transformIfCorruptObjectError(e *event, err error) error {
 }
 
 func decodeObj(codec runtime.Codec, versioner storage.Versioner, data []byte, rev int64) (_ runtime.Object, err error) {
-	obj, err := runtime.Decode(codec, []byte(data))
+	obj, err := runtime.DecodeIntern(codec, []byte(data))
 	if err != nil {
 		if fatalOnDecodeError.Load() {
 			// we are running in a test environment and thus an

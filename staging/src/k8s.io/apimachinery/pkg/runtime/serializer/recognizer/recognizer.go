@@ -126,3 +126,65 @@ func (d *decoder) Decode(data []byte, gvk *schema.GroupVersionKind, into runtime
 	}
 	return nil, nil, lastErr
 }
+
+func (d *decoder) DecodeIntern(data []byte, gvk *schema.GroupVersionKind, into runtime.Object) (runtime.Object, *schema.GroupVersionKind, error) {
+	var (
+		lastErr error
+		skipped []runtime.Decoder
+	)
+
+	// try recognizers, record any decoders we need to give a chance later
+	for _, r := range d.decoders {
+		switch t := r.(type) {
+		case RecognizingDecoder:
+			ok, unknown, err := t.RecognizesData(data)
+			if err != nil {
+				lastErr = err
+				continue
+			}
+			if unknown {
+				skipped = append(skipped, t)
+				continue
+			}
+			if !ok {
+				continue
+			}
+			decode := r.Decode
+			if decoder, ok := r.(runtime.InterningDecoder); ok {
+				decode = decoder.DecodeIntern
+			} else {
+				fmt.Printf("decoder %T does not implement InterningDecoder\n", r)
+			}
+			return decode(data, gvk, into)
+		default:
+			skipped = append(skipped, t)
+		}
+	}
+
+	// try recognizers that returned unknown or didn't recognize their data
+	for _, r := range skipped {
+		decode := r.Decode
+		if decoder, ok := r.(runtime.InterningDecoder); ok {
+			decode = decoder.DecodeIntern
+		} else {
+			fmt.Printf("decoder %T does not implement InterningDecoder\n", r)
+		}
+		out, actual, err := decode(data, gvk, into)
+		if err != nil {
+			// if we got an object back from the decoder, and the
+			// error was a strict decoding error (e.g. unknown or
+			// duplicate fields), we still consider the recognizer
+			// to have understood the object
+			if out == nil || !runtime.IsStrictDecodingError(err) {
+				lastErr = err
+				continue
+			}
+		}
+		return out, actual, err
+	}
+
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no serialization format matched the provided data")
+	}
+	return nil, nil, lastErr
+}

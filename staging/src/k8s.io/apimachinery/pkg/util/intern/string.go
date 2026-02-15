@@ -23,22 +23,21 @@ import (
 	"k8s.io/component-base/featuregate/testing"
 )
 
-
-var enableInternObjectStrings = false
+var enableInternReflectStrings = false
 var enableInternString = true
 
 func SetInternObjectStrings(tb testing.TB, new bool) {
-	old := enableInternObjectStrings
+	old := enableInternReflectStrings
 	tb.Cleanup(func() {
-		enableInternObjectStrings = old
+		enableInternReflectStrings = old
 	})
-	enableInternObjectStrings = new
+	enableInternReflectStrings = new
 }
 
 func SetInternString(tb testing.TB, new bool) {
 	old := enableInternString
 	tb.Cleanup(func() {
-		enableInternString= old
+		enableInternString = old
 	})
 	enableInternString = new
 }
@@ -53,8 +52,18 @@ func String(s string) string {
 	return unique.Make(s).Value()
 }
 
+func ToString(s []byte) string {
+	if !enableInternString {
+		return string(s)
+	}
+	if len(s) == 0 {
+		return ""
+	}
+	return unique.Make(string(s)).Value()
+}
+
 func InternObjectStrings(obj interface{}) {
-	if !enableInternObjectStrings {
+	if !enableInternReflectStrings {
 		return
 	}
 	if obj == nil {

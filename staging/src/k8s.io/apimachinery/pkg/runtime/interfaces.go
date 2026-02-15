@@ -112,6 +112,14 @@ type Decoder interface {
 	Decode(data []byte, defaults *schema.GroupVersionKind, into Object) (Object, *schema.GroupVersionKind, error)
 }
 
+// InterningDecoder is a Decoder that can optionally enable interning for the decoded object.
+type InterningDecoder interface {
+	Decoder
+	// DecodeIntern attempts to deserialize the provided data using either the innate typing of the scheme or the
+	// default kind, group, and version provided. It enables interning for the decoded object if supported.
+	DecodeIntern(data []byte, defaults *schema.GroupVersionKind, into Object) (Object, *schema.GroupVersionKind, error)
+}
+
 // Serializer is the core interface for transforming objects into a serialized format and back.
 // Implementations may choose to perform conversion of the object, but no assumptions should be made.
 type Serializer interface {

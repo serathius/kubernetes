@@ -191,7 +191,7 @@ func (m *IntOrString) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.StrVal = intern.String(string(dAtA[iNdEx:postIndex]))
+			m.StrVal = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex

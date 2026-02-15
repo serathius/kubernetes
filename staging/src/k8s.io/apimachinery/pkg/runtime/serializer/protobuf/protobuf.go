@@ -100,6 +100,23 @@ type SerializerOptions struct {
 	StreamingCollectionsEncoding bool
 }
 
+// NewRawSerializer creates a Protobuf serializer that handles encoding versioned objects into the proper wire form. If a typer
+// is passed, the encoded object will have group, version, and kind fields set. If typer is nil, the objects will be written
+// as-is (any type info passed with the object will be used).
+func NewRawSerializer(creater runtime.ObjectCreater, typer runtime.ObjectTyper) *RawSerializer {
+	return NewRawSerializerWithOptions(creater, typer, SerializerOptions{})
+}
+
+// NewRawSerializerWithOptions creates a Protobuf serializer that handles encoding versioned objects into the proper wire form. If a typer
+// is passed, the encoded object will have group, version, and kind fields set. If typer is nil, the objects will be written
+// as-is (any type info passed with the object will be used).
+func NewRawSerializerWithOptions(creater runtime.ObjectCreater, typer runtime.ObjectTyper, opts SerializerOptions) *RawSerializer {
+	return &RawSerializer{
+		creater: creater,
+		typer:   typer,
+	}
+}
+
 var _ runtime.Serializer = &Serializer{}
 var _ runtime.EncoderWithAllocator = &Serializer{}
 var _ recognizer.RecognizingDecoder = &Serializer{}
@@ -112,7 +129,23 @@ const serializerIdentifier runtime.Identifier = "protobuf"
 // be straight decoded using normal protobuf unmarshalling (the MarshalTo interface). If into is provided and the original data is
 // not fully qualified with kind/version/group, the type of the into will be used to alter the returned gvk. On success or most
 // errors, the method will return the calculated schema kind.
+// Decode attempts to convert the provided data into a protobuf message, extract the stored schema kind, apply the provided default
+// gvk, and then load that data into an object matching the desired schema kind or the provided into. If into is *runtime.Unknown,
+// the raw data will be extracted and no decoding will be performed. If into is not registered with the typer, then the object will
+// be straight decoded using normal protobuf unmarshalling (the MarshalTo interface). If into is provided and the original data is
+// not fully qualified with kind/version/group, the type of the into will be used to alter the returned gvk. On success or most
+// errors, the method will return the calculated schema kind.
 func (s *Serializer) Decode(originalData []byte, gvk *schema.GroupVersionKind, into runtime.Object) (runtime.Object, *schema.GroupVersionKind, error) {
+	return s.doDecode(originalData, gvk, into, false)
+}
+
+// DecodeIntern attempts to deserialize the provided data using either the innate typing of the scheme or the
+// default kind, group, and version provided. It enables interning for the decoded object if supported.
+func (s *Serializer) DecodeIntern(originalData []byte, gvk *schema.GroupVersionKind, into runtime.Object) (runtime.Object, *schema.GroupVersionKind, error) {
+	return s.doDecode(originalData, gvk, into, true)
+}
+
+func (s *Serializer) doDecode(originalData []byte, gvk *schema.GroupVersionKind, into runtime.Object, interning bool) (runtime.Object, *schema.GroupVersionKind, error) {
 	prefixLen := len(s.prefix)
 	switch {
 	case len(originalData) == 0:
@@ -176,7 +209,7 @@ func (s *Serializer) Decode(originalData []byte, gvk *schema.GroupVersionKind, i
 		return nil, &actual, runtime.NewMissingVersionErr(fmt.Sprintf("%#v", unk.TypeMeta))
 	}
 
-	return unmarshalToObject(s.typer, s.creater, &actual, into, unk.Raw)
+	return unmarshalToObject(s.typer, s.creater, &actual, into, unk.Raw, interning)
 }
 
 // EncodeWithAllocator writes an object to the provided writer.
@@ -327,6 +360,14 @@ type unmarshaler interface {
 	Unmarshal([]byte) error
 }
 
+type unmarshalerIntern interface {
+	// Reset() is called on the top-level message before unmarshaling,
+	// and clears all existing data from the message instance.
+	Reset()
+	// Unmarshal decodes from the start of the data into the message.
+	UnmarshalIntern([]byte) error
+}
+
 // estimateUnknownSize returns the expected bytes consumed by a given runtime.Unknown
 // object with a nil RawJSON struct and the expected size of the provided buffer. The
 // returned size will not be correct if RawJSOn is set on unk.
@@ -343,18 +384,15 @@ func estimateUnknownSize(unk *runtime.Unknown, byteSize uint64) uint64 {
 // encoded object, and thus is not self describing (callers must know what type is being described in order to decode).
 //
 // This encoding scheme is experimental, and is subject to change at any time.
-func NewRawSerializer(creater runtime.ObjectCreater, typer runtime.ObjectTyper) *RawSerializer {
-	return &RawSerializer{
-		creater: creater,
-		typer:   typer,
-	}
-}
 
 // RawSerializer encodes and decodes objects without adding a runtime.Unknown wrapper (objects are encoded without identifying
 // type).
 type RawSerializer struct {
 	creater runtime.ObjectCreater
 	typer   runtime.ObjectTyper
+
+	// InterningEnabled controls whether to enable interning for objects that support it.
+	InterningEnabled bool
 }
 
 var _ runtime.Serializer = &RawSerializer{}
@@ -367,7 +405,23 @@ const rawSerializerIdentifier runtime.Identifier = "raw-protobuf"
 // be straight decoded using normal protobuf unmarshalling (the MarshalTo interface). If into is provided and the original data is
 // not fully qualified with kind/version/group, the type of the into will be used to alter the returned gvk. On success or most
 // errors, the method will return the calculated schema kind.
+// Decode attempts to convert the provided data into a protobuf message, extract the stored schema kind, apply the provided default
+// gvk, and then load that data into an object matching the desired schema kind or the provided into. If into is *runtime.Unknown,
+// the raw data will be extracted and no decoding will be performed. If into is not registered with the typer, then the object will
+// be straight decoded using normal protobuf unmarshalling (the MarshalTo interface). If into is provided and the original data is
+// not fully qualified with kind/version/group, the type of the into will be used to alter the returned gvk. On success or most
+// errors, the method will return the calculated schema kind.
 func (s *RawSerializer) Decode(originalData []byte, gvk *schema.GroupVersionKind, into runtime.Object) (runtime.Object, *schema.GroupVersionKind, error) {
+	return s.doDecode(originalData, gvk, into, false)
+}
+
+// DecodeIntern attempts to deserialize the provided data using either the innate typing of the scheme or the
+// default kind, group, and version provided. It enables interning for the decoded object if supported.
+func (s *RawSerializer) DecodeIntern(originalData []byte, gvk *schema.GroupVersionKind, into runtime.Object) (runtime.Object, *schema.GroupVersionKind, error) {
+	return s.doDecode(originalData, gvk, into, true)
+}
+
+func (s *RawSerializer) doDecode(originalData []byte, gvk *schema.GroupVersionKind, into runtime.Object, interning bool) (runtime.Object, *schema.GroupVersionKind, error) {
 	if into == nil {
 		return nil, nil, fmt.Errorf("this serializer requires an object to decode into: %#v", s)
 	}
@@ -421,26 +475,30 @@ func (s *RawSerializer) Decode(originalData []byte, gvk *schema.GroupVersionKind
 		return nil, actual, runtime.NewMissingVersionErr("<protobuf encoded body - must provide default type>")
 	}
 
-	return unmarshalToObject(s.typer, s.creater, actual, into, data)
+	return unmarshalToObject(s.typer, s.creater, actual, into, data, interning)
 }
 
 // unmarshalToObject is the common code between decode in the raw and normal serializer.
-func unmarshalToObject(typer runtime.ObjectTyper, creater runtime.ObjectCreater, actual *schema.GroupVersionKind, into runtime.Object, data []byte) (runtime.Object, *schema.GroupVersionKind, error) {
+func unmarshalToObject(typer runtime.ObjectTyper, creater runtime.ObjectCreater, actual *schema.GroupVersionKind, into runtime.Object, data []byte, interning bool) (runtime.Object, *schema.GroupVersionKind, error) {
 	// use the target if necessary
 	obj, err := runtime.UseOrCreateObject(typer, creater, *actual, into)
 	if err != nil {
 		return nil, actual, err
 	}
-
-	unmarshaler, ok := obj.(unmarshaler)
-	if !ok {
+	if unmarshalerIntern, ok := obj.(unmarshalerIntern); interning && ok {
+		unmarshalerIntern.Reset()
+		if err := unmarshalerIntern.UnmarshalIntern(data); err != nil {
+			return nil, actual, err
+		}
+	} else if unmarshaler, ok := obj.(unmarshaler); ok {
+		unmarshaler.Reset()
+		if err := unmarshaler.Unmarshal(data); err != nil {
+			return nil, actual, err
+		}
+	} else {
 		return nil, actual, errNotMarshalable{reflect.TypeOf(obj)}
 	}
-	// top-level unmarshal resets before delegating unmarshaling to the object
-	unmarshaler.Reset()
-	if err := unmarshaler.Unmarshal(data); err != nil {
-		return nil, actual, err
-	}
+
 	if actual != nil {
 		obj.GetObjectKind().SetGroupVersionKind(*actual)
 	}

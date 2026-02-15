@@ -681,13 +681,10 @@ func (q *Quantity) String() string {
 	if q == nil {
 		return "<nil>"
 	}
-	if len(q.s) == 0 {
-		result := make([]byte, 0, int64QuantityExpectedBytes)
-		number, suffix := q.CanonicalizeBytes(result)
-		number = append(number, suffix...)
-		q.s = string(number)
-	}
-	return q.s
+	result := make([]byte, 0, int64QuantityExpectedBytes)
+	number, suffix := q.CanonicalizeBytes(result)
+	number = append(number, suffix...)
+	return string(number)
 }
 
 // MarshalJSON implements the json.Marshaller interface.

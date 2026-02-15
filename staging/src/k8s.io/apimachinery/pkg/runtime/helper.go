@@ -262,6 +262,24 @@ func (d WithoutVersionDecoder) Decode(data []byte, defaults *schema.GroupVersion
 	return obj, gvk, err
 }
 
+// DecodeIntern does not do conversion. It removes the gvk during deserialization.
+func (d WithoutVersionDecoder) DecodeIntern(data []byte, defaults *schema.GroupVersionKind, into Object) (Object, *schema.GroupVersionKind, error) {
+	decode := d.Decoder.Decode
+	if decoder, ok := d.Decoder.(InterningDecoder); ok {
+		decode = decoder.DecodeIntern
+	} else {
+		fmt.Printf("Decoder does not implement runtime.InterningDecoder: %T\n", d.Decoder)
+	}
+
+	obj, gvk, err := decode(data, defaults, into)
+	if obj != nil {
+		kind := obj.GetObjectKind()
+		// clearing the gvk is just a convention of a codec
+		kind.SetGroupVersionKind(schema.GroupVersionKind{})
+	}
+	return obj, gvk, err
+}
+
 type encoderWithAllocator struct {
 	encoder      EncoderWithAllocator
 	memAllocator MemoryAllocator

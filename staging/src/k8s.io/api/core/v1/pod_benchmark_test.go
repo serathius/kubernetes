@@ -41,6 +41,7 @@ func BenchmarkPodDecode(b *testing.B) {
 
 	intern.SetInternObjectStrings(b, false)
 	intern.SetInternString(b, false)
+	SetInternPodSpec(b, false)
 	metav1.SetInternFieldsV1(b, false)
 
 	b.Run("Intern=False", func(b *testing.B) {
@@ -58,10 +59,25 @@ func BenchmarkPodDecode(b *testing.B) {
 		metav1.SetInternFieldsV1(b, true)
 		benchmarkPodDecode(b, codec.Decode, protoData)
 	})
+	b.Run("Intern=PodSpec", func(b *testing.B) {
+		SetInternPodSpec(b, true)
+		benchmarkPodDecode(b, codec.DecodeIntern, protoData)
+	})
 	b.Run("Intern=String,ManagedFields", func(b *testing.B) {
 		intern.SetInternString(b, true)
 		metav1.SetInternFieldsV1(b, true)
 		benchmarkPodDecode(b, codec.Decode, protoData)
+	})
+	b.Run("Intern=ManagedFields,PodSpec", func(b *testing.B) {
+		SetInternPodSpec(b, true)
+		metav1.SetInternFieldsV1(b, true)
+		benchmarkPodDecode(b, codec.DecodeIntern, protoData)
+	})
+	b.Run("Intern=String,ManagedFields,PodSpec", func(b *testing.B) {
+		intern.SetInternString(b, true)
+		SetInternPodSpec(b, true)
+		metav1.SetInternFieldsV1(b, true)
+		benchmarkPodDecode(b, codec.DecodeIntern, protoData)
 	})
 }
 

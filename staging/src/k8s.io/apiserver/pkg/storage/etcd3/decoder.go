@@ -74,6 +74,30 @@ func (d *defaultDecoder) Decode(value []byte, objPtr runtime.Object, rev int64) 
 	return nil
 }
 
+// decode decodes value of bytes into object. It will also set the object resource version to rev.
+// On success, objPtr would be set to the object.
+func (d *defaultDecoder) DecodeIntern(value []byte, objPtr runtime.Object, rev int64) error {
+	if _, err := conversion.EnforcePtr(objPtr); err != nil {
+		// nolint:errorlint // this code was moved from store.go as is
+		return fmt.Errorf("unable to convert output object to pointer: %v", err)
+	}
+	decode := d.codec.Decode
+	if decoder, ok := d.codec.(runtime.InterningDecoder); ok {
+		decode = decoder.DecodeIntern
+	} else {
+		fmt.Printf("decoder %T does not implement InterningDecoder\n", d.codec)
+	}
+	_, _, err := decode(value, nil, objPtr)
+	if err != nil {
+		return err
+	}
+	// being unable to set the version does not prevent the object from being extracted
+	if err := d.versioner.UpdateObject(objPtr, uint64(rev)); err != nil {
+		klog.Errorf("failed to update object version: %v", err)
+	}
+	return nil
+}
+
 // decodeListItem decodes bytes value in array into object.
 func (d *defaultDecoder) DecodeListItem(ctx context.Context, data []byte, rev uint64, newItemFunc func() runtime.Object) (runtime.Object, error) {
 	startedAt := time.Now()
@@ -82,6 +106,31 @@ func (d *defaultDecoder) DecodeListItem(ctx context.Context, data []byte, rev ui
 	}()
 
 	obj, _, err := d.codec.Decode(data, nil, newItemFunc())
+	if err != nil {
+		return nil, err
+	}
+
+	if err := d.versioner.UpdateObject(obj, rev); err != nil {
+		klog.Errorf("failed to update object version: %v", err)
+	}
+
+	return obj, nil
+}
+
+// decodeListItem decodes bytes value in array into object.
+func (d *defaultDecoder) DecodeListItemIntern(ctx context.Context, data []byte, rev uint64, newItemFunc func() runtime.Object) (runtime.Object, error) {
+	startedAt := time.Now()
+	defer func() {
+		endpointsrequest.TrackDecodeLatency(ctx, time.Since(startedAt))
+	}()
+
+	decode := d.codec.Decode
+	if decoder, ok := d.codec.(runtime.InterningDecoder); ok {
+		decode = decoder.DecodeIntern
+	} else {
+		fmt.Printf("decoder %T does not implement InterningDecoder\n", d.codec)
+	}
+	obj, _, err := decode(data, nil, newItemFunc())
 	if err != nil {
 		return nil, err
 	}

@@ -18,6 +18,7 @@ package versioning
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"reflect"
 	"sync"
@@ -147,6 +148,85 @@ func (c *codec) Decode(data []byte, defaultGVK *schema.GroupVersionKind, into ru
 	}
 
 	if d, ok := obj.(runtime.NestedObjectDecoder); ok {
+		if err := d.DecodeNestedObjects(runtime.WithoutVersionDecoder{Decoder: c.decoder}); err != nil {
+			if strictErr, ok := runtime.AsStrictDecodingError(err); ok {
+				// save the strictDecodingError let and the caller decide what to do with it
+				strictDecodingErrs = append(strictDecodingErrs, strictErr.Errors()...)
+			} else {
+				return nil, gvk, err
+
+			}
+		}
+	}
+
+	// aggregate the strict decoding errors into one
+	var strictDecodingErr error
+	if len(strictDecodingErrs) > 0 {
+		strictDecodingErr = runtime.NewStrictDecodingError(strictDecodingErrs)
+	}
+	// if we specify a target, use generic conversion.
+	if into != nil {
+		// perform defaulting if requested
+		if c.defaulter != nil {
+			c.defaulter.Default(obj)
+		}
+
+		// Short-circuit conversion if the into object is same object
+		if into == obj {
+			return into, gvk, strictDecodingErr
+		}
+
+		if err := c.convertor.Convert(obj, into, c.decodeVersion); err != nil {
+			return nil, gvk, err
+		}
+
+		return into, gvk, strictDecodingErr
+	}
+
+	// perform defaulting if requested
+	if c.defaulter != nil {
+		c.defaulter.Default(obj)
+	}
+
+	out, err := c.convertor.ConvertToVersion(obj, c.decodeVersion)
+	if err != nil {
+		return nil, gvk, err
+	}
+	return out, gvk, strictDecodingErr
+}
+
+// Decode attempts a decode of the object, then tries to convert it to the internal version. If into is provided and the decoding is
+// successful, the returned runtime.Object will be the value passed as into. Note that this may bypass conversion if you pass an
+// into that matches the serialized version.
+func (c *codec) DecodeIntern(data []byte, defaultGVK *schema.GroupVersionKind, into runtime.Object) (runtime.Object, *schema.GroupVersionKind, error) {
+	// If the into object is unstructured and expresses an opinion about its group/version,
+	// create a new instance of the type so we always exercise the conversion path (skips short-circuiting on `into == obj`)
+	decodeInto := into
+	if into != nil {
+		if _, ok := into.(runtime.Unstructured); ok && !into.GetObjectKind().GroupVersionKind().GroupVersion().Empty() {
+			decodeInto = reflect.New(reflect.TypeOf(into).Elem()).Interface().(runtime.Object)
+		}
+	}
+
+	var strictDecodingErrs []error
+	decode := c.decoder.Decode
+	if decoder, ok := c.decoder.(runtime.InterningDecoder); ok {
+		decode = decoder.DecodeIntern
+	} else {
+		fmt.Printf("Decoder does not implement runtime.InterningDecoder: %T\n", c.decoder)
+	}
+	obj, gvk, err := decode(data, defaultGVK, decodeInto)
+	if err != nil {
+		if strictErr, ok := runtime.AsStrictDecodingError(err); obj != nil && ok {
+			// save the strictDecodingError and let the caller decide what to do with it
+			strictDecodingErrs = append(strictDecodingErrs, strictErr.Errors()...)
+		} else {
+			return nil, gvk, err
+		}
+	}
+
+	if d, ok := obj.(runtime.NestedObjectDecoder); ok {
+		fmt.Printf("NestedObjectDecoder does not implement runtime.InterningDecoder\n")
 		if err := d.DecodeNestedObjects(runtime.WithoutVersionDecoder{Decoder: c.decoder}); err != nil {
 			if strictErr, ok := runtime.AsStrictDecodingError(err); ok {
 				// save the strictDecodingError let and the caller decide what to do with it

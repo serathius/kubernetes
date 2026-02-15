@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"io"
 	"math/bits"
+
+	"k8s.io/apimachinery/pkg/util/intern"
 )
 
 func (m *Quantity) Marshal() (data []byte, err error) {
@@ -145,7 +147,7 @@ func (m *Quantity) Unmarshal(data []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := string(data[iNdEx:postIndex])
+			s := intern.ToString(data[iNdEx:postIndex])
 
 			// BEGIN CUSTOM DECODE
 			p, err := ParseQuantity(s)

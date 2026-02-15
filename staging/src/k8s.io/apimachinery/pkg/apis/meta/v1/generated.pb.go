@@ -26,6 +26,7 @@ import (
 	"sort"
 
 	runtime "k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/intern"
 
 	math_bits "math/bits"
 	reflect "reflect"
@@ -997,11 +998,11 @@ func (m *LabelSelector) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	if len(m.MatchLabels) > 0 {
 		keysForMatchLabels := make([]string, 0, len(m.MatchLabels))
 		for k := range m.MatchLabels {
-			keysForMatchLabels = append(keysForMatchLabels, string(k))
+			keysForMatchLabels = append(keysForMatchLabels, intern.String(k))
 		}
 		sort.Strings(keysForMatchLabels)
 		for iNdEx := len(keysForMatchLabels) - 1; iNdEx >= 0; iNdEx-- {
-			v := m.MatchLabels[string(keysForMatchLabels[iNdEx])]
+			v := m.MatchLabels[intern.String(keysForMatchLabels[iNdEx])]
 			baseI := i
 			i -= len(v)
 			copy(dAtA[i:], v)
@@ -1369,11 +1370,11 @@ func (m *ObjectMeta) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	if len(m.Annotations) > 0 {
 		keysForAnnotations := make([]string, 0, len(m.Annotations))
 		for k := range m.Annotations {
-			keysForAnnotations = append(keysForAnnotations, string(k))
+			keysForAnnotations = append(keysForAnnotations, intern.String(k))
 		}
 		sort.Strings(keysForAnnotations)
 		for iNdEx := len(keysForAnnotations) - 1; iNdEx >= 0; iNdEx-- {
-			v := m.Annotations[string(keysForAnnotations[iNdEx])]
+			v := m.Annotations[intern.String(keysForAnnotations[iNdEx])]
 			baseI := i
 			i -= len(v)
 			copy(dAtA[i:], v)
@@ -1393,11 +1394,11 @@ func (m *ObjectMeta) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	if len(m.Labels) > 0 {
 		keysForLabels := make([]string, 0, len(m.Labels))
 		for k := range m.Labels {
-			keysForLabels = append(keysForLabels, string(k))
+			keysForLabels = append(keysForLabels, intern.String(k))
 		}
 		sort.Strings(keysForLabels)
 		for iNdEx := len(keysForLabels) - 1; iNdEx >= 0; iNdEx-- {
-			v := m.Labels[string(keysForLabels[iNdEx])]
+			v := m.Labels[intern.String(keysForLabels[iNdEx])]
 			baseI := i
 			i -= len(v)
 			copy(dAtA[i:], v)
@@ -3574,7 +3575,7 @@ func (m *APIGroup) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Name = string(dAtA[iNdEx:postIndex])
+			m.Name = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -3841,7 +3842,7 @@ func (m *APIResource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Name = string(dAtA[iNdEx:postIndex])
+			m.Name = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 2:
 			if wireType != 0 {
@@ -3893,7 +3894,7 @@ func (m *APIResource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Kind = string(dAtA[iNdEx:postIndex])
+			m.Kind = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 4:
 			if wireType != 2 {
@@ -3961,7 +3962,7 @@ func (m *APIResource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.ShortNames = append(m.ShortNames, string(dAtA[iNdEx:postIndex]))
+			m.ShortNames = append(m.ShortNames, intern.ToString(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 6:
 			if wireType != 2 {
@@ -3993,7 +3994,7 @@ func (m *APIResource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.SingularName = string(dAtA[iNdEx:postIndex])
+			m.SingularName = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 7:
 			if wireType != 2 {
@@ -4025,7 +4026,7 @@ func (m *APIResource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Categories = append(m.Categories, string(dAtA[iNdEx:postIndex]))
+			m.Categories = append(m.Categories, intern.ToString(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 8:
 			if wireType != 2 {
@@ -4057,7 +4058,7 @@ func (m *APIResource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Group = string(dAtA[iNdEx:postIndex])
+			m.Group = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 9:
 			if wireType != 2 {
@@ -4089,7 +4090,7 @@ func (m *APIResource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Version = string(dAtA[iNdEx:postIndex])
+			m.Version = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 10:
 			if wireType != 2 {
@@ -4121,7 +4122,7 @@ func (m *APIResource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.StorageVersionHash = string(dAtA[iNdEx:postIndex])
+			m.StorageVersionHash = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -4203,7 +4204,7 @@ func (m *APIResourceList) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.GroupVersion = string(dAtA[iNdEx:postIndex])
+			m.GroupVersion = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -4319,7 +4320,7 @@ func (m *APIVersions) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Versions = append(m.Versions, string(dAtA[iNdEx:postIndex]))
+			m.Versions = append(m.Versions, intern.ToString(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -4435,7 +4436,7 @@ func (m *ApplyOptions) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.DryRun = append(m.DryRun, string(dAtA[iNdEx:postIndex]))
+			m.DryRun = append(m.DryRun, intern.ToString(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 0 {
@@ -4487,7 +4488,7 @@ func (m *ApplyOptions) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.FieldManager = string(dAtA[iNdEx:postIndex])
+			m.FieldManager = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -4569,7 +4570,7 @@ func (m *Condition) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Type = string(dAtA[iNdEx:postIndex])
+			m.Type = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -4685,7 +4686,7 @@ func (m *Condition) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Reason = string(dAtA[iNdEx:postIndex])
+			m.Reason = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 6:
 			if wireType != 2 {
@@ -4717,7 +4718,7 @@ func (m *Condition) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Message = string(dAtA[iNdEx:postIndex])
+			m.Message = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -4799,7 +4800,7 @@ func (m *CreateOptions) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.DryRun = append(m.DryRun, string(dAtA[iNdEx:postIndex]))
+			m.DryRun = append(m.DryRun, intern.ToString(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -4831,7 +4832,7 @@ func (m *CreateOptions) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.FieldManager = string(dAtA[iNdEx:postIndex])
+			m.FieldManager = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 4:
 			if wireType != 2 {
@@ -4863,7 +4864,7 @@ func (m *CreateOptions) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.FieldValidation = string(dAtA[iNdEx:postIndex])
+			m.FieldValidation = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -5055,7 +5056,7 @@ func (m *DeleteOptions) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.DryRun = append(m.DryRun, string(dAtA[iNdEx:postIndex]))
+			m.DryRun = append(m.DryRun, intern.ToString(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 6:
 			if wireType != 0 {
@@ -5227,7 +5228,7 @@ func (m *FieldSelectorRequirement) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Key = string(dAtA[iNdEx:postIndex])
+			m.Key = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -5291,7 +5292,7 @@ func (m *FieldSelectorRequirement) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Values = append(m.Values, string(dAtA[iNdEx:postIndex]))
+			m.Values = append(m.Values, intern.ToString(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -5457,7 +5458,7 @@ func (m *GetOptions) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.ResourceVersion = string(dAtA[iNdEx:postIndex])
+			m.ResourceVersion = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -5539,7 +5540,7 @@ func (m *GroupKind) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Group = string(dAtA[iNdEx:postIndex])
+			m.Group = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -5571,7 +5572,7 @@ func (m *GroupKind) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Kind = string(dAtA[iNdEx:postIndex])
+			m.Kind = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -5653,7 +5654,7 @@ func (m *GroupResource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Group = string(dAtA[iNdEx:postIndex])
+			m.Group = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -5685,7 +5686,7 @@ func (m *GroupResource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Resource = string(dAtA[iNdEx:postIndex])
+			m.Resource = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -5767,7 +5768,7 @@ func (m *GroupVersion) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Group = string(dAtA[iNdEx:postIndex])
+			m.Group = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -5799,7 +5800,7 @@ func (m *GroupVersion) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Version = string(dAtA[iNdEx:postIndex])
+			m.Version = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -5881,7 +5882,7 @@ func (m *GroupVersionForDiscovery) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.GroupVersion = string(dAtA[iNdEx:postIndex])
+			m.GroupVersion = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -5913,7 +5914,7 @@ func (m *GroupVersionForDiscovery) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Version = string(dAtA[iNdEx:postIndex])
+			m.Version = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -5995,7 +5996,7 @@ func (m *GroupVersionKind) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Group = string(dAtA[iNdEx:postIndex])
+			m.Group = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -6027,7 +6028,7 @@ func (m *GroupVersionKind) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Version = string(dAtA[iNdEx:postIndex])
+			m.Version = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -6059,7 +6060,7 @@ func (m *GroupVersionKind) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Kind = string(dAtA[iNdEx:postIndex])
+			m.Kind = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -6141,7 +6142,7 @@ func (m *GroupVersionResource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Group = string(dAtA[iNdEx:postIndex])
+			m.Group = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -6173,7 +6174,7 @@ func (m *GroupVersionResource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Version = string(dAtA[iNdEx:postIndex])
+			m.Version = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -6205,7 +6206,7 @@ func (m *GroupVersionResource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Resource = string(dAtA[iNdEx:postIndex])
+			m.Resource = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -6336,7 +6337,7 @@ func (m *LabelSelector) Unmarshal(dAtA []byte) error {
 					if postStringIndexmapkey > l {
 						return io.ErrUnexpectedEOF
 					}
-					mapkey = string(dAtA[iNdEx:postStringIndexmapkey])
+					mapkey = intern.ToString(dAtA[iNdEx:postStringIndexmapkey])
 					iNdEx = postStringIndexmapkey
 				} else if fieldNum == 2 {
 					var stringLenmapvalue uint64
@@ -6365,7 +6366,7 @@ func (m *LabelSelector) Unmarshal(dAtA []byte) error {
 					if postStringIndexmapvalue > l {
 						return io.ErrUnexpectedEOF
 					}
-					mapvalue = string(dAtA[iNdEx:postStringIndexmapvalue])
+					mapvalue = intern.ToString(dAtA[iNdEx:postStringIndexmapvalue])
 					iNdEx = postStringIndexmapvalue
 				} else {
 					iNdEx = entryPreIndex
@@ -6498,7 +6499,7 @@ func (m *LabelSelectorRequirement) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Key = string(dAtA[iNdEx:postIndex])
+			m.Key = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -6562,7 +6563,7 @@ func (m *LabelSelectorRequirement) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Values = append(m.Values, string(dAtA[iNdEx:postIndex]))
+			m.Values = append(m.Values, intern.ToString(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -6761,7 +6762,7 @@ func (m *ListMeta) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.SelfLink = string(dAtA[iNdEx:postIndex])
+			m.SelfLink = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -6793,7 +6794,7 @@ func (m *ListMeta) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.ResourceVersion = string(dAtA[iNdEx:postIndex])
+			m.ResourceVersion = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -6825,7 +6826,7 @@ func (m *ListMeta) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Continue = string(dAtA[iNdEx:postIndex])
+			m.Continue = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 4:
 			if wireType != 0 {
@@ -6927,7 +6928,7 @@ func (m *ListOptions) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.LabelSelector = string(dAtA[iNdEx:postIndex])
+			m.LabelSelector = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -6959,7 +6960,7 @@ func (m *ListOptions) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.FieldSelector = string(dAtA[iNdEx:postIndex])
+			m.FieldSelector = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 3:
 			if wireType != 0 {
@@ -7011,7 +7012,7 @@ func (m *ListOptions) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.ResourceVersion = string(dAtA[iNdEx:postIndex])
+			m.ResourceVersion = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 5:
 			if wireType != 0 {
@@ -7082,7 +7083,7 @@ func (m *ListOptions) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Continue = string(dAtA[iNdEx:postIndex])
+			m.Continue = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 9:
 			if wireType != 0 {
@@ -7237,7 +7238,7 @@ func (m *ManagedFieldsEntry) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Manager = string(dAtA[iNdEx:postIndex])
+			m.Manager = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -7301,7 +7302,7 @@ func (m *ManagedFieldsEntry) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.APIVersion = string(dAtA[iNdEx:postIndex])
+			m.APIVersion = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 4:
 			if wireType != 2 {
@@ -7369,7 +7370,7 @@ func (m *ManagedFieldsEntry) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.FieldsType = string(dAtA[iNdEx:postIndex])
+			m.FieldsType = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 7:
 			if wireType != 2 {
@@ -7437,7 +7438,7 @@ func (m *ManagedFieldsEntry) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Subresource = string(dAtA[iNdEx:postIndex])
+			m.Subresource = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -7519,7 +7520,7 @@ func (m *ObjectMeta) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Name = string(dAtA[iNdEx:postIndex])
+			m.Name = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -7551,7 +7552,7 @@ func (m *ObjectMeta) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.GenerateName = string(dAtA[iNdEx:postIndex])
+			m.GenerateName = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -7583,7 +7584,7 @@ func (m *ObjectMeta) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Namespace = string(dAtA[iNdEx:postIndex])
+			m.Namespace = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 4:
 			if wireType != 2 {
@@ -7615,7 +7616,7 @@ func (m *ObjectMeta) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.SelfLink = string(dAtA[iNdEx:postIndex])
+			m.SelfLink = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 5:
 			if wireType != 2 {
@@ -7679,7 +7680,7 @@ func (m *ObjectMeta) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.ResourceVersion = string(dAtA[iNdEx:postIndex])
+			m.ResourceVersion = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 7:
 			if wireType != 0 {
@@ -7868,7 +7869,7 @@ func (m *ObjectMeta) Unmarshal(dAtA []byte) error {
 					if postStringIndexmapkey > l {
 						return io.ErrUnexpectedEOF
 					}
-					mapkey = string(dAtA[iNdEx:postStringIndexmapkey])
+					mapkey = intern.ToString(dAtA[iNdEx:postStringIndexmapkey])
 					iNdEx = postStringIndexmapkey
 				} else if fieldNum == 2 {
 					var stringLenmapvalue uint64
@@ -7897,7 +7898,7 @@ func (m *ObjectMeta) Unmarshal(dAtA []byte) error {
 					if postStringIndexmapvalue > l {
 						return io.ErrUnexpectedEOF
 					}
-					mapvalue = string(dAtA[iNdEx:postStringIndexmapvalue])
+					mapvalue = intern.ToString(dAtA[iNdEx:postStringIndexmapvalue])
 					iNdEx = postStringIndexmapvalue
 				} else {
 					iNdEx = entryPreIndex
@@ -7995,7 +7996,7 @@ func (m *ObjectMeta) Unmarshal(dAtA []byte) error {
 					if postStringIndexmapkey > l {
 						return io.ErrUnexpectedEOF
 					}
-					mapkey = string(dAtA[iNdEx:postStringIndexmapkey])
+					mapkey = intern.ToString(dAtA[iNdEx:postStringIndexmapkey])
 					iNdEx = postStringIndexmapkey
 				} else if fieldNum == 2 {
 					var stringLenmapvalue uint64
@@ -8024,7 +8025,7 @@ func (m *ObjectMeta) Unmarshal(dAtA []byte) error {
 					if postStringIndexmapvalue > l {
 						return io.ErrUnexpectedEOF
 					}
-					mapvalue = string(dAtA[iNdEx:postStringIndexmapvalue])
+					mapvalue = intern.ToString(dAtA[iNdEx:postStringIndexmapvalue])
 					iNdEx = postStringIndexmapvalue
 				} else {
 					iNdEx = entryPreIndex
@@ -8107,7 +8108,7 @@ func (m *ObjectMeta) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Finalizers = append(m.Finalizers, string(dAtA[iNdEx:postIndex]))
+			m.Finalizers = append(m.Finalizers, intern.ToString(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 17:
 			if wireType != 2 {
@@ -8223,7 +8224,7 @@ func (m *OwnerReference) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Kind = string(dAtA[iNdEx:postIndex])
+			m.Kind = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -8255,7 +8256,7 @@ func (m *OwnerReference) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Name = string(dAtA[iNdEx:postIndex])
+			m.Name = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 4:
 			if wireType != 2 {
@@ -8319,7 +8320,7 @@ func (m *OwnerReference) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.APIVersion = string(dAtA[iNdEx:postIndex])
+			m.APIVersion = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 6:
 			if wireType != 0 {
@@ -8693,7 +8694,7 @@ func (m *PatchOptions) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.DryRun = append(m.DryRun, string(dAtA[iNdEx:postIndex]))
+			m.DryRun = append(m.DryRun, intern.ToString(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 0 {
@@ -8746,7 +8747,7 @@ func (m *PatchOptions) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.FieldManager = string(dAtA[iNdEx:postIndex])
+			m.FieldManager = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 4:
 			if wireType != 2 {
@@ -8778,7 +8779,7 @@ func (m *PatchOptions) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.FieldValidation = string(dAtA[iNdEx:postIndex])
+			m.FieldValidation = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -8893,7 +8894,7 @@ func (m *Preconditions) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := string(dAtA[iNdEx:postIndex])
+			s := intern.ToString(dAtA[iNdEx:postIndex])
 			m.ResourceVersion = &s
 			iNdEx = postIndex
 		default:
@@ -8976,7 +8977,7 @@ func (m *RootPaths) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Paths = append(m.Paths, string(dAtA[iNdEx:postIndex]))
+			m.Paths = append(m.Paths, intern.ToString(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -9058,7 +9059,7 @@ func (m *ServerAddressByClientCIDR) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.ClientCIDR = string(dAtA[iNdEx:postIndex])
+			m.ClientCIDR = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -9090,7 +9091,7 @@ func (m *ServerAddressByClientCIDR) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.ServerAddress = string(dAtA[iNdEx:postIndex])
+			m.ServerAddress = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -9205,7 +9206,7 @@ func (m *Status) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Status = string(dAtA[iNdEx:postIndex])
+			m.Status = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -9237,7 +9238,7 @@ func (m *Status) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Message = string(dAtA[iNdEx:postIndex])
+			m.Message = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 4:
 			if wireType != 2 {
@@ -9438,7 +9439,7 @@ func (m *StatusCause) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Message = string(dAtA[iNdEx:postIndex])
+			m.Message = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -9470,7 +9471,7 @@ func (m *StatusCause) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Field = string(dAtA[iNdEx:postIndex])
+			m.Field = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -9552,7 +9553,7 @@ func (m *StatusDetails) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Name = string(dAtA[iNdEx:postIndex])
+			m.Name = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -9584,7 +9585,7 @@ func (m *StatusDetails) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Group = string(dAtA[iNdEx:postIndex])
+			m.Group = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -9616,7 +9617,7 @@ func (m *StatusDetails) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Kind = string(dAtA[iNdEx:postIndex])
+			m.Kind = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 4:
 			if wireType != 2 {
@@ -9953,7 +9954,7 @@ func (m *TypeMeta) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Kind = string(dAtA[iNdEx:postIndex])
+			m.Kind = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -9985,7 +9986,7 @@ func (m *TypeMeta) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.APIVersion = string(dAtA[iNdEx:postIndex])
+			m.APIVersion = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -10067,7 +10068,7 @@ func (m *UpdateOptions) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.DryRun = append(m.DryRun, string(dAtA[iNdEx:postIndex]))
+			m.DryRun = append(m.DryRun, intern.ToString(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -10099,7 +10100,7 @@ func (m *UpdateOptions) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.FieldManager = string(dAtA[iNdEx:postIndex])
+			m.FieldManager = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -10131,7 +10132,7 @@ func (m *UpdateOptions) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.FieldValidation = string(dAtA[iNdEx:postIndex])
+			m.FieldValidation = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -10213,7 +10214,7 @@ func (m *Verbs) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			*m = append(*m, string(dAtA[iNdEx:postIndex]))
+			*m = append(*m, intern.ToString(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -10295,7 +10296,7 @@ func (m *WatchEvent) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Type = string(dAtA[iNdEx:postIndex])
+			m.Type = intern.ToString(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {

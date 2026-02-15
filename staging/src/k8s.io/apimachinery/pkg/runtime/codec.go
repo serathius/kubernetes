@@ -38,6 +38,16 @@ type codec struct {
 	Decoder
 }
 
+func (c codec) DecodeIntern(data []byte, gvk *schema.GroupVersionKind, into Object) (Object, *schema.GroupVersionKind, error) {
+	decode := c.Decoder.Decode
+	if decoder, ok := c.Decoder.(InterningDecoder); ok {
+		decode = decoder.DecodeIntern
+	} else {
+		fmt.Printf("codec %T does not implement runtime.InterningDecoder\n", c.Decoder)
+	}
+	return decode(data, gvk, into)
+}
+
 // NewCodec creates a Codec from an Encoder and Decoder.
 func NewCodec(e Encoder, d Decoder) Codec {
 	return codec{e, d}
@@ -55,6 +65,17 @@ func Encode(e Encoder, obj Object) ([]byte, error) {
 // Decode is a convenience wrapper for decoding data into an Object.
 func Decode(d Decoder, data []byte) (Object, error) {
 	obj, _, err := d.Decode(data, nil, nil)
+	return obj, err
+}
+
+func DecodeIntern(d Decoder, data []byte) (Object, error) {
+	decode := d.Decode
+	if decoder, ok := d.(InterningDecoder); ok {
+		decode = decoder.DecodeIntern
+	} else {
+		fmt.Printf("decoder %T does not implement runtime.InterningDecoder\n", d)
+	}
+	obj, _, err := decode(data, nil, nil)
 	return obj, err
 }
 
