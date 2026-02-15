@@ -53557,6 +53557,7 @@ func (m *PodSignature) Unmarshal(dAtA []byte) error {
 	return nil
 }
 func (m *PodSpec) Unmarshal(dAtA []byte) error {
+	defer RecordPodSpecStats(m, dAtA)
 	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
