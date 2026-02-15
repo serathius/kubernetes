@@ -28,13 +28,13 @@ import (
 	resource "k8s.io/apimachinery/pkg/api/resource"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/util/intern"
 
 	math_bits "math/bits"
 	reflect "reflect"
 	strings "strings"
 
 	k8s_io_apimachinery_pkg_types "k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intern"
 )
 
 func (m *AWSElasticBlockStoreVolumeSource) Reset() { *m = AWSElasticBlockStoreVolumeSource{} }
@@ -24458,7 +24458,7 @@ func (m *AWSElasticBlockStoreVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.VolumeID = string(dAtA[iNdEx:postIndex])
+			m.VolumeID = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -24490,7 +24490,7 @@ func (m *AWSElasticBlockStoreVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.FSType = string(dAtA[iNdEx:postIndex])
+			m.FSType = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 0 {
@@ -24801,7 +24801,7 @@ func (m *AppArmorProfile) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := string(dAtA[iNdEx:postIndex])
+			s := intern.String(string(dAtA[iNdEx:postIndex]))
 			m.LocalhostProfile = &s
 			iNdEx = postIndex
 		default:
@@ -24884,7 +24884,7 @@ func (m *AttachedVolume) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Name = UniqueVolumeName(dAtA[iNdEx:postIndex])
+			m.Name = UniqueVolumeName(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -24916,7 +24916,7 @@ func (m *AttachedVolume) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.DevicePath = string(dAtA[iNdEx:postIndex])
+			m.DevicePath = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -25082,7 +25082,7 @@ func (m *AzureDiskVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.DiskName = string(dAtA[iNdEx:postIndex])
+			m.DiskName = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -25114,7 +25114,7 @@ func (m *AzureDiskVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.DataDiskURI = string(dAtA[iNdEx:postIndex])
+			m.DataDiskURI = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -25179,7 +25179,7 @@ func (m *AzureDiskVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := string(dAtA[iNdEx:postIndex])
+			s := intern.String(string(dAtA[iNdEx:postIndex]))
 			m.FSType = &s
 			iNdEx = postIndex
 		case 5:
@@ -25316,7 +25316,7 @@ func (m *AzureFilePersistentVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.SecretName = string(dAtA[iNdEx:postIndex])
+			m.SecretName = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -25348,7 +25348,7 @@ func (m *AzureFilePersistentVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.ShareName = string(dAtA[iNdEx:postIndex])
+			m.ShareName = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 0 {
@@ -25400,7 +25400,7 @@ func (m *AzureFilePersistentVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := string(dAtA[iNdEx:postIndex])
+			s := intern.String(string(dAtA[iNdEx:postIndex]))
 			m.SecretNamespace = &s
 			iNdEx = postIndex
 		default:
@@ -25483,7 +25483,7 @@ func (m *AzureFileVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.SecretName = string(dAtA[iNdEx:postIndex])
+			m.SecretName = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -25515,7 +25515,7 @@ func (m *AzureFileVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.ShareName = string(dAtA[iNdEx:postIndex])
+			m.ShareName = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 0 {
@@ -25733,7 +25733,7 @@ func (m *CSIPersistentVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Driver = string(dAtA[iNdEx:postIndex])
+			m.Driver = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -25765,7 +25765,7 @@ func (m *CSIPersistentVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.VolumeHandle = string(dAtA[iNdEx:postIndex])
+			m.VolumeHandle = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 0 {
@@ -25817,7 +25817,7 @@ func (m *CSIPersistentVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.FSType = string(dAtA[iNdEx:postIndex])
+			m.FSType = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 5:
 			if wireType != 2 {
@@ -26206,7 +26206,7 @@ func (m *CSIVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Driver = string(dAtA[iNdEx:postIndex])
+			m.Driver = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 0 {
@@ -26259,7 +26259,7 @@ func (m *CSIVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := string(dAtA[iNdEx:postIndex])
+			s := intern.String(string(dAtA[iNdEx:postIndex]))
 			m.FSType = &s
 			iNdEx = postIndex
 		case 4:
@@ -26505,7 +26505,7 @@ func (m *Capabilities) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Add = append(m.Add, Capability(dAtA[iNdEx:postIndex]))
+			m.Add = append(m.Add, Capability(intern.String(string(dAtA[iNdEx:postIndex]))))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -26537,7 +26537,7 @@ func (m *Capabilities) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Drop = append(m.Drop, Capability(dAtA[iNdEx:postIndex]))
+			m.Drop = append(m.Drop, Capability(intern.String(string(dAtA[iNdEx:postIndex]))))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -26619,7 +26619,7 @@ func (m *CephFSPersistentVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Monitors = append(m.Monitors, string(dAtA[iNdEx:postIndex]))
+			m.Monitors = append(m.Monitors, intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -26651,7 +26651,7 @@ func (m *CephFSPersistentVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Path = string(dAtA[iNdEx:postIndex])
+			m.Path = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -26683,7 +26683,7 @@ func (m *CephFSPersistentVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.User = string(dAtA[iNdEx:postIndex])
+			m.User = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 4:
 			if wireType != 2 {
@@ -26715,7 +26715,7 @@ func (m *CephFSPersistentVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.SecretFile = string(dAtA[iNdEx:postIndex])
+			m.SecretFile = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 5:
 			if wireType != 2 {
@@ -26853,7 +26853,7 @@ func (m *CephFSVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Monitors = append(m.Monitors, string(dAtA[iNdEx:postIndex]))
+			m.Monitors = append(m.Monitors, intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -26885,7 +26885,7 @@ func (m *CephFSVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Path = string(dAtA[iNdEx:postIndex])
+			m.Path = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -26917,7 +26917,7 @@ func (m *CephFSVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.User = string(dAtA[iNdEx:postIndex])
+			m.User = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 4:
 			if wireType != 2 {
@@ -26949,7 +26949,7 @@ func (m *CephFSVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.SecretFile = string(dAtA[iNdEx:postIndex])
+			m.SecretFile = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 5:
 			if wireType != 2 {
@@ -27087,7 +27087,7 @@ func (m *CinderPersistentVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.VolumeID = string(dAtA[iNdEx:postIndex])
+			m.VolumeID = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -27119,7 +27119,7 @@ func (m *CinderPersistentVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.FSType = string(dAtA[iNdEx:postIndex])
+			m.FSType = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 0 {
@@ -27257,7 +27257,7 @@ func (m *CinderVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.VolumeID = string(dAtA[iNdEx:postIndex])
+			m.VolumeID = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -27289,7 +27289,7 @@ func (m *CinderVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.FSType = string(dAtA[iNdEx:postIndex])
+			m.FSType = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 0 {
@@ -27497,7 +27497,7 @@ func (m *ClusterTrustBundleProjection) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := string(dAtA[iNdEx:postIndex])
+			s := intern.String(string(dAtA[iNdEx:postIndex]))
 			m.Name = &s
 			iNdEx = postIndex
 		case 2:
@@ -27530,7 +27530,7 @@ func (m *ClusterTrustBundleProjection) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := string(dAtA[iNdEx:postIndex])
+			s := intern.String(string(dAtA[iNdEx:postIndex]))
 			m.SignerName = &s
 			iNdEx = postIndex
 		case 3:
@@ -27599,7 +27599,7 @@ func (m *ClusterTrustBundleProjection) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Path = string(dAtA[iNdEx:postIndex])
+			m.Path = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 5:
 			if wireType != 0 {
@@ -27766,7 +27766,7 @@ func (m *ComponentCondition) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Message = string(dAtA[iNdEx:postIndex])
+			m.Message = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 4:
 			if wireType != 2 {
@@ -27798,7 +27798,7 @@ func (m *ComponentCondition) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Error = string(dAtA[iNdEx:postIndex])
+			m.Error = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -28610,7 +28610,7 @@ func (m *ConfigMapKeySelector) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Key = string(dAtA[iNdEx:postIndex])
+			m.Key = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 0 {
@@ -28830,7 +28830,7 @@ func (m *ConfigMapNodeConfigSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Namespace = string(dAtA[iNdEx:postIndex])
+			m.Namespace = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -28862,7 +28862,7 @@ func (m *ConfigMapNodeConfigSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Name = string(dAtA[iNdEx:postIndex])
+			m.Name = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -28926,7 +28926,7 @@ func (m *ConfigMapNodeConfigSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.ResourceVersion = string(dAtA[iNdEx:postIndex])
+			m.ResourceVersion = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 5:
 			if wireType != 2 {
@@ -28958,7 +28958,7 @@ func (m *ConfigMapNodeConfigSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.KubeletConfigKey = string(dAtA[iNdEx:postIndex])
+			m.KubeletConfigKey = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -29336,7 +29336,7 @@ func (m *Container) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Name = string(dAtA[iNdEx:postIndex])
+			m.Name = intern.String(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -29368,7 +29368,7 @@ func (m *Container) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Image = string(dAtA[iNdEx:postIndex])
+			m.Image = intern.String(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -29400,7 +29400,7 @@ func (m *Container) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Command = append(m.Command, string(dAtA[iNdEx:postIndex]))
+			m.Command = append(m.Command, intern.String(intern.String(string(dAtA[iNdEx:postIndex]))))
 			iNdEx = postIndex
 		case 4:
 			if wireType != 2 {
@@ -29432,7 +29432,7 @@ func (m *Container) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Args = append(m.Args, string(dAtA[iNdEx:postIndex]))
+			m.Args = append(m.Args, intern.String(intern.String(string(dAtA[iNdEx:postIndex]))))
 			iNdEx = postIndex
 		case 5:
 			if wireType != 2 {
@@ -29464,7 +29464,7 @@ func (m *Container) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.WorkingDir = string(dAtA[iNdEx:postIndex])
+			m.WorkingDir = intern.String(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 6:
 			if wireType != 2 {
@@ -29739,7 +29739,7 @@ func (m *Container) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.TerminationMessagePath = string(dAtA[iNdEx:postIndex])
+			m.TerminationMessagePath = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 14:
 			if wireType != 2 {
@@ -29771,7 +29771,7 @@ func (m *Container) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.ImagePullPolicy = PullPolicy(dAtA[iNdEx:postIndex])
+			m.ImagePullPolicy = PullPolicy(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 15:
 			if wireType != 2 {
@@ -29933,7 +29933,7 @@ func (m *Container) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.TerminationMessagePolicy = TerminationMessagePolicy(dAtA[iNdEx:postIndex])
+			m.TerminationMessagePolicy = TerminationMessagePolicy(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 21:
 			if wireType != 2 {
@@ -30069,7 +30069,7 @@ func (m *Container) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := ContainerRestartPolicy(dAtA[iNdEx:postIndex])
+			s := ContainerRestartPolicy(intern.String(string(dAtA[iNdEx:postIndex])))
 			m.RestartPolicy = &s
 			iNdEx = postIndex
 		case 25:
@@ -30186,7 +30186,7 @@ func (m *ContainerExtendedResourceRequest) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.ContainerName = string(dAtA[iNdEx:postIndex])
+			m.ContainerName = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -30218,7 +30218,7 @@ func (m *ContainerExtendedResourceRequest) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.ResourceName = string(dAtA[iNdEx:postIndex])
+			m.ResourceName = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -30250,7 +30250,7 @@ func (m *ContainerExtendedResourceRequest) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.RequestName = string(dAtA[iNdEx:postIndex])
+			m.RequestName = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -30332,7 +30332,7 @@ func (m *ContainerImage) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Names = append(m.Names, string(dAtA[iNdEx:postIndex]))
+			m.Names = append(m.Names, intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 0 {
@@ -30433,7 +30433,7 @@ func (m *ContainerPort) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Name = string(dAtA[iNdEx:postIndex])
+			m.Name = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 0 {
@@ -30503,7 +30503,7 @@ func (m *ContainerPort) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Protocol = Protocol(dAtA[iNdEx:postIndex])
+			m.Protocol = Protocol(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 5:
 			if wireType != 2 {
@@ -30535,7 +30535,7 @@ func (m *ContainerPort) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.HostIP = string(dAtA[iNdEx:postIndex])
+			m.HostIP = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -30617,7 +30617,7 @@ func (m *ContainerResizePolicy) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.ResourceName = ResourceName(dAtA[iNdEx:postIndex])
+			m.ResourceName = ResourceName(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -30649,7 +30649,7 @@ func (m *ContainerResizePolicy) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.RestartPolicy = ResourceResizeRestartPolicy(dAtA[iNdEx:postIndex])
+			m.RestartPolicy = ResourceResizeRestartPolicy(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -30849,7 +30849,7 @@ func (m *ContainerRestartRuleOnExitCodes) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Operator = ContainerRestartRuleOnExitCodesOperator(dAtA[iNdEx:postIndex])
+			m.Operator = ContainerRestartRuleOnExitCodesOperator(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 2:
 			if wireType == 0 {
@@ -31286,7 +31286,7 @@ func (m *ContainerStateTerminated) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Reason = string(dAtA[iNdEx:postIndex])
+			m.Reason = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 4:
 			if wireType != 2 {
@@ -31318,7 +31318,7 @@ func (m *ContainerStateTerminated) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Message = string(dAtA[iNdEx:postIndex])
+			m.Message = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 5:
 			if wireType != 2 {
@@ -31416,7 +31416,7 @@ func (m *ContainerStateTerminated) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.ContainerID = string(dAtA[iNdEx:postIndex])
+			m.ContainerID = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -31498,7 +31498,7 @@ func (m *ContainerStateWaiting) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Reason = string(dAtA[iNdEx:postIndex])
+			m.Reason = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -31530,7 +31530,7 @@ func (m *ContainerStateWaiting) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Message = string(dAtA[iNdEx:postIndex])
+			m.Message = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -31612,7 +31612,7 @@ func (m *ContainerStatus) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Name = string(dAtA[iNdEx:postIndex])
+			m.Name = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -31749,7 +31749,7 @@ func (m *ContainerStatus) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Image = string(dAtA[iNdEx:postIndex])
+			m.Image = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 7:
 			if wireType != 2 {
@@ -31781,7 +31781,7 @@ func (m *ContainerStatus) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.ImageID = string(dAtA[iNdEx:postIndex])
+			m.ImageID = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 8:
 			if wireType != 2 {
@@ -31813,7 +31813,7 @@ func (m *ContainerStatus) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.ContainerID = string(dAtA[iNdEx:postIndex])
+			m.ContainerID = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 9:
 			if wireType != 0 {
@@ -32135,7 +32135,7 @@ func (m *ContainerStatus) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := Signal(dAtA[iNdEx:postIndex])
+			s := Signal(intern.String(string(dAtA[iNdEx:postIndex])))
 			m.StopSignal = &s
 			iNdEx = postIndex
 		default:
@@ -32457,7 +32457,7 @@ func (m *DownwardAPIVolumeFile) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Path = string(dAtA[iNdEx:postIndex])
+			m.Path = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -32735,7 +32735,7 @@ func (m *EmptyDirVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Medium = StorageMedium(dAtA[iNdEx:postIndex])
+			m.Medium = StorageMedium(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -32853,7 +32853,7 @@ func (m *EndpointAddress) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.IP = string(dAtA[iNdEx:postIndex])
+			m.IP = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -32921,7 +32921,7 @@ func (m *EndpointAddress) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Hostname = string(dAtA[iNdEx:postIndex])
+			m.Hostname = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 4:
 			if wireType != 2 {
@@ -32953,7 +32953,7 @@ func (m *EndpointAddress) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := string(dAtA[iNdEx:postIndex])
+			s := intern.String(string(dAtA[iNdEx:postIndex]))
 			m.NodeName = &s
 			iNdEx = postIndex
 		default:
@@ -33036,7 +33036,7 @@ func (m *EndpointPort) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Name = string(dAtA[iNdEx:postIndex])
+			m.Name = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 0 {
@@ -33087,7 +33087,7 @@ func (m *EndpointPort) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Protocol = Protocol(dAtA[iNdEx:postIndex])
+			m.Protocol = Protocol(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 4:
 			if wireType != 2 {
@@ -33119,7 +33119,7 @@ func (m *EndpointPort) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := string(dAtA[iNdEx:postIndex])
+			s := intern.String(string(dAtA[iNdEx:postIndex]))
 			m.AppProtocol = &s
 			iNdEx = postIndex
 		default:
@@ -33588,7 +33588,7 @@ func (m *EnvFromSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Prefix = string(dAtA[iNdEx:postIndex])
+			m.Prefix = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -33742,7 +33742,7 @@ func (m *EnvVar) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Name = string(dAtA[iNdEx:postIndex])
+			m.Name = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -33774,7 +33774,7 @@ func (m *EnvVar) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Value = string(dAtA[iNdEx:postIndex])
+			m.Value = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -34155,7 +34155,7 @@ func (m *EphemeralContainer) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.TargetContainerName = string(dAtA[iNdEx:postIndex])
+			m.TargetContainerName = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -34237,7 +34237,7 @@ func (m *EphemeralContainerCommon) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Name = string(dAtA[iNdEx:postIndex])
+			m.Name = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -34269,7 +34269,7 @@ func (m *EphemeralContainerCommon) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Image = string(dAtA[iNdEx:postIndex])
+			m.Image = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -34301,7 +34301,7 @@ func (m *EphemeralContainerCommon) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Command = append(m.Command, string(dAtA[iNdEx:postIndex]))
+			m.Command = append(m.Command, intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 4:
 			if wireType != 2 {
@@ -34333,7 +34333,7 @@ func (m *EphemeralContainerCommon) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Args = append(m.Args, string(dAtA[iNdEx:postIndex]))
+			m.Args = append(m.Args, intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 5:
 			if wireType != 2 {
@@ -34365,7 +34365,7 @@ func (m *EphemeralContainerCommon) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.WorkingDir = string(dAtA[iNdEx:postIndex])
+			m.WorkingDir = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 6:
 			if wireType != 2 {
@@ -34640,7 +34640,7 @@ func (m *EphemeralContainerCommon) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.TerminationMessagePath = string(dAtA[iNdEx:postIndex])
+			m.TerminationMessagePath = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 14:
 			if wireType != 2 {
@@ -34672,7 +34672,7 @@ func (m *EphemeralContainerCommon) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.ImagePullPolicy = PullPolicy(dAtA[iNdEx:postIndex])
+			m.ImagePullPolicy = PullPolicy(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 15:
 			if wireType != 2 {
@@ -34834,7 +34834,7 @@ func (m *EphemeralContainerCommon) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.TerminationMessagePolicy = TerminationMessagePolicy(dAtA[iNdEx:postIndex])
+			m.TerminationMessagePolicy = TerminationMessagePolicy(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 21:
 			if wireType != 2 {
@@ -34970,7 +34970,7 @@ func (m *EphemeralContainerCommon) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := ContainerRestartPolicy(dAtA[iNdEx:postIndex])
+			s := ContainerRestartPolicy(intern.String(string(dAtA[iNdEx:postIndex])))
 			m.RestartPolicy = &s
 			iNdEx = postIndex
 		case 25:
@@ -35239,7 +35239,7 @@ func (m *Event) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Reason = string(dAtA[iNdEx:postIndex])
+			m.Reason = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 4:
 			if wireType != 2 {
@@ -35271,7 +35271,7 @@ func (m *Event) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Message = string(dAtA[iNdEx:postIndex])
+			m.Message = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 5:
 			if wireType != 2 {
@@ -35421,7 +35421,7 @@ func (m *Event) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Type = string(dAtA[iNdEx:postIndex])
+			m.Type = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 10:
 			if wireType != 2 {
@@ -35522,7 +35522,7 @@ func (m *Event) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Action = string(dAtA[iNdEx:postIndex])
+			m.Action = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 13:
 			if wireType != 2 {
@@ -35590,7 +35590,7 @@ func (m *Event) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.ReportingController = string(dAtA[iNdEx:postIndex])
+			m.ReportingController = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 15:
 			if wireType != 2 {
@@ -35622,7 +35622,7 @@ func (m *Event) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.ReportingInstance = string(dAtA[iNdEx:postIndex])
+			m.ReportingInstance = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -35923,7 +35923,7 @@ func (m *EventSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Component = string(dAtA[iNdEx:postIndex])
+			m.Component = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -35955,7 +35955,7 @@ func (m *EventSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Host = string(dAtA[iNdEx:postIndex])
+			m.Host = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -36037,7 +36037,7 @@ func (m *ExecAction) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Command = append(m.Command, string(dAtA[iNdEx:postIndex]))
+			m.Command = append(m.Command, intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -36119,7 +36119,7 @@ func (m *FCVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.TargetWWNs = append(m.TargetWWNs, string(dAtA[iNdEx:postIndex]))
+			m.TargetWWNs = append(m.TargetWWNs, intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 0 {
@@ -36171,7 +36171,7 @@ func (m *FCVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.FSType = string(dAtA[iNdEx:postIndex])
+			m.FSType = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 4:
 			if wireType != 0 {
@@ -36223,7 +36223,7 @@ func (m *FCVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.WWIDs = append(m.WWIDs, string(dAtA[iNdEx:postIndex]))
+			m.WWIDs = append(m.WWIDs, intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -36305,7 +36305,7 @@ func (m *FileKeySelector) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.VolumeName = string(dAtA[iNdEx:postIndex])
+			m.VolumeName = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -36337,7 +36337,7 @@ func (m *FileKeySelector) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Path = string(dAtA[iNdEx:postIndex])
+			m.Path = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -36369,7 +36369,7 @@ func (m *FileKeySelector) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Key = string(dAtA[iNdEx:postIndex])
+			m.Key = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 4:
 			if wireType != 0 {
@@ -36472,7 +36472,7 @@ func (m *FlexPersistentVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Driver = string(dAtA[iNdEx:postIndex])
+			m.Driver = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -36504,7 +36504,7 @@ func (m *FlexPersistentVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.FSType = string(dAtA[iNdEx:postIndex])
+			m.FSType = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -36769,7 +36769,7 @@ func (m *FlexVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Driver = string(dAtA[iNdEx:postIndex])
+			m.Driver = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -36801,7 +36801,7 @@ func (m *FlexVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.FSType = string(dAtA[iNdEx:postIndex])
+			m.FSType = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -37066,7 +37066,7 @@ func (m *FlockerVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.DatasetName = string(dAtA[iNdEx:postIndex])
+			m.DatasetName = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -37098,7 +37098,7 @@ func (m *FlockerVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.DatasetUUID = string(dAtA[iNdEx:postIndex])
+			m.DatasetUUID = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -37180,7 +37180,7 @@ func (m *GCEPersistentDiskVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.PDName = string(dAtA[iNdEx:postIndex])
+			m.PDName = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -37212,7 +37212,7 @@ func (m *GCEPersistentDiskVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.FSType = string(dAtA[iNdEx:postIndex])
+			m.FSType = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 0 {
@@ -37352,7 +37352,7 @@ func (m *GRPCAction) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := string(dAtA[iNdEx:postIndex])
+			s := intern.String(string(dAtA[iNdEx:postIndex]))
 			m.Service = &s
 			iNdEx = postIndex
 		default:
@@ -37435,7 +37435,7 @@ func (m *GitRepoVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Repository = string(dAtA[iNdEx:postIndex])
+			m.Repository = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -37467,7 +37467,7 @@ func (m *GitRepoVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Revision = string(dAtA[iNdEx:postIndex])
+			m.Revision = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -37499,7 +37499,7 @@ func (m *GitRepoVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Directory = string(dAtA[iNdEx:postIndex])
+			m.Directory = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -37581,7 +37581,7 @@ func (m *GlusterfsPersistentVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.EndpointsName = string(dAtA[iNdEx:postIndex])
+			m.EndpointsName = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -37613,7 +37613,7 @@ func (m *GlusterfsPersistentVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Path = string(dAtA[iNdEx:postIndex])
+			m.Path = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 0 {
@@ -37665,7 +37665,7 @@ func (m *GlusterfsPersistentVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := string(dAtA[iNdEx:postIndex])
+			s := intern.String(string(dAtA[iNdEx:postIndex]))
 			m.EndpointsNamespace = &s
 			iNdEx = postIndex
 		default:
@@ -37748,7 +37748,7 @@ func (m *GlusterfsVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.EndpointsName = string(dAtA[iNdEx:postIndex])
+			m.EndpointsName = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -37780,7 +37780,7 @@ func (m *GlusterfsVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Path = string(dAtA[iNdEx:postIndex])
+			m.Path = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 0 {
@@ -37882,7 +37882,7 @@ func (m *HTTPGetAction) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Path = string(dAtA[iNdEx:postIndex])
+			m.Path = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -37947,7 +37947,7 @@ func (m *HTTPGetAction) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Host = string(dAtA[iNdEx:postIndex])
+			m.Host = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 4:
 			if wireType != 2 {
@@ -37979,7 +37979,7 @@ func (m *HTTPGetAction) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Scheme = URIScheme(dAtA[iNdEx:postIndex])
+			m.Scheme = URIScheme(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 5:
 			if wireType != 2 {
@@ -38095,7 +38095,7 @@ func (m *HTTPHeader) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Name = string(dAtA[iNdEx:postIndex])
+			m.Name = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -38127,7 +38127,7 @@ func (m *HTTPHeader) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Value = string(dAtA[iNdEx:postIndex])
+			m.Value = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -38209,7 +38209,7 @@ func (m *HostAlias) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.IP = string(dAtA[iNdEx:postIndex])
+			m.IP = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -38241,7 +38241,7 @@ func (m *HostAlias) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Hostnames = append(m.Hostnames, string(dAtA[iNdEx:postIndex]))
+			m.Hostnames = append(m.Hostnames, intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -38323,7 +38323,7 @@ func (m *HostIP) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.IP = string(dAtA[iNdEx:postIndex])
+			m.IP = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -38405,7 +38405,7 @@ func (m *HostPathVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Path = string(dAtA[iNdEx:postIndex])
+			m.Path = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -38437,7 +38437,7 @@ func (m *HostPathVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := HostPathType(dAtA[iNdEx:postIndex])
+			s := HostPathType(intern.String(string(dAtA[iNdEx:postIndex])))
 			m.Type = &s
 			iNdEx = postIndex
 		default:
@@ -38520,7 +38520,7 @@ func (m *ISCSIPersistentVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.TargetPortal = string(dAtA[iNdEx:postIndex])
+			m.TargetPortal = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -38552,7 +38552,7 @@ func (m *ISCSIPersistentVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.IQN = string(dAtA[iNdEx:postIndex])
+			m.IQN = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 0 {
@@ -38603,7 +38603,7 @@ func (m *ISCSIPersistentVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.ISCSIInterface = string(dAtA[iNdEx:postIndex])
+			m.ISCSIInterface = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 5:
 			if wireType != 2 {
@@ -38635,7 +38635,7 @@ func (m *ISCSIPersistentVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.FSType = string(dAtA[iNdEx:postIndex])
+			m.FSType = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 6:
 			if wireType != 0 {
@@ -38687,7 +38687,7 @@ func (m *ISCSIPersistentVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Portals = append(m.Portals, string(dAtA[iNdEx:postIndex]))
+			m.Portals = append(m.Portals, intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 8:
 			if wireType != 0 {
@@ -38795,7 +38795,7 @@ func (m *ISCSIPersistentVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := string(dAtA[iNdEx:postIndex])
+			s := intern.String(string(dAtA[iNdEx:postIndex]))
 			m.InitiatorName = &s
 			iNdEx = postIndex
 		default:
@@ -38878,7 +38878,7 @@ func (m *ISCSIVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.TargetPortal = string(dAtA[iNdEx:postIndex])
+			m.TargetPortal = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -38910,7 +38910,7 @@ func (m *ISCSIVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.IQN = string(dAtA[iNdEx:postIndex])
+			m.IQN = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 0 {
@@ -38961,7 +38961,7 @@ func (m *ISCSIVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.ISCSIInterface = string(dAtA[iNdEx:postIndex])
+			m.ISCSIInterface = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 5:
 			if wireType != 2 {
@@ -38993,7 +38993,7 @@ func (m *ISCSIVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.FSType = string(dAtA[iNdEx:postIndex])
+			m.FSType = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 6:
 			if wireType != 0 {
@@ -39045,7 +39045,7 @@ func (m *ISCSIVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Portals = append(m.Portals, string(dAtA[iNdEx:postIndex]))
+			m.Portals = append(m.Portals, intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 8:
 			if wireType != 0 {
@@ -39153,7 +39153,7 @@ func (m *ISCSIVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := string(dAtA[iNdEx:postIndex])
+			s := intern.String(string(dAtA[iNdEx:postIndex]))
 			m.InitiatorName = &s
 			iNdEx = postIndex
 		default:
@@ -39236,7 +39236,7 @@ func (m *ImageVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Reference = string(dAtA[iNdEx:postIndex])
+			m.Reference = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -39268,7 +39268,7 @@ func (m *ImageVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.PullPolicy = PullPolicy(dAtA[iNdEx:postIndex])
+			m.PullPolicy = PullPolicy(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -39350,7 +39350,7 @@ func (m *ImageVolumeStatus) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.ImageRef = string(dAtA[iNdEx:postIndex])
+			m.ImageRef = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -39432,7 +39432,7 @@ func (m *KeyToPath) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Key = string(dAtA[iNdEx:postIndex])
+			m.Key = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -39464,7 +39464,7 @@ func (m *KeyToPath) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Path = string(dAtA[iNdEx:postIndex])
+			m.Path = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 0 {
@@ -39638,7 +39638,7 @@ func (m *Lifecycle) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := Signal(dAtA[iNdEx:postIndex])
+			s := Signal(intern.String(string(dAtA[iNdEx:postIndex])))
 			m.StopSignal = &s
 			iNdEx = postIndex
 		default:
@@ -41240,7 +41240,7 @@ func (m *LoadBalancerIngress) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.IP = string(dAtA[iNdEx:postIndex])
+			m.IP = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -41272,7 +41272,7 @@ func (m *LoadBalancerIngress) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Hostname = string(dAtA[iNdEx:postIndex])
+			m.Hostname = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -41505,7 +41505,7 @@ func (m *LocalObjectReference) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Name = string(dAtA[iNdEx:postIndex])
+			m.Name = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -41587,7 +41587,7 @@ func (m *LocalVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Path = string(dAtA[iNdEx:postIndex])
+			m.Path = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -41619,7 +41619,7 @@ func (m *LocalVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := string(dAtA[iNdEx:postIndex])
+			s := intern.String(string(dAtA[iNdEx:postIndex]))
 			m.FSType = &s
 			iNdEx = postIndex
 		default:
@@ -41702,7 +41702,7 @@ func (m *ModifyVolumeStatus) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.TargetVolumeAttributesClassName = string(dAtA[iNdEx:postIndex])
+			m.TargetVolumeAttributesClassName = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -41734,7 +41734,7 @@ func (m *ModifyVolumeStatus) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Status = PersistentVolumeClaimModifyVolumeStatus(dAtA[iNdEx:postIndex])
+			m.Status = PersistentVolumeClaimModifyVolumeStatus(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -41816,7 +41816,7 @@ func (m *NFSVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Server = string(dAtA[iNdEx:postIndex])
+			m.Server = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -41848,7 +41848,7 @@ func (m *NFSVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Path = string(dAtA[iNdEx:postIndex])
+			m.Path = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 0 {
@@ -42099,7 +42099,7 @@ func (m *NamespaceCondition) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Type = NamespaceConditionType(dAtA[iNdEx:postIndex])
+			m.Type = NamespaceConditionType(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -42196,7 +42196,7 @@ func (m *NamespaceCondition) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Reason = string(dAtA[iNdEx:postIndex])
+			m.Reason = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 6:
 			if wireType != 2 {
@@ -42228,7 +42228,7 @@ func (m *NamespaceCondition) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Message = string(dAtA[iNdEx:postIndex])
+			m.Message = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -42509,7 +42509,7 @@ func (m *NamespaceStatus) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Phase = NamespacePhase(dAtA[iNdEx:postIndex])
+			m.Phase = NamespacePhase(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -42774,7 +42774,7 @@ func (m *NodeAddress) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Type = NodeAddressType(dAtA[iNdEx:postIndex])
+			m.Type = NodeAddressType(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -42806,7 +42806,7 @@ func (m *NodeAddress) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Address = string(dAtA[iNdEx:postIndex])
+			m.Address = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -43008,7 +43008,7 @@ func (m *NodeCondition) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Type = NodeConditionType(dAtA[iNdEx:postIndex])
+			m.Type = NodeConditionType(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -43138,7 +43138,7 @@ func (m *NodeCondition) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Reason = string(dAtA[iNdEx:postIndex])
+			m.Reason = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 6:
 			if wireType != 2 {
@@ -43170,7 +43170,7 @@ func (m *NodeCondition) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Message = string(dAtA[iNdEx:postIndex])
+			m.Message = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -43446,7 +43446,7 @@ func (m *NodeConfigStatus) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Error = string(dAtA[iNdEx:postIndex])
+			m.Error = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -43799,7 +43799,7 @@ func (m *NodeProxyOptions) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Path = string(dAtA[iNdEx:postIndex])
+			m.Path = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -43881,7 +43881,7 @@ func (m *NodeRuntimeHandler) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Name = string(dAtA[iNdEx:postIndex])
+			m.Name = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -44175,7 +44175,7 @@ func (m *NodeSelectorRequirement) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Key = string(dAtA[iNdEx:postIndex])
+			m.Key = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -44207,7 +44207,7 @@ func (m *NodeSelectorRequirement) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Operator = NodeSelectorOperator(dAtA[iNdEx:postIndex])
+			m.Operator = NodeSelectorOperator(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -44239,7 +44239,7 @@ func (m *NodeSelectorRequirement) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Values = append(m.Values, string(dAtA[iNdEx:postIndex]))
+			m.Values = append(m.Values, intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -44439,7 +44439,7 @@ func (m *NodeSpec) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.PodCIDR = string(dAtA[iNdEx:postIndex])
+			m.PodCIDR = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -44471,7 +44471,7 @@ func (m *NodeSpec) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.DoNotUseExternalID = string(dAtA[iNdEx:postIndex])
+			m.DoNotUseExternalID = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -44503,7 +44503,7 @@ func (m *NodeSpec) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.ProviderID = string(dAtA[iNdEx:postIndex])
+			m.ProviderID = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 4:
 			if wireType != 0 {
@@ -44625,7 +44625,7 @@ func (m *NodeSpec) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.PodCIDRs = append(m.PodCIDRs, string(dAtA[iNdEx:postIndex]))
+			m.PodCIDRs = append(m.PodCIDRs, intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -44965,7 +44965,7 @@ func (m *NodeStatus) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Phase = NodePhase(dAtA[iNdEx:postIndex])
+			m.Phase = NodePhase(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 4:
 			if wireType != 2 {
@@ -45165,7 +45165,7 @@ func (m *NodeStatus) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.VolumesInUse = append(m.VolumesInUse, UniqueVolumeName(dAtA[iNdEx:postIndex]))
+			m.VolumesInUse = append(m.VolumesInUse, UniqueVolumeName(intern.String(string(dAtA[iNdEx:postIndex]))))
 			iNdEx = postIndex
 		case 10:
 			if wireType != 2 {
@@ -45337,7 +45337,7 @@ func (m *NodeStatus) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.DeclaredFeatures = append(m.DeclaredFeatures, string(dAtA[iNdEx:postIndex]))
+			m.DeclaredFeatures = append(m.DeclaredFeatures, intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -45489,7 +45489,7 @@ func (m *NodeSystemInfo) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.MachineID = string(dAtA[iNdEx:postIndex])
+			m.MachineID = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -45521,7 +45521,7 @@ func (m *NodeSystemInfo) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.SystemUUID = string(dAtA[iNdEx:postIndex])
+			m.SystemUUID = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -45553,7 +45553,7 @@ func (m *NodeSystemInfo) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.BootID = string(dAtA[iNdEx:postIndex])
+			m.BootID = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 4:
 			if wireType != 2 {
@@ -45585,7 +45585,7 @@ func (m *NodeSystemInfo) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.KernelVersion = string(dAtA[iNdEx:postIndex])
+			m.KernelVersion = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 5:
 			if wireType != 2 {
@@ -45617,7 +45617,7 @@ func (m *NodeSystemInfo) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.OSImage = string(dAtA[iNdEx:postIndex])
+			m.OSImage = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 6:
 			if wireType != 2 {
@@ -45649,7 +45649,7 @@ func (m *NodeSystemInfo) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.ContainerRuntimeVersion = string(dAtA[iNdEx:postIndex])
+			m.ContainerRuntimeVersion = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 7:
 			if wireType != 2 {
@@ -45681,7 +45681,7 @@ func (m *NodeSystemInfo) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.KubeletVersion = string(dAtA[iNdEx:postIndex])
+			m.KubeletVersion = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 8:
 			if wireType != 2 {
@@ -45713,7 +45713,7 @@ func (m *NodeSystemInfo) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.KubeProxyVersion = string(dAtA[iNdEx:postIndex])
+			m.KubeProxyVersion = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 9:
 			if wireType != 2 {
@@ -45745,7 +45745,7 @@ func (m *NodeSystemInfo) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.OperatingSystem = string(dAtA[iNdEx:postIndex])
+			m.OperatingSystem = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 10:
 			if wireType != 2 {
@@ -45777,7 +45777,7 @@ func (m *NodeSystemInfo) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Architecture = string(dAtA[iNdEx:postIndex])
+			m.Architecture = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 11:
 			if wireType != 2 {
@@ -45895,7 +45895,7 @@ func (m *ObjectFieldSelector) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.APIVersion = string(dAtA[iNdEx:postIndex])
+			m.APIVersion = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -45927,7 +45927,7 @@ func (m *ObjectFieldSelector) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.FieldPath = string(dAtA[iNdEx:postIndex])
+			m.FieldPath = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -46009,7 +46009,7 @@ func (m *ObjectReference) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Kind = string(dAtA[iNdEx:postIndex])
+			m.Kind = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -46041,7 +46041,7 @@ func (m *ObjectReference) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Namespace = string(dAtA[iNdEx:postIndex])
+			m.Namespace = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -46073,7 +46073,7 @@ func (m *ObjectReference) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Name = string(dAtA[iNdEx:postIndex])
+			m.Name = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 4:
 			if wireType != 2 {
@@ -46137,7 +46137,7 @@ func (m *ObjectReference) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.APIVersion = string(dAtA[iNdEx:postIndex])
+			m.APIVersion = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 6:
 			if wireType != 2 {
@@ -46169,7 +46169,7 @@ func (m *ObjectReference) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.ResourceVersion = string(dAtA[iNdEx:postIndex])
+			m.ResourceVersion = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 7:
 			if wireType != 2 {
@@ -46201,7 +46201,7 @@ func (m *ObjectReference) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.FieldPath = string(dAtA[iNdEx:postIndex])
+			m.FieldPath = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -46581,7 +46581,7 @@ func (m *PersistentVolumeClaimCondition) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Type = PersistentVolumeClaimConditionType(dAtA[iNdEx:postIndex])
+			m.Type = PersistentVolumeClaimConditionType(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -46711,7 +46711,7 @@ func (m *PersistentVolumeClaimCondition) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Reason = string(dAtA[iNdEx:postIndex])
+			m.Reason = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 6:
 			if wireType != 2 {
@@ -46743,7 +46743,7 @@ func (m *PersistentVolumeClaimCondition) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Message = string(dAtA[iNdEx:postIndex])
+			m.Message = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -46942,7 +46942,7 @@ func (m *PersistentVolumeClaimSpec) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.AccessModes = append(m.AccessModes, PersistentVolumeAccessMode(dAtA[iNdEx:postIndex]))
+			m.AccessModes = append(m.AccessModes, PersistentVolumeAccessMode(intern.String(string(dAtA[iNdEx:postIndex]))))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -47007,7 +47007,7 @@ func (m *PersistentVolumeClaimSpec) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.VolumeName = string(dAtA[iNdEx:postIndex])
+			m.VolumeName = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 4:
 			if wireType != 2 {
@@ -47075,7 +47075,7 @@ func (m *PersistentVolumeClaimSpec) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := string(dAtA[iNdEx:postIndex])
+			s := intern.String(string(dAtA[iNdEx:postIndex]))
 			m.StorageClassName = &s
 			iNdEx = postIndex
 		case 6:
@@ -47108,7 +47108,7 @@ func (m *PersistentVolumeClaimSpec) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := PersistentVolumeMode(dAtA[iNdEx:postIndex])
+			s := PersistentVolumeMode(intern.String(string(dAtA[iNdEx:postIndex])))
 			m.VolumeMode = &s
 			iNdEx = postIndex
 		case 7:
@@ -47213,7 +47213,7 @@ func (m *PersistentVolumeClaimSpec) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := string(dAtA[iNdEx:postIndex])
+			s := intern.String(string(dAtA[iNdEx:postIndex]))
 			m.VolumeAttributesClassName = &s
 			iNdEx = postIndex
 		default:
@@ -47296,7 +47296,7 @@ func (m *PersistentVolumeClaimStatus) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Phase = PersistentVolumeClaimPhase(dAtA[iNdEx:postIndex])
+			m.Phase = PersistentVolumeClaimPhase(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -47328,7 +47328,7 @@ func (m *PersistentVolumeClaimStatus) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.AccessModes = append(m.AccessModes, PersistentVolumeAccessMode(dAtA[iNdEx:postIndex]))
+			m.AccessModes = append(m.AccessModes, PersistentVolumeAccessMode(intern.String(string(dAtA[iNdEx:postIndex]))))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -47779,7 +47779,7 @@ func (m *PersistentVolumeClaimStatus) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := string(dAtA[iNdEx:postIndex])
+			s := intern.String(string(dAtA[iNdEx:postIndex]))
 			m.CurrentVolumeAttributesClassName = &s
 			iNdEx = postIndex
 		case 9:
@@ -48014,7 +48014,7 @@ func (m *PersistentVolumeClaimVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.ClaimName = string(dAtA[iNdEx:postIndex])
+			m.ClaimName = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 0 {
@@ -49237,7 +49237,7 @@ func (m *PersistentVolumeSpec) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.AccessModes = append(m.AccessModes, PersistentVolumeAccessMode(dAtA[iNdEx:postIndex]))
+			m.AccessModes = append(m.AccessModes, PersistentVolumeAccessMode(intern.String(string(dAtA[iNdEx:postIndex]))))
 			iNdEx = postIndex
 		case 4:
 			if wireType != 2 {
@@ -49305,7 +49305,7 @@ func (m *PersistentVolumeSpec) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.PersistentVolumeReclaimPolicy = PersistentVolumeReclaimPolicy(dAtA[iNdEx:postIndex])
+			m.PersistentVolumeReclaimPolicy = PersistentVolumeReclaimPolicy(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 6:
 			if wireType != 2 {
@@ -49337,7 +49337,7 @@ func (m *PersistentVolumeSpec) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.StorageClassName = string(dAtA[iNdEx:postIndex])
+			m.StorageClassName = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 7:
 			if wireType != 2 {
@@ -49369,7 +49369,7 @@ func (m *PersistentVolumeSpec) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.MountOptions = append(m.MountOptions, string(dAtA[iNdEx:postIndex]))
+			m.MountOptions = append(m.MountOptions, intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 8:
 			if wireType != 2 {
@@ -49401,7 +49401,7 @@ func (m *PersistentVolumeSpec) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := PersistentVolumeMode(dAtA[iNdEx:postIndex])
+			s := PersistentVolumeMode(intern.String(string(dAtA[iNdEx:postIndex])))
 			m.VolumeMode = &s
 			iNdEx = postIndex
 		case 9:
@@ -49470,7 +49470,7 @@ func (m *PersistentVolumeSpec) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := string(dAtA[iNdEx:postIndex])
+			s := intern.String(string(dAtA[iNdEx:postIndex]))
 			m.VolumeAttributesClassName = &s
 			iNdEx = postIndex
 		default:
@@ -49553,7 +49553,7 @@ func (m *PersistentVolumeStatus) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Phase = PersistentVolumePhase(dAtA[iNdEx:postIndex])
+			m.Phase = PersistentVolumePhase(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -49585,7 +49585,7 @@ func (m *PersistentVolumeStatus) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Message = string(dAtA[iNdEx:postIndex])
+			m.Message = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -49617,7 +49617,7 @@ func (m *PersistentVolumeStatus) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Reason = string(dAtA[iNdEx:postIndex])
+			m.Reason = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 4:
 			if wireType != 2 {
@@ -49735,7 +49735,7 @@ func (m *PhotonPersistentDiskVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.PdID = string(dAtA[iNdEx:postIndex])
+			m.PdID = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -49767,7 +49767,7 @@ func (m *PhotonPersistentDiskVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.FSType = string(dAtA[iNdEx:postIndex])
+			m.FSType = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -50153,7 +50153,7 @@ func (m *PodAffinityTerm) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Namespaces = append(m.Namespaces, string(dAtA[iNdEx:postIndex]))
+			m.Namespaces = append(m.Namespaces, intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -50185,7 +50185,7 @@ func (m *PodAffinityTerm) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.TopologyKey = string(dAtA[iNdEx:postIndex])
+			m.TopologyKey = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 4:
 			if wireType != 2 {
@@ -50253,7 +50253,7 @@ func (m *PodAffinityTerm) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.MatchLabelKeys = append(m.MatchLabelKeys, string(dAtA[iNdEx:postIndex]))
+			m.MatchLabelKeys = append(m.MatchLabelKeys, intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 6:
 			if wireType != 2 {
@@ -50285,7 +50285,7 @@ func (m *PodAffinityTerm) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.MismatchLabelKeys = append(m.MismatchLabelKeys, string(dAtA[iNdEx:postIndex]))
+			m.MismatchLabelKeys = append(m.MismatchLabelKeys, intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -50565,7 +50565,7 @@ func (m *PodAttachOptions) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Container = string(dAtA[iNdEx:postIndex])
+			m.Container = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -50647,7 +50647,7 @@ func (m *PodCertificateProjection) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.SignerName = string(dAtA[iNdEx:postIndex])
+			m.SignerName = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -50679,7 +50679,7 @@ func (m *PodCertificateProjection) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.KeyType = string(dAtA[iNdEx:postIndex])
+			m.KeyType = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 0 {
@@ -50731,7 +50731,7 @@ func (m *PodCertificateProjection) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.CredentialBundlePath = string(dAtA[iNdEx:postIndex])
+			m.CredentialBundlePath = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 5:
 			if wireType != 2 {
@@ -50763,7 +50763,7 @@ func (m *PodCertificateProjection) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.KeyPath = string(dAtA[iNdEx:postIndex])
+			m.KeyPath = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 6:
 			if wireType != 2 {
@@ -50795,7 +50795,7 @@ func (m *PodCertificateProjection) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.CertificateChainPath = string(dAtA[iNdEx:postIndex])
+			m.CertificateChainPath = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 7:
 			if wireType != 2 {
@@ -51004,7 +51004,7 @@ func (m *PodCondition) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Type = PodConditionType(dAtA[iNdEx:postIndex])
+			m.Type = PodConditionType(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -51134,7 +51134,7 @@ func (m *PodCondition) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Reason = string(dAtA[iNdEx:postIndex])
+			m.Reason = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 6:
 			if wireType != 2 {
@@ -51166,7 +51166,7 @@ func (m *PodCondition) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Message = string(dAtA[iNdEx:postIndex])
+			m.Message = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 7:
 			if wireType != 0 {
@@ -51267,7 +51267,7 @@ func (m *PodDNSConfig) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Nameservers = append(m.Nameservers, string(dAtA[iNdEx:postIndex]))
+			m.Nameservers = append(m.Nameservers, intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -51299,7 +51299,7 @@ func (m *PodDNSConfig) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Searches = append(m.Searches, string(dAtA[iNdEx:postIndex]))
+			m.Searches = append(m.Searches, intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -51415,7 +51415,7 @@ func (m *PodDNSConfigOption) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Name = string(dAtA[iNdEx:postIndex])
+			m.Name = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -51447,7 +51447,7 @@ func (m *PodDNSConfigOption) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := string(dAtA[iNdEx:postIndex])
+			s := intern.String(string(dAtA[iNdEx:postIndex]))
 			m.Value = &s
 			iNdEx = postIndex
 		default:
@@ -51610,7 +51610,7 @@ func (m *PodExecOptions) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Container = string(dAtA[iNdEx:postIndex])
+			m.Container = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 6:
 			if wireType != 2 {
@@ -51642,7 +51642,7 @@ func (m *PodExecOptions) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Command = append(m.Command, string(dAtA[iNdEx:postIndex]))
+			m.Command = append(m.Command, intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -51758,7 +51758,7 @@ func (m *PodExtendedResourceClaimStatus) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.ResourceClaimName = string(dAtA[iNdEx:postIndex])
+			m.ResourceClaimName = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -51840,7 +51840,7 @@ func (m *PodIP) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.IP = string(dAtA[iNdEx:postIndex])
+			m.IP = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -52039,7 +52039,7 @@ func (m *PodLogOptions) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Container = string(dAtA[iNdEx:postIndex])
+			m.Container = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 0 {
@@ -52247,7 +52247,7 @@ func (m *PodLogOptions) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := string(dAtA[iNdEx:postIndex])
+			s := intern.String(string(dAtA[iNdEx:postIndex]))
 			m.Stream = &s
 			iNdEx = postIndex
 		default:
@@ -52330,7 +52330,7 @@ func (m *PodOS) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Name = OSName(dAtA[iNdEx:postIndex])
+			m.Name = OSName(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -52538,7 +52538,7 @@ func (m *PodProxyOptions) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Path = string(dAtA[iNdEx:postIndex])
+			m.Path = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -52620,7 +52620,7 @@ func (m *PodReadinessGate) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.ConditionType = PodConditionType(dAtA[iNdEx:postIndex])
+			m.ConditionType = PodConditionType(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -52702,7 +52702,7 @@ func (m *PodResourceClaim) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Name = string(dAtA[iNdEx:postIndex])
+			m.Name = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -52734,7 +52734,7 @@ func (m *PodResourceClaim) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := string(dAtA[iNdEx:postIndex])
+			s := intern.String(string(dAtA[iNdEx:postIndex]))
 			m.ResourceClaimName = &s
 			iNdEx = postIndex
 		case 4:
@@ -52767,7 +52767,7 @@ func (m *PodResourceClaim) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := string(dAtA[iNdEx:postIndex])
+			s := intern.String(string(dAtA[iNdEx:postIndex]))
 			m.ResourceClaimTemplateName = &s
 			iNdEx = postIndex
 		default:
@@ -52850,7 +52850,7 @@ func (m *PodResourceClaimStatus) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Name = string(dAtA[iNdEx:postIndex])
+			m.Name = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -52882,7 +52882,7 @@ func (m *PodResourceClaimStatus) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := string(dAtA[iNdEx:postIndex])
+			s := intern.String(string(dAtA[iNdEx:postIndex]))
 			m.ResourceClaimName = &s
 			iNdEx = postIndex
 		default:
@@ -52965,7 +52965,7 @@ func (m *PodSchedulingGate) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Name = string(dAtA[iNdEx:postIndex])
+			m.Name = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -53310,7 +53310,7 @@ func (m *PodSecurityContext) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := PodFSGroupChangePolicy(dAtA[iNdEx:postIndex])
+			s := PodFSGroupChangePolicy(intern.String(string(dAtA[iNdEx:postIndex])))
 			m.FSGroupChangePolicy = &s
 			iNdEx = postIndex
 		case 10:
@@ -53415,7 +53415,7 @@ func (m *PodSecurityContext) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := SupplementalGroupsPolicy(dAtA[iNdEx:postIndex])
+			s := SupplementalGroupsPolicy(intern.String(string(dAtA[iNdEx:postIndex])))
 			m.SupplementalGroupsPolicy = &s
 			iNdEx = postIndex
 		case 13:
@@ -53448,7 +53448,7 @@ func (m *PodSecurityContext) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := PodSELinuxChangePolicy(dAtA[iNdEx:postIndex])
+			s := PodSELinuxChangePolicy(intern.String(string(dAtA[iNdEx:postIndex])))
 			m.SELinuxChangePolicy = &s
 			iNdEx = postIndex
 		default:
@@ -53685,7 +53685,7 @@ func (m *PodSpec) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.RestartPolicy = RestartPolicy(dAtA[iNdEx:postIndex])
+			m.RestartPolicy = RestartPolicy(intern.String(intern.String(string(dAtA[iNdEx:postIndex]))))
 			iNdEx = postIndex
 		case 4:
 			if wireType != 0 {
@@ -53757,7 +53757,7 @@ func (m *PodSpec) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.DNSPolicy = DNSPolicy(dAtA[iNdEx:postIndex])
+			m.DNSPolicy = DNSPolicy(intern.String(intern.String(string(dAtA[iNdEx:postIndex]))))
 			iNdEx = postIndex
 		case 7:
 			if wireType != 2 {
@@ -53838,7 +53838,7 @@ func (m *PodSpec) Unmarshal(dAtA []byte) error {
 					if postStringIndexmapkey > l {
 						return io.ErrUnexpectedEOF
 					}
-					mapkey = string(dAtA[iNdEx:postStringIndexmapkey])
+					mapkey = intern.String(string(dAtA[iNdEx:postStringIndexmapkey]))
 					iNdEx = postStringIndexmapkey
 				} else if fieldNum == 2 {
 					var stringLenmapvalue uint64
@@ -53867,7 +53867,7 @@ func (m *PodSpec) Unmarshal(dAtA []byte) error {
 					if postStringIndexmapvalue > l {
 						return io.ErrUnexpectedEOF
 					}
-					mapvalue = string(dAtA[iNdEx:postStringIndexmapvalue])
+					mapvalue = intern.String(string(dAtA[iNdEx:postStringIndexmapvalue]))
 					iNdEx = postStringIndexmapvalue
 				} else {
 					iNdEx = entryPreIndex
@@ -53916,7 +53916,7 @@ func (m *PodSpec) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.ServiceAccountName = string(dAtA[iNdEx:postIndex])
+			m.ServiceAccountName = intern.String(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 9:
 			if wireType != 2 {
@@ -53948,7 +53948,7 @@ func (m *PodSpec) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.DeprecatedServiceAccount = string(dAtA[iNdEx:postIndex])
+			m.DeprecatedServiceAccount = intern.String(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 10:
 			if wireType != 2 {
@@ -53980,7 +53980,7 @@ func (m *PodSpec) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.NodeName = string(dAtA[iNdEx:postIndex])
+			m.NodeName = intern.String(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 11:
 			if wireType != 0 {
@@ -54142,7 +54142,7 @@ func (m *PodSpec) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Hostname = string(dAtA[iNdEx:postIndex])
+			m.Hostname = intern.String(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 17:
 			if wireType != 2 {
@@ -54174,7 +54174,7 @@ func (m *PodSpec) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Subdomain = string(dAtA[iNdEx:postIndex])
+			m.Subdomain = intern.String(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 18:
 			if wireType != 2 {
@@ -54242,7 +54242,7 @@ func (m *PodSpec) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.SchedulerName = string(dAtA[iNdEx:postIndex])
+			m.SchedulerName = intern.String(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 20:
 			if wireType != 2 {
@@ -54397,7 +54397,7 @@ func (m *PodSpec) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.PriorityClassName = string(dAtA[iNdEx:postIndex])
+			m.PriorityClassName = intern.String(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 25:
 			if wireType != 0 {
@@ -54540,7 +54540,7 @@ func (m *PodSpec) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := string(dAtA[iNdEx:postIndex])
+			s := intern.String(intern.String(string(dAtA[iNdEx:postIndex])))
 			m.RuntimeClassName = &s
 			iNdEx = postIndex
 		case 30:
@@ -54594,7 +54594,7 @@ func (m *PodSpec) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := PreemptionPolicy(dAtA[iNdEx:postIndex])
+			s := PreemptionPolicy(intern.String(intern.String(string(dAtA[iNdEx:postIndex]))))
 			m.PreemptionPolicy = &s
 			iNdEx = postIndex
 		case 32:
@@ -54676,7 +54676,7 @@ func (m *PodSpec) Unmarshal(dAtA []byte) error {
 					if postStringIndexmapkey > l {
 						return io.ErrUnexpectedEOF
 					}
-					mapkey = ResourceName(dAtA[iNdEx:postStringIndexmapkey])
+					mapkey = ResourceName(intern.String(string(dAtA[iNdEx:postStringIndexmapkey])))
 					iNdEx = postStringIndexmapkey
 				} else if fieldNum == 2 {
 					var mapmsglen int
@@ -54724,7 +54724,7 @@ func (m *PodSpec) Unmarshal(dAtA []byte) error {
 					iNdEx += skippy
 				}
 			}
-			m.Overhead[ResourceName(mapkey)] = *mapvalue
+			m.Overhead[mapkey] = *mapvalue
 			iNdEx = postIndex
 		case 33:
 			if wireType != 2 {
@@ -55006,7 +55006,7 @@ func (m *PodSpec) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := string(dAtA[iNdEx:postIndex])
+			s := intern.String(string(dAtA[iNdEx:postIndex]))
 			m.HostnameOverride = &s
 			iNdEx = postIndex
 		case 42:
@@ -55125,7 +55125,7 @@ func (m *PodStatus) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Phase = PodPhase(dAtA[iNdEx:postIndex])
+			m.Phase = PodPhase(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -55191,7 +55191,7 @@ func (m *PodStatus) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Message = string(dAtA[iNdEx:postIndex])
+			m.Message = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 4:
 			if wireType != 2 {
@@ -55223,7 +55223,7 @@ func (m *PodStatus) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Reason = string(dAtA[iNdEx:postIndex])
+			m.Reason = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 5:
 			if wireType != 2 {
@@ -55255,7 +55255,7 @@ func (m *PodStatus) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.HostIP = string(dAtA[iNdEx:postIndex])
+			m.HostIP = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 6:
 			if wireType != 2 {
@@ -55287,7 +55287,7 @@ func (m *PodStatus) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.PodIP = string(dAtA[iNdEx:postIndex])
+			m.PodIP = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 7:
 			if wireType != 2 {
@@ -55389,7 +55389,7 @@ func (m *PodStatus) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.QOSClass = PodQOSClass(dAtA[iNdEx:postIndex])
+			m.QOSClass = PodQOSClass(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 10:
 			if wireType != 2 {
@@ -55455,7 +55455,7 @@ func (m *PodStatus) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.NominatedNodeName = string(dAtA[iNdEx:postIndex])
+			m.NominatedNodeName = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 12:
 			if wireType != 2 {
@@ -55555,7 +55555,7 @@ func (m *PodStatus) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Resize = PodResizeStatus(dAtA[iNdEx:postIndex])
+			m.Resize = PodResizeStatus(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 15:
 			if wireType != 2 {
@@ -56409,7 +56409,7 @@ func (m *PortStatus) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Protocol = Protocol(dAtA[iNdEx:postIndex])
+			m.Protocol = Protocol(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -56441,7 +56441,7 @@ func (m *PortStatus) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := string(dAtA[iNdEx:postIndex])
+			s := intern.String(string(dAtA[iNdEx:postIndex]))
 			m.Error = &s
 			iNdEx = postIndex
 		default:
@@ -56524,7 +56524,7 @@ func (m *PortworxVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.VolumeID = string(dAtA[iNdEx:postIndex])
+			m.VolumeID = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -56556,7 +56556,7 @@ func (m *PortworxVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.FSType = string(dAtA[iNdEx:postIndex])
+			m.FSType = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 0 {
@@ -56807,7 +56807,7 @@ func (m *PreferAvoidPodsEntry) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Reason = string(dAtA[iNdEx:postIndex])
+			m.Reason = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 4:
 			if wireType != 2 {
@@ -56839,7 +56839,7 @@ func (m *PreferAvoidPodsEntry) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Message = string(dAtA[iNdEx:postIndex])
+			m.Message = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -57519,7 +57519,7 @@ func (m *QuobyteVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Registry = string(dAtA[iNdEx:postIndex])
+			m.Registry = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -57551,7 +57551,7 @@ func (m *QuobyteVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Volume = string(dAtA[iNdEx:postIndex])
+			m.Volume = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 0 {
@@ -57603,7 +57603,7 @@ func (m *QuobyteVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.User = string(dAtA[iNdEx:postIndex])
+			m.User = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 5:
 			if wireType != 2 {
@@ -57635,7 +57635,7 @@ func (m *QuobyteVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Group = string(dAtA[iNdEx:postIndex])
+			m.Group = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 6:
 			if wireType != 2 {
@@ -57667,7 +57667,7 @@ func (m *QuobyteVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Tenant = string(dAtA[iNdEx:postIndex])
+			m.Tenant = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -57749,7 +57749,7 @@ func (m *RBDPersistentVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.CephMonitors = append(m.CephMonitors, string(dAtA[iNdEx:postIndex]))
+			m.CephMonitors = append(m.CephMonitors, intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -57781,7 +57781,7 @@ func (m *RBDPersistentVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.RBDImage = string(dAtA[iNdEx:postIndex])
+			m.RBDImage = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -57813,7 +57813,7 @@ func (m *RBDPersistentVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.FSType = string(dAtA[iNdEx:postIndex])
+			m.FSType = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 4:
 			if wireType != 2 {
@@ -57845,7 +57845,7 @@ func (m *RBDPersistentVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.RBDPool = string(dAtA[iNdEx:postIndex])
+			m.RBDPool = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 5:
 			if wireType != 2 {
@@ -57877,7 +57877,7 @@ func (m *RBDPersistentVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.RadosUser = string(dAtA[iNdEx:postIndex])
+			m.RadosUser = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 6:
 			if wireType != 2 {
@@ -57909,7 +57909,7 @@ func (m *RBDPersistentVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Keyring = string(dAtA[iNdEx:postIndex])
+			m.Keyring = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 7:
 			if wireType != 2 {
@@ -58047,7 +58047,7 @@ func (m *RBDVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.CephMonitors = append(m.CephMonitors, string(dAtA[iNdEx:postIndex]))
+			m.CephMonitors = append(m.CephMonitors, intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -58079,7 +58079,7 @@ func (m *RBDVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.RBDImage = string(dAtA[iNdEx:postIndex])
+			m.RBDImage = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -58111,7 +58111,7 @@ func (m *RBDVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.FSType = string(dAtA[iNdEx:postIndex])
+			m.FSType = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 4:
 			if wireType != 2 {
@@ -58143,7 +58143,7 @@ func (m *RBDVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.RBDPool = string(dAtA[iNdEx:postIndex])
+			m.RBDPool = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 5:
 			if wireType != 2 {
@@ -58175,7 +58175,7 @@ func (m *RBDVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.RadosUser = string(dAtA[iNdEx:postIndex])
+			m.RadosUser = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 6:
 			if wireType != 2 {
@@ -58207,7 +58207,7 @@ func (m *RBDVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Keyring = string(dAtA[iNdEx:postIndex])
+			m.Keyring = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 7:
 			if wireType != 2 {
@@ -58378,7 +58378,7 @@ func (m *RangeAllocation) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Range = string(dAtA[iNdEx:postIndex])
+			m.Range = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -58643,7 +58643,7 @@ func (m *ReplicationControllerCondition) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Type = ReplicationControllerConditionType(dAtA[iNdEx:postIndex])
+			m.Type = ReplicationControllerConditionType(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -58740,7 +58740,7 @@ func (m *ReplicationControllerCondition) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Reason = string(dAtA[iNdEx:postIndex])
+			m.Reason = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 5:
 			if wireType != 2 {
@@ -58772,7 +58772,7 @@ func (m *ReplicationControllerCondition) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Message = string(dAtA[iNdEx:postIndex])
+			m.Message = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -59402,7 +59402,7 @@ func (m *ResourceClaim) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Name = string(dAtA[iNdEx:postIndex])
+			m.Name = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -59434,7 +59434,7 @@ func (m *ResourceClaim) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Request = string(dAtA[iNdEx:postIndex])
+			m.Request = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -59516,7 +59516,7 @@ func (m *ResourceFieldSelector) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.ContainerName = string(dAtA[iNdEx:postIndex])
+			m.ContainerName = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -59548,7 +59548,7 @@ func (m *ResourceFieldSelector) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Resource = string(dAtA[iNdEx:postIndex])
+			m.Resource = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -59663,7 +59663,7 @@ func (m *ResourceHealth) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.ResourceID = ResourceID(dAtA[iNdEx:postIndex])
+			m.ResourceID = ResourceID(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -59695,7 +59695,7 @@ func (m *ResourceHealth) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Health = ResourceHealthStatus(dAtA[iNdEx:postIndex])
+			m.Health = ResourceHealthStatus(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -60172,7 +60172,7 @@ func (m *ResourceQuotaSpec) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Scopes = append(m.Scopes, ResourceQuotaScope(dAtA[iNdEx:postIndex]))
+			m.Scopes = append(m.Scopes, ResourceQuotaScope(intern.String(string(dAtA[iNdEx:postIndex]))))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -60647,7 +60647,7 @@ func (m *ResourceRequirements) Unmarshal(dAtA []byte) error {
 					if postStringIndexmapkey > l {
 						return io.ErrUnexpectedEOF
 					}
-					mapkey = ResourceName(dAtA[iNdEx:postStringIndexmapkey])
+					mapkey = ResourceName(intern.String(string(dAtA[iNdEx:postStringIndexmapkey])))
 					iNdEx = postStringIndexmapkey
 				} else if fieldNum == 2 {
 					var mapmsglen int
@@ -60776,7 +60776,7 @@ func (m *ResourceRequirements) Unmarshal(dAtA []byte) error {
 					if postStringIndexmapkey > l {
 						return io.ErrUnexpectedEOF
 					}
-					mapkey = ResourceName(dAtA[iNdEx:postStringIndexmapkey])
+					mapkey = ResourceName(intern.String(string(dAtA[iNdEx:postStringIndexmapkey])))
 					iNdEx = postStringIndexmapkey
 				} else if fieldNum == 2 {
 					var mapmsglen int
@@ -60940,7 +60940,7 @@ func (m *ResourceStatus) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Name = ResourceName(dAtA[iNdEx:postIndex])
+			m.Name = ResourceName(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -61056,7 +61056,7 @@ func (m *SELinuxOptions) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.User = string(dAtA[iNdEx:postIndex])
+			m.User = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -61088,7 +61088,7 @@ func (m *SELinuxOptions) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Role = string(dAtA[iNdEx:postIndex])
+			m.Role = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -61120,7 +61120,7 @@ func (m *SELinuxOptions) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Type = string(dAtA[iNdEx:postIndex])
+			m.Type = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 4:
 			if wireType != 2 {
@@ -61152,7 +61152,7 @@ func (m *SELinuxOptions) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Level = string(dAtA[iNdEx:postIndex])
+			m.Level = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -61234,7 +61234,7 @@ func (m *ScaleIOPersistentVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Gateway = string(dAtA[iNdEx:postIndex])
+			m.Gateway = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -61266,7 +61266,7 @@ func (m *ScaleIOPersistentVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.System = string(dAtA[iNdEx:postIndex])
+			m.System = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -61354,7 +61354,7 @@ func (m *ScaleIOPersistentVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.ProtectionDomain = string(dAtA[iNdEx:postIndex])
+			m.ProtectionDomain = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 6:
 			if wireType != 2 {
@@ -61386,7 +61386,7 @@ func (m *ScaleIOPersistentVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.StoragePool = string(dAtA[iNdEx:postIndex])
+			m.StoragePool = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 7:
 			if wireType != 2 {
@@ -61418,7 +61418,7 @@ func (m *ScaleIOPersistentVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.StorageMode = string(dAtA[iNdEx:postIndex])
+			m.StorageMode = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 8:
 			if wireType != 2 {
@@ -61450,7 +61450,7 @@ func (m *ScaleIOPersistentVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.VolumeName = string(dAtA[iNdEx:postIndex])
+			m.VolumeName = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 9:
 			if wireType != 2 {
@@ -61482,7 +61482,7 @@ func (m *ScaleIOPersistentVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.FSType = string(dAtA[iNdEx:postIndex])
+			m.FSType = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 10:
 			if wireType != 0 {
@@ -61584,7 +61584,7 @@ func (m *ScaleIOVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Gateway = string(dAtA[iNdEx:postIndex])
+			m.Gateway = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -61616,7 +61616,7 @@ func (m *ScaleIOVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.System = string(dAtA[iNdEx:postIndex])
+			m.System = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -61704,7 +61704,7 @@ func (m *ScaleIOVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.ProtectionDomain = string(dAtA[iNdEx:postIndex])
+			m.ProtectionDomain = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 6:
 			if wireType != 2 {
@@ -61736,7 +61736,7 @@ func (m *ScaleIOVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.StoragePool = string(dAtA[iNdEx:postIndex])
+			m.StoragePool = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 7:
 			if wireType != 2 {
@@ -61768,7 +61768,7 @@ func (m *ScaleIOVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.StorageMode = string(dAtA[iNdEx:postIndex])
+			m.StorageMode = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 8:
 			if wireType != 2 {
@@ -61800,7 +61800,7 @@ func (m *ScaleIOVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.VolumeName = string(dAtA[iNdEx:postIndex])
+			m.VolumeName = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 9:
 			if wireType != 2 {
@@ -61832,7 +61832,7 @@ func (m *ScaleIOVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.FSType = string(dAtA[iNdEx:postIndex])
+			m.FSType = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 10:
 			if wireType != 0 {
@@ -62018,7 +62018,7 @@ func (m *ScopedResourceSelectorRequirement) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.ScopeName = ResourceQuotaScope(dAtA[iNdEx:postIndex])
+			m.ScopeName = ResourceQuotaScope(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -62050,7 +62050,7 @@ func (m *ScopedResourceSelectorRequirement) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Operator = ScopeSelectorOperator(dAtA[iNdEx:postIndex])
+			m.Operator = ScopeSelectorOperator(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -62082,7 +62082,7 @@ func (m *ScopedResourceSelectorRequirement) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Values = append(m.Values, string(dAtA[iNdEx:postIndex]))
+			m.Values = append(m.Values, intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -62164,7 +62164,7 @@ func (m *SeccompProfile) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Type = SeccompProfileType(dAtA[iNdEx:postIndex])
+			m.Type = SeccompProfileType(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -62196,7 +62196,7 @@ func (m *SeccompProfile) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := string(dAtA[iNdEx:postIndex])
+			s := intern.String(string(dAtA[iNdEx:postIndex]))
 			m.LocalhostProfile = &s
 			iNdEx = postIndex
 		default:
@@ -62440,7 +62440,7 @@ func (m *Secret) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Type = SecretType(dAtA[iNdEx:postIndex])
+			m.Type = SecretType(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 4:
 			if wireType != 2 {
@@ -62807,7 +62807,7 @@ func (m *SecretKeySelector) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Key = string(dAtA[iNdEx:postIndex])
+			m.Key = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 0 {
@@ -63165,7 +63165,7 @@ func (m *SecretReference) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Name = string(dAtA[iNdEx:postIndex])
+			m.Name = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -63197,7 +63197,7 @@ func (m *SecretReference) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Namespace = string(dAtA[iNdEx:postIndex])
+			m.Namespace = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -63279,7 +63279,7 @@ func (m *SecretVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.SecretName = string(dAtA[iNdEx:postIndex])
+			m.SecretName = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -63632,7 +63632,7 @@ func (m *SecurityContext) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := ProcMountType(dAtA[iNdEx:postIndex])
+			s := ProcMountType(intern.String(string(dAtA[iNdEx:postIndex])))
 			m.ProcMount = &s
 			iNdEx = postIndex
 		case 10:
@@ -64344,7 +64344,7 @@ func (m *ServiceAccountTokenProjection) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Audience = string(dAtA[iNdEx:postIndex])
+			m.Audience = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 0 {
@@ -64396,7 +64396,7 @@ func (m *ServiceAccountTokenProjection) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Path = string(dAtA[iNdEx:postIndex])
+			m.Path = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -64595,7 +64595,7 @@ func (m *ServicePort) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Name = string(dAtA[iNdEx:postIndex])
+			m.Name = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -64627,7 +64627,7 @@ func (m *ServicePort) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Protocol = Protocol(dAtA[iNdEx:postIndex])
+			m.Protocol = Protocol(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 0 {
@@ -64730,7 +64730,7 @@ func (m *ServicePort) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := string(dAtA[iNdEx:postIndex])
+			s := intern.String(string(dAtA[iNdEx:postIndex]))
 			m.AppProtocol = &s
 			iNdEx = postIndex
 		default:
@@ -64813,7 +64813,7 @@ func (m *ServiceProxyOptions) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Path = string(dAtA[iNdEx:postIndex])
+			m.Path = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -65056,7 +65056,7 @@ func (m *ServiceSpec) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.ClusterIP = string(dAtA[iNdEx:postIndex])
+			m.ClusterIP = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 4:
 			if wireType != 2 {
@@ -65088,7 +65088,7 @@ func (m *ServiceSpec) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Type = ServiceType(dAtA[iNdEx:postIndex])
+			m.Type = ServiceType(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 5:
 			if wireType != 2 {
@@ -65120,7 +65120,7 @@ func (m *ServiceSpec) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.ExternalIPs = append(m.ExternalIPs, string(dAtA[iNdEx:postIndex]))
+			m.ExternalIPs = append(m.ExternalIPs, intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 7:
 			if wireType != 2 {
@@ -65152,7 +65152,7 @@ func (m *ServiceSpec) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.SessionAffinity = ServiceAffinity(dAtA[iNdEx:postIndex])
+			m.SessionAffinity = ServiceAffinity(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 8:
 			if wireType != 2 {
@@ -65184,7 +65184,7 @@ func (m *ServiceSpec) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.LoadBalancerIP = string(dAtA[iNdEx:postIndex])
+			m.LoadBalancerIP = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 9:
 			if wireType != 2 {
@@ -65216,7 +65216,7 @@ func (m *ServiceSpec) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.LoadBalancerSourceRanges = append(m.LoadBalancerSourceRanges, string(dAtA[iNdEx:postIndex]))
+			m.LoadBalancerSourceRanges = append(m.LoadBalancerSourceRanges, intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 10:
 			if wireType != 2 {
@@ -65248,7 +65248,7 @@ func (m *ServiceSpec) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.ExternalName = string(dAtA[iNdEx:postIndex])
+			m.ExternalName = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 11:
 			if wireType != 2 {
@@ -65280,7 +65280,7 @@ func (m *ServiceSpec) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.ExternalTrafficPolicy = ServiceExternalTrafficPolicy(dAtA[iNdEx:postIndex])
+			m.ExternalTrafficPolicy = ServiceExternalTrafficPolicy(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 12:
 			if wireType != 0 {
@@ -65420,7 +65420,7 @@ func (m *ServiceSpec) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.ClusterIPs = append(m.ClusterIPs, string(dAtA[iNdEx:postIndex]))
+			m.ClusterIPs = append(m.ClusterIPs, intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 19:
 			if wireType != 2 {
@@ -65505,7 +65505,7 @@ func (m *ServiceSpec) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := string(dAtA[iNdEx:postIndex])
+			s := intern.String(string(dAtA[iNdEx:postIndex]))
 			m.LoadBalancerClass = &s
 			iNdEx = postIndex
 		case 22:
@@ -65538,7 +65538,7 @@ func (m *ServiceSpec) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := ServiceInternalTrafficPolicy(dAtA[iNdEx:postIndex])
+			s := ServiceInternalTrafficPolicy(intern.String(string(dAtA[iNdEx:postIndex])))
 			m.InternalTrafficPolicy = &s
 			iNdEx = postIndex
 		case 23:
@@ -65571,7 +65571,7 @@ func (m *ServiceSpec) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := string(dAtA[iNdEx:postIndex])
+			s := intern.String(string(dAtA[iNdEx:postIndex]))
 			m.TrafficDistribution = &s
 			iNdEx = postIndex
 		default:
@@ -65926,7 +65926,7 @@ func (m *StorageOSPersistentVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.VolumeName = string(dAtA[iNdEx:postIndex])
+			m.VolumeName = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -65958,7 +65958,7 @@ func (m *StorageOSPersistentVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.VolumeNamespace = string(dAtA[iNdEx:postIndex])
+			m.VolumeNamespace = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -65990,7 +65990,7 @@ func (m *StorageOSPersistentVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.FSType = string(dAtA[iNdEx:postIndex])
+			m.FSType = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 4:
 			if wireType != 0 {
@@ -66128,7 +66128,7 @@ func (m *StorageOSVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.VolumeName = string(dAtA[iNdEx:postIndex])
+			m.VolumeName = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -66160,7 +66160,7 @@ func (m *StorageOSVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.VolumeNamespace = string(dAtA[iNdEx:postIndex])
+			m.VolumeNamespace = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -66192,7 +66192,7 @@ func (m *StorageOSVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.FSType = string(dAtA[iNdEx:postIndex])
+			m.FSType = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 4:
 			if wireType != 0 {
@@ -66330,7 +66330,7 @@ func (m *Sysctl) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Name = string(dAtA[iNdEx:postIndex])
+			m.Name = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -66362,7 +66362,7 @@ func (m *Sysctl) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Value = string(dAtA[iNdEx:postIndex])
+			m.Value = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -66477,7 +66477,7 @@ func (m *TCPSocketAction) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Host = string(dAtA[iNdEx:postIndex])
+			m.Host = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -66559,7 +66559,7 @@ func (m *Taint) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Key = string(dAtA[iNdEx:postIndex])
+			m.Key = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -66591,7 +66591,7 @@ func (m *Taint) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Value = string(dAtA[iNdEx:postIndex])
+			m.Value = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -66623,7 +66623,7 @@ func (m *Taint) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Effect = TaintEffect(dAtA[iNdEx:postIndex])
+			m.Effect = TaintEffect(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 4:
 			if wireType != 2 {
@@ -66741,7 +66741,7 @@ func (m *Toleration) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Key = string(dAtA[iNdEx:postIndex])
+			m.Key = intern.String(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -66773,7 +66773,7 @@ func (m *Toleration) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Operator = TolerationOperator(dAtA[iNdEx:postIndex])
+			m.Operator = TolerationOperator(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -66805,7 +66805,7 @@ func (m *Toleration) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Value = string(dAtA[iNdEx:postIndex])
+			m.Value = intern.String(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 4:
 			if wireType != 2 {
@@ -66837,7 +66837,7 @@ func (m *Toleration) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Effect = TaintEffect(dAtA[iNdEx:postIndex])
+			m.Effect = TaintEffect(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 5:
 			if wireType != 0 {
@@ -66939,7 +66939,7 @@ func (m *TopologySelectorLabelRequirement) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Key = string(dAtA[iNdEx:postIndex])
+			m.Key = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -66971,7 +66971,7 @@ func (m *TopologySelectorLabelRequirement) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Values = append(m.Values, string(dAtA[iNdEx:postIndex]))
+			m.Values = append(m.Values, intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -67156,7 +67156,7 @@ func (m *TopologySpreadConstraint) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.TopologyKey = string(dAtA[iNdEx:postIndex])
+			m.TopologyKey = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -67188,7 +67188,7 @@ func (m *TopologySpreadConstraint) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.WhenUnsatisfiable = UnsatisfiableConstraintAction(dAtA[iNdEx:postIndex])
+			m.WhenUnsatisfiable = UnsatisfiableConstraintAction(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 4:
 			if wireType != 2 {
@@ -67276,7 +67276,7 @@ func (m *TopologySpreadConstraint) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := NodeInclusionPolicy(dAtA[iNdEx:postIndex])
+			s := NodeInclusionPolicy(intern.String(string(dAtA[iNdEx:postIndex])))
 			m.NodeAffinityPolicy = &s
 			iNdEx = postIndex
 		case 7:
@@ -67309,7 +67309,7 @@ func (m *TopologySpreadConstraint) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := NodeInclusionPolicy(dAtA[iNdEx:postIndex])
+			s := NodeInclusionPolicy(intern.String(string(dAtA[iNdEx:postIndex])))
 			m.NodeTaintsPolicy = &s
 			iNdEx = postIndex
 		case 8:
@@ -67342,7 +67342,7 @@ func (m *TopologySpreadConstraint) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.MatchLabelKeys = append(m.MatchLabelKeys, string(dAtA[iNdEx:postIndex]))
+			m.MatchLabelKeys = append(m.MatchLabelKeys, intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -67424,7 +67424,7 @@ func (m *TypedLocalObjectReference) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := string(dAtA[iNdEx:postIndex])
+			s := intern.String(string(dAtA[iNdEx:postIndex]))
 			m.APIGroup = &s
 			iNdEx = postIndex
 		case 2:
@@ -67457,7 +67457,7 @@ func (m *TypedLocalObjectReference) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Kind = string(dAtA[iNdEx:postIndex])
+			m.Kind = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -67489,7 +67489,7 @@ func (m *TypedLocalObjectReference) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Name = string(dAtA[iNdEx:postIndex])
+			m.Name = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -67571,7 +67571,7 @@ func (m *TypedObjectReference) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := string(dAtA[iNdEx:postIndex])
+			s := intern.String(string(dAtA[iNdEx:postIndex]))
 			m.APIGroup = &s
 			iNdEx = postIndex
 		case 2:
@@ -67604,7 +67604,7 @@ func (m *TypedObjectReference) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Kind = string(dAtA[iNdEx:postIndex])
+			m.Kind = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -67636,7 +67636,7 @@ func (m *TypedObjectReference) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Name = string(dAtA[iNdEx:postIndex])
+			m.Name = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 4:
 			if wireType != 2 {
@@ -67668,7 +67668,7 @@ func (m *TypedObjectReference) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := string(dAtA[iNdEx:postIndex])
+			s := intern.String(string(dAtA[iNdEx:postIndex]))
 			m.Namespace = &s
 			iNdEx = postIndex
 		default:
@@ -67751,7 +67751,7 @@ func (m *Volume) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Name = string(dAtA[iNdEx:postIndex])
+			m.Name = intern.String(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -67866,7 +67866,7 @@ func (m *VolumeDevice) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Name = string(dAtA[iNdEx:postIndex])
+			m.Name = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -67898,7 +67898,7 @@ func (m *VolumeDevice) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.DevicePath = string(dAtA[iNdEx:postIndex])
+			m.DevicePath = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -67980,7 +67980,7 @@ func (m *VolumeMount) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Name = string(dAtA[iNdEx:postIndex])
+			m.Name = intern.String(intern.String(string(dAtA[iNdEx:postIndex])))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 0 {
@@ -68032,7 +68032,7 @@ func (m *VolumeMount) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.MountPath = string(dAtA[iNdEx:postIndex])
+			m.MountPath = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 4:
 			if wireType != 2 {
@@ -68064,7 +68064,7 @@ func (m *VolumeMount) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.SubPath = string(dAtA[iNdEx:postIndex])
+			m.SubPath = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 5:
 			if wireType != 2 {
@@ -68096,7 +68096,7 @@ func (m *VolumeMount) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := MountPropagationMode(dAtA[iNdEx:postIndex])
+			s := MountPropagationMode(intern.String(string(dAtA[iNdEx:postIndex])))
 			m.MountPropagation = &s
 			iNdEx = postIndex
 		case 6:
@@ -68129,7 +68129,7 @@ func (m *VolumeMount) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.SubPathExpr = string(dAtA[iNdEx:postIndex])
+			m.SubPathExpr = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 7:
 			if wireType != 2 {
@@ -68161,7 +68161,7 @@ func (m *VolumeMount) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := RecursiveReadOnlyMode(dAtA[iNdEx:postIndex])
+			s := RecursiveReadOnlyMode(intern.String(string(dAtA[iNdEx:postIndex])))
 			m.RecursiveReadOnly = &s
 			iNdEx = postIndex
 		default:
@@ -68244,7 +68244,7 @@ func (m *VolumeMountStatus) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Name = string(dAtA[iNdEx:postIndex])
+			m.Name = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -68276,7 +68276,7 @@ func (m *VolumeMountStatus) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.MountPath = string(dAtA[iNdEx:postIndex])
+			m.MountPath = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 0 {
@@ -68328,7 +68328,7 @@ func (m *VolumeMountStatus) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := RecursiveReadOnlyMode(dAtA[iNdEx:postIndex])
+			s := RecursiveReadOnlyMode(intern.String(string(dAtA[iNdEx:postIndex])))
 			m.RecursiveReadOnly = &s
 			iNdEx = postIndex
 		case 5:
@@ -70320,7 +70320,7 @@ func (m *VsphereVirtualDiskVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.VolumePath = string(dAtA[iNdEx:postIndex])
+			m.VolumePath = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -70352,7 +70352,7 @@ func (m *VsphereVirtualDiskVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.FSType = string(dAtA[iNdEx:postIndex])
+			m.FSType = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -70384,7 +70384,7 @@ func (m *VsphereVirtualDiskVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.StoragePolicyName = string(dAtA[iNdEx:postIndex])
+			m.StoragePolicyName = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 4:
 			if wireType != 2 {
@@ -70416,7 +70416,7 @@ func (m *VsphereVirtualDiskVolumeSource) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.StoragePolicyID = string(dAtA[iNdEx:postIndex])
+			m.StoragePolicyID = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -70600,7 +70600,7 @@ func (m *WindowsSecurityContextOptions) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := string(dAtA[iNdEx:postIndex])
+			s := intern.String(string(dAtA[iNdEx:postIndex]))
 			m.GMSACredentialSpecName = &s
 			iNdEx = postIndex
 		case 2:
@@ -70633,7 +70633,7 @@ func (m *WindowsSecurityContextOptions) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := string(dAtA[iNdEx:postIndex])
+			s := intern.String(string(dAtA[iNdEx:postIndex]))
 			m.GMSACredentialSpec = &s
 			iNdEx = postIndex
 		case 3:
@@ -70666,7 +70666,7 @@ func (m *WindowsSecurityContextOptions) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := string(dAtA[iNdEx:postIndex])
+			s := intern.String(string(dAtA[iNdEx:postIndex]))
 			m.RunAsUserName = &s
 			iNdEx = postIndex
 		case 4:
@@ -70770,7 +70770,7 @@ func (m *WorkloadReference) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Name = string(dAtA[iNdEx:postIndex])
+			m.Name = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -70802,7 +70802,7 @@ func (m *WorkloadReference) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.PodGroup = string(dAtA[iNdEx:postIndex])
+			m.PodGroup = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		case 3:
 			if wireType != 2 {
@@ -70834,7 +70834,7 @@ func (m *WorkloadReference) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.PodGroupReplicaKey = string(dAtA[iNdEx:postIndex])
+			m.PodGroupReplicaKey = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex

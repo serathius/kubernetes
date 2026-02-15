@@ -39,12 +39,17 @@ func BenchmarkPodDecode(b *testing.B) {
 	codec := protobuf.NewRawSerializer(scheme, scheme)
 
 	intern.SetInternObjectStrings(b, false)
+	intern.SetInternString(b, false)
 
 	b.Run("Intern=False", func(b *testing.B) {
 		benchmarkPodDecode(b, codec.Decode, protoData)
 	})
 	b.Run("Intern=ObjectStrings", func(b *testing.B) {
 		intern.SetInternObjectStrings(b, true)
+		benchmarkPodDecode(b, codec.Decode, protoData)
+	})
+	b.Run("Intern=String", func(b *testing.B) {
+		intern.SetInternString(b, true)
 		benchmarkPodDecode(b, codec.Decode, protoData)
 	})
 }

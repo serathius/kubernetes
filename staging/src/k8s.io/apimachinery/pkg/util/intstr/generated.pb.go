@@ -24,6 +24,8 @@ import (
 
 	io "io"
 	math_bits "math/bits"
+
+	"k8s.io/apimachinery/pkg/util/intern"
 )
 
 func (m *IntOrString) Reset() { *m = IntOrString{} }
@@ -189,7 +191,7 @@ func (m *IntOrString) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.StrVal = string(dAtA[iNdEx:postIndex])
+			m.StrVal = intern.String(string(dAtA[iNdEx:postIndex]))
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex

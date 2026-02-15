@@ -24,7 +24,8 @@ import (
 )
 
 
-var enableInternObjectStrings = true
+var enableInternObjectStrings = false
+var enableInternString = true
 
 func SetInternObjectStrings(tb testing.TB, new bool) {
 	old := enableInternObjectStrings
@@ -32,6 +33,24 @@ func SetInternObjectStrings(tb testing.TB, new bool) {
 		enableInternObjectStrings = old
 	})
 	enableInternObjectStrings = new
+}
+
+func SetInternString(tb testing.TB, new bool) {
+	old := enableInternString
+	tb.Cleanup(func() {
+		enableInternString= old
+	})
+	enableInternString = new
+}
+
+func String(s string) string {
+	if !enableInternString {
+		return s
+	}
+	if len(s) == 0 {
+		return s
+	}
+	return unique.Make(s).Value()
 }
 
 func InternObjectStrings(obj interface{}) {
