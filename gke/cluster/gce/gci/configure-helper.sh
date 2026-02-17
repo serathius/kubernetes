@@ -30,6 +30,7 @@ METADATA_SERVER_IP="${METADATA_SERVER_IP:-169.254.169.254}"
 # MDS IPv6 address is from the ULA range as selected by GCE MDS team in the
 # go/gce-ipv6-mds-design. They decided on ULA vs LL, as for LL in IPv6 one has
 # to explicitly specify the interface to use.
+# This variable accepts a comma-delimited list of IPv6 addresses.
 METADATA_SERVER_IPV6="${METADATA_SERVER_IPV6:-fd20:ce::254}"
 
 # Backend endpoints (configurable for TPC).
@@ -237,8 +238,8 @@ function config-ip-firewall {
   # node because we don't expect the daemonset to run on this node.
   if [[ "${ENABLE_METADATA_CONCEALMENT:-}" == "true" ]] && [[ ! "${METADATA_CONCEALMENT_NO_FIREWALL:-}" == "true" ]]; then
     echo "Add rule for metadata concealment"
-    if [[ "${STACK_TYPE:-}" == "IPV6" ]]; then
-      # cluster stackType indicate it supports IPv6
+    if [[ "${STACK_TYPE:-}" != "IPV4" ]]; then
+      # cluster stack type indicates an IPv6 or a dual stack cluster
 
       # Address the gke-metadata-server listens to in IPv6 clusters
       # It's an ULA address reserved in https://ipdb.corp.google.com/ which
@@ -247,12 +248,18 @@ function config-ip-firewall {
       # Assigning address to lo interface with host scope to ensure it's not
       # accessible from outside.
       ip -6 addr add dev lo "${ipv6_gke_mds_listen_address}/128" scope host
-      ip6tables -w -t nat -I PREROUTING -p tcp ! -i eth0 -d "${METADATA_SERVER_IPV6}" --dport 80 -m comment --comment "metadata-concealment: bridge traffic to metadata server goes to metadata proxy" -j DNAT --to-destination "[${ipv6_gke_mds_listen_address}]:988"
-      ip6tables -w -t nat -I PREROUTING -p tcp ! -i eth0 -d "${METADATA_SERVER_IPV6}" --dport 8080 -m comment --comment "metadata-concealment: bridge traffic to metadata server goes to metadata proxy" -j DNAT --to-destination "[${ipv6_gke_mds_listen_address}]:987"
-      ip6tables -w -t nat -I PREROUTING -p tcp ! -i eth0 -d "${METADATA_SERVER_IPV6}" --dport 8082 -m comment --comment "metadata-concealment: bridge traffic to metadata server goes to metadata proxy" -j DNAT --to-destination "[${ipv6_gke_mds_listen_address}]:991"
+
+      IFS=',' read -ra MDS_ADDR <<< "${METADATA_SERVER_IPV6}"
+      for i in "${MDS_ADDR[@]}"; do
+        ip6tables -w -t nat -I PREROUTING -p tcp ! -i eth0 -d "${i}" --dport 80 -m comment --comment "metadata-concealment: bridge traffic to metadata server goes to metadata proxy" -j DNAT --to-destination "[${ipv6_gke_mds_listen_address}]:988"
+        ip6tables -w -t nat -I PREROUTING -p tcp ! -i eth0 -d "${i}" --dport 8080 -m comment --comment "metadata-concealment: bridge traffic to metadata server goes to metadata proxy" -j DNAT --to-destination "[${ipv6_gke_mds_listen_address}]:987"
+        ip6tables -w -t nat -I PREROUTING -p tcp ! -i eth0 -d "${i}" --dport 8082 -m comment --comment "metadata-concealment: bridge traffic to metadata server goes to metadata proxy" -j DNAT --to-destination "[${ipv6_gke_mds_listen_address}]:991"
+      done
     fi
+
     if [[ "${STACK_TYPE:-}" != "IPV6" ]]; then
-      # cluster stackType indicate it supports IPv4
+      # cluster stack type indicates an IPv4 or a dual stack cluster
+
       ip addr add dev lo 169.254.169.252/32 scope host
       iptables -w -t nat -I PREROUTING -p tcp ! -i eth0 -d "${METADATA_SERVER_IP}" --dport 80 -m comment --comment "metadata-concealment: bridge traffic to metadata server goes to metadata proxy" -j DNAT --to-destination 169.254.169.252:988
       iptables -w -t nat -I PREROUTING -p tcp ! -i eth0 -d "${METADATA_SERVER_IP}" --dport 8080 -m comment --comment "metadata-concealment: bridge traffic to metadata server goes to metadata proxy" -j DNAT --to-destination 169.254.169.252:987
@@ -264,10 +271,13 @@ function config-ip-firewall {
     iptables -w -t mangle -I OUTPUT -s "${METADATA_SERVER_IP}" -p udp --sport 53 -j ACCEPT
     iptables -w -t mangle -I OUTPUT -s "${METADATA_SERVER_IP}" -p tcp --sport 53 -j ACCEPT
   fi
-  if [[ "${STACK_TYPE:-}" == "IPV6" ]]; then
-    ip6tables -w -t mangle -I OUTPUT -s "${METADATA_SERVER_IPV6}" -j DROP
-    ip6tables -w -t mangle -I OUTPUT -s "${METADATA_SERVER_IPV6}" -p udp --sport 53 -j ACCEPT
-    ip6tables -w -t mangle -I OUTPUT -s "${METADATA_SERVER_IPV6}" -p tcp --sport 53 -j ACCEPT
+  if [[ "${STACK_TYPE:-}" != "IPV4" ]]; then
+    IFS=',' read -ra MDS_ADDR <<< "${METADATA_SERVER_IPV6}"
+    for i in "${MDS_ADDR[@]}"; do
+      ip6tables -w -t mangle -I OUTPUT -s "${i}" -j DROP
+      ip6tables -w -t mangle -I OUTPUT -s "${i}" -p udp --sport 53 -j ACCEPT
+      ip6tables -w -t mangle -I OUTPUT -s "${i}" -p tcp --sport 53 -j ACCEPT
+    done
   fi
 
   # Log all metadata access not from approved processes.
