@@ -18,5 +18,12 @@ ARG BASEIMAGE
 ARG BINARY
 
 
-FROM "${BASEIMAGE}"
-COPY ${BINARY} /usr/local/bin/${BINARY}
+FROM "${BASEIMAGE}" as base
+COPY --chmod=755 ${BINARY} /usr/local/bin/${BINARY}
+
+FROM base as with-licenses
+# Injected by GKE build process
+COPY --chmod=644 LICENSES /THIRD_PARTY_NOTICES/
+
+FROM with-licenses as with-source
+COPY --chmod=644 kubernetes-src.tar.xz /

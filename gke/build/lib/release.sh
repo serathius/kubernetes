@@ -345,12 +345,33 @@ function kube::release::create_docker_images_for_server() {
         docker_build_opts='--pull'
     fi
 
+    # GKE: Prepare artifacts for injection
+    local licenses_path=""
+    if [[ -e "${KUBE_ROOT}/Godeps/LICENSES" ]]; then
+      licenses_path="${KUBE_ROOT}/Godeps/LICENSES"
+    elif [[ -e "${KUBE_ROOT}/LICENSES" ]]; then
+      licenses_path="${KUBE_ROOT}/LICENSES"
+    fi
+    if [[ -z "${licenses_path}" ]]; then
+      kube::log::error "Could not find LICENSES"
+      return 1
+    fi
+
+    local src_tarball="${binary_dir}/kubernetes-src.tar.xz"
+    kube::log::status "Generating source tarball at ${src_tarball}"
+    git -C "${KUBE_ROOT}" archive \
+      --worktree-attributes \
+      --format=tar \
+      HEAD | xz > "${src_tarball}"
+
     for wrappable in $binaries; do
 
       local binary_name=${wrappable%%,*}
       local base_image=${wrappable##*,}
       local binary_file_path="${binary_dir}/${binary_name}"
-      local docker_build_path="${binary_file_path}.dockerbuild"
+      local docker_build_base="${KUBE_ROOT}/gke/tmp/docker-builds"
+      mkdir -p "${docker_build_base}"
+      local docker_build_path="${docker_build_base}/${binary_name}.dockerbuild"
       local docker_image_tag="${docker_registry}/${binary_name}-${arch}:${docker_tag}"
 
       local docker_file_path="${KUBE_ROOT}/gke/build/server-image/Dockerfile"
@@ -365,6 +386,10 @@ function kube::release::create_docker_images_for_server() {
         mkdir -p "${docker_build_path}"
         ln "${binary_file_path}" "${docker_build_path}/${binary_name}"
 
+        # GKE: Copy artifacts to build context
+        cp -a "${licenses_path}" "${docker_build_path}/LICENSES"
+        cp "${src_tarball}" "${docker_build_path}/"
+
         local build_log="${docker_build_path}/build.log"
         if ! DOCKER_CLI_EXPERIMENTAL=enabled "${DOCKER[@]}" buildx build \
           -f "${docker_file_path}" \
@@ -374,6 +399,9 @@ function kube::release::create_docker_images_for_server() {
           --build-arg BASEIMAGE="${base_image}" \
           --build-arg SETCAP_IMAGE="${KUBE_BUILD_SETCAP_IMAGE}" \
           --build-arg BINARY="${binary_name}" \
+          --label "INCLUDES_NOTICES=/THIRD_PARTY_NOTICES" \
+          --label "INCLUDES_SOURCE=/kubernetes-src.tar.xz" \
+          --label "SOURCES_INCLUDED=." \
           "${docker_build_path}" >"${build_log}" 2>&1; then
             cat "${build_log}"
             exit 1
@@ -383,12 +411,23 @@ function kube::release::create_docker_images_for_server() {
         # If we are building an official/alpha/beta release we want to keep
         # docker images and tag them appropriately.
         local -r release_docker_image_tag="${KUBE_DOCKER_REGISTRY-$docker_registry}/${binary_name}-${arch}:${KUBE_DOCKER_IMAGE_TAG-$docker_tag}"
+        local -a extra_tags=()
         if [[ "${release_docker_image_tag}" != "${docker_image_tag}" ]]; then
           kube::log::status "Tagging docker image ${docker_image_tag} as ${release_docker_image_tag}"
           "${DOCKER[@]}" rmi "${release_docker_image_tag}" 2>/dev/null || true
           "${DOCKER[@]}" tag "${docker_image_tag}" "${release_docker_image_tag}" 2>/dev/null
         fi
-        "${DOCKER[@]}" save -o "${binary_file_path}.tar" "${docker_image_tag}" "${release_docker_image_tag}"
+
+        # GKE: Tag for extra registries
+        for extra_registry in ${GKE_EXTRA_DOCKER_REGISTRIES}; do
+            local extra_tag="${extra_registry}/${binary_name}-${arch}:${KUBE_DOCKER_IMAGE_TAG-$docker_tag}"
+            kube::log::status "Tagging docker image ${docker_image_tag} as ${extra_tag}"
+            "${DOCKER[@]}" rmi "${extra_tag}" 2>/dev/null || true
+            "${DOCKER[@]}" tag "${docker_image_tag}" "${extra_tag}" 2>/dev/null
+            extra_tags+=("${extra_tag}")
+        done
+
+        "${DOCKER[@]}" save -o "${binary_file_path}.tar" "${docker_image_tag}" "${release_docker_image_tag}" "${extra_tags[@]}"
         echo "${docker_tag}" > "${binary_file_path}.docker_tag"
         rm -rf "${docker_build_path}"
         ln "${binary_file_path}.tar" "${images_dir}/"
