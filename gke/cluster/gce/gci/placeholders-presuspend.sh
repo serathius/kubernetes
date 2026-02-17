@@ -174,9 +174,15 @@ EOF
   # established.
   # 4. Re-run the google-guest-agent.service to ensure that the guest agent is
   # configured with the correct VM metadata.
+  # 5. Re-run the google-osconfig-agent.service to ensure that the osconfig
+  # agent is configured with the correct VM metadata.
   log "Restarting services..."
   # Restart the services in parallel to speed up the process.
-  systemctl restart resize-stateful-partition.service systemd-networkd-wait-online.service gcr-wait-online.service google-guest-agent.service
+  systemctl restart resize-stateful-partition.service \
+    systemd-networkd-wait-online.service \
+    gcr-wait-online.service \
+    google-guest-agent.service \
+    google-osconfig-agent.service
 
   # Ensure this is a node with GPUs before querying GPU version from node label &
   # conducting mount binding to /bin/nvidia
