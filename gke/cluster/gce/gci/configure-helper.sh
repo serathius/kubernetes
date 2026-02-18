@@ -1903,8 +1903,8 @@ function start-node-problem-detector {
   flags+=" --apiserver-override=https://${KUBERNETES_MASTER_NAME}?inClusterConfig=false&auth=/var/lib/node-problem-detector/kubeconfig"
 
   # Mask the COS node problem detector service to prevent it from starting and conflicting with
-  # the GKE node problem detector.
-  systemctl mask node-problem-detector.service
+  # the GKE node problem detector. Use --now to stop it if it has already started.
+  systemctl mask --now node-problem-detector.service
 
   # Enable node problem detector to use node P4SA to call Google APIs.
   if [[ -n "${NODE_PROBLEM_DETECTOR_ADC_CONFIG:-}" ]]; then
