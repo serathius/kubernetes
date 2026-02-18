@@ -23,6 +23,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	resourceapi "k8s.io/api/resource/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -505,4 +506,70 @@ func QuotaV1Pod(pod *corev1.Pod, clock clock.Clock) bool {
 		}
 	}
 	return true
+}
+
+// TrimPod strips the pod of any information that is not required by the controller manager.
+// This is used to reduce memory usage of the shared informer factory.
+func TrimPod(pod *corev1.Pod) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            pod.Name,
+			Namespace:       pod.Namespace,
+			UID:             pod.UID,
+			ResourceVersion: pod.ResourceVersion,
+			Labels:          pod.Labels,
+			Annotations:     pod.Annotations,
+			OwnerReferences: pod.OwnerReferences,
+			Finalizers:      pod.Finalizers,
+		},
+		Spec: corev1.PodSpec{
+			NodeName:              pod.Spec.NodeName,
+			ServiceAccountName:    pod.Spec.ServiceAccountName,
+			ImagePullSecrets:      pod.Spec.ImagePullSecrets,
+			Volumes:               pod.Spec.Volumes,
+			ResourceClaims:        pod.Spec.ResourceClaims,
+			Overhead:              pod.Spec.Overhead,
+			PriorityClassName:     pod.Spec.PriorityClassName,
+			Affinity:              pod.Spec.Affinity,
+			ActiveDeadlineSeconds: pod.Spec.ActiveDeadlineSeconds,
+			Containers:            trimContainers(pod.Spec.Containers),
+			InitContainers:        trimContainers(pod.Spec.InitContainers),
+		},
+		Status: corev1.PodStatus{
+			Phase:                       pod.Status.Phase,
+			Conditions:                  pod.Status.Conditions,
+			Reason:                      pod.Status.Reason,
+			ExtendedResourceClaimStatus: pod.Status.ExtendedResourceClaimStatus,
+		},
+	}
+}
+
+func trimContainers(containers []corev1.Container) []corev1.Container {
+	if len(containers) == 0 {
+		return nil
+	}
+	trimmed := make([]corev1.Container, len(containers))
+	for i := range containers {
+		trimmed[i] = corev1.Container{
+			Name:      containers[i].Name,
+			Resources: containers[i].Resources,
+			Env:       trimEnv(containers[i].Env),
+			EnvFrom:   containers[i].EnvFrom,
+		}
+	}
+	return trimmed
+}
+
+func trimEnv(env []corev1.EnvVar) []corev1.EnvVar {
+	if len(env) == 0 {
+		return nil
+	}
+	trimmed := make([]corev1.EnvVar, len(env))
+	for i := range env {
+		trimmed[i] = corev1.EnvVar{
+			Name:      env[i].Name,
+			ValueFrom: env[i].ValueFrom,
+		}
+	}
+	return trimmed
 }

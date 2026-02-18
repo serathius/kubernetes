@@ -806,6 +806,124 @@ func TestPodEvaluatorUsageStats(t *testing.T) {
 	}
 }
 
+func TestTrimPod(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "pod1",
+			Namespace: "default",
+			UID:       "uid1",
+		},
+		Spec: corev1.PodSpec{
+			NodeName: "node1",
+			Containers: []corev1.Container{
+				{
+					Name:  "container1",
+					Image: "image1",
+					Args:  []string{"arg1"},
+					LivenessProbe: &corev1.Probe{
+						PeriodSeconds: 10,
+					},
+					VolumeMounts: []corev1.VolumeMount{
+						{
+							Name:      "vol1",
+							MountPath: "/tmp",
+						},
+					},
+					Env: []corev1.EnvVar{
+						{
+							Name:  "FOO",
+							Value: "BAR",
+						},
+						{
+							Name: "BAZ",
+							ValueFrom: &corev1.EnvVarSource{
+								SecretKeyRef: &corev1.SecretKeySelector{
+									Key: "key",
+								},
+							},
+						},
+					},
+				},
+			},
+			InitContainers: []corev1.Container{
+				{
+					Name:  "init1",
+					Image: "image2",
+					Command: []string{"cmd1"},
+				},
+			},
+		},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodRunning,
+			ContainerStatuses: []corev1.ContainerStatus{
+				{
+					Name: "container1",
+					Ready: true,
+				},
+			},
+			PodIPs: []corev1.PodIP{
+				{
+					IP: "1.2.3.4",
+				},
+			},
+		},
+	}
+
+	trimmed := TrimPod(pod)
+
+	if trimmed.Name != "pod1" {
+		t.Errorf("expected Name to be preserved, got %s", trimmed.Name)
+	}
+	if trimmed.Spec.NodeName != "node1" {
+		t.Errorf("expected NodeName to be preserved, got %s", trimmed.Spec.NodeName)
+	}
+	if trimmed.Spec.Containers[0].Name != "container1" {
+		t.Errorf("expected Container Name to be preserved, got %s", trimmed.Spec.Containers[0].Name)
+	}
+	if trimmed.Spec.Containers[0].Image != "" {
+		t.Errorf("expected Image to be empty, got %s", trimmed.Spec.Containers[0].Image)
+	}
+	if trimmed.Spec.Containers[0].Args != nil {
+		t.Errorf("expected Args to be nil, got %v", trimmed.Spec.Containers[0].Args)
+	}
+	if trimmed.Spec.Containers[0].LivenessProbe != nil {
+		t.Errorf("expected LivenessProbe to be nil, got %v", trimmed.Spec.Containers[0].LivenessProbe)
+	}
+	if trimmed.Spec.Containers[0].VolumeMounts != nil {
+		t.Errorf("expected VolumeMounts to be nil, got %v", trimmed.Spec.Containers[0].VolumeMounts)
+	}
+	if len(trimmed.Spec.Containers[0].Env) != 2 {
+		t.Errorf("expected Env length to be 2, got %d", len(trimmed.Spec.Containers[0].Env))
+	}
+	if trimmed.Spec.Containers[0].Env[0].Name != "FOO" {
+		t.Errorf("expected Env[0].Name to be FOO, got %s", trimmed.Spec.Containers[0].Env[0].Name)
+	}
+	if trimmed.Spec.Containers[0].Env[0].Value != "" {
+		t.Errorf("expected Env[0].Value to be empty, got %s", trimmed.Spec.Containers[0].Env[0].Value)
+	}
+	if trimmed.Spec.Containers[0].Env[1].Name != "BAZ" {
+		t.Errorf("expected Env[1].Name to be BAZ, got %s", trimmed.Spec.Containers[0].Env[1].Name)
+	}
+	if trimmed.Spec.Containers[0].Env[1].ValueFrom == nil {
+		t.Errorf("expected Env[1].ValueFrom to be preserved, got nil")
+	}
+	if trimmed.Spec.InitContainers[0].Image != "" {
+		t.Errorf("expected InitContainer Image to be empty, got %s", trimmed.Spec.InitContainers[0].Image)
+	}
+	if trimmed.Spec.InitContainers[0].Command != nil {
+		t.Errorf("expected InitContainer Command to be nil, got %v", trimmed.Spec.InitContainers[0].Command)
+	}
+	if trimmed.Status.ContainerStatuses != nil {
+		t.Errorf("expected ContainerStatuses to be nil, got %v", trimmed.Status.ContainerStatuses)
+	}
+	if trimmed.Status.PodIPs != nil {
+		t.Errorf("expected PodIPs to be nil, got %v", trimmed.Status.PodIPs)
+	}
+	if trimmed.Status.Phase != corev1.PodRunning {
+		t.Errorf("expected Phase to be preserved, got %v", trimmed.Status.Phase)
+	}
+}
+
 func TestPodEvaluatorMatchingScopes(t *testing.T) {
 	fakeClock := testingclock.NewFakeClock(time.Now())
 	evaluator := NewPodEvaluator(nil, fakeClock)

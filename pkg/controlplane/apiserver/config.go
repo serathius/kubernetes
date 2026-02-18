@@ -25,7 +25,9 @@ import (
 
 	noopoteltrace "go.opentelemetry.io/otel/trace/noop"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/kubernetes/pkg/quota/v1/evaluator/core"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -151,8 +153,13 @@ func BuildGenericConfig(
 		return
 	}
 	trim := func(obj interface{}) (interface{}, error) {
-		if accessor, err := meta.Accessor(obj); err == nil && accessor.GetManagedFields() != nil {
-			accessor.SetManagedFields(nil)
+		if accessor, err := meta.Accessor(obj); err == nil {
+			if accessor.GetManagedFields() != nil {
+				accessor.SetManagedFields(nil)
+			}
+		}
+		if pod, ok := obj.(*corev1.Pod); ok {
+			return core.TrimPod(pod), nil
 		}
 		return obj, nil
 	}
@@ -422,3 +429,5 @@ func CreateProxyTransport() *http.Transport {
 	})
 	return proxyTransport
 }
+
+
