@@ -175,6 +175,10 @@ function start-kube-apiserver {
   params+=" --service-account-issuer=${SERVICEACCOUNT_ISSUER}"
   params+=" --api-audiences=${SERVICEACCOUNT_ISSUER}"
 
+  if [[ "${DISABLE_SA_TOKEN_EXTENSION:-false}" == "true" ]]; then
+    params+=" --service-account-extend-token-expiration=false"
+  fi
+
   local audit_policy_config_mount=""
   local audit_policy_config_volume=""
   local audit_webhook_config_mount=""
