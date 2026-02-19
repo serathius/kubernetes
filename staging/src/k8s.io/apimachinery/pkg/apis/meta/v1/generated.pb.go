@@ -7403,7 +7403,7 @@ func (m *ManagedFieldsEntry) Unmarshal(dAtA []byte) error {
 			if m.FieldsV1 == nil {
 				m.FieldsV1 = &FieldsV1{}
 			}
-			if err := m.FieldsV1.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+			if err := internFieldsV1(dAtA[iNdEx:postIndex], m.FieldsV1); err != nil {
 				return err
 			}
 			iNdEx = postIndex

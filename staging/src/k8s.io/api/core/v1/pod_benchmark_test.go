@@ -5,6 +5,7 @@ import (
 	"runtime"
 	"testing"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/runtime/serializer/protobuf"
@@ -40,6 +41,7 @@ func BenchmarkPodDecode(b *testing.B) {
 
 	intern.SetInternObjectStrings(b, false)
 	intern.SetInternString(b, false)
+	metav1.SetInternFieldsV1(b, false)
 
 	b.Run("Intern=False", func(b *testing.B) {
 		benchmarkPodDecode(b, codec.Decode, protoData)
@@ -50,6 +52,15 @@ func BenchmarkPodDecode(b *testing.B) {
 	})
 	b.Run("Intern=String", func(b *testing.B) {
 		intern.SetInternString(b, true)
+		benchmarkPodDecode(b, codec.Decode, protoData)
+	})
+	b.Run("Intern=ManagedFields", func(b *testing.B) {
+		metav1.SetInternFieldsV1(b, true)
+		benchmarkPodDecode(b, codec.Decode, protoData)
+	})
+	b.Run("Intern=String,ManagedFields", func(b *testing.B) {
+		intern.SetInternString(b, true)
+		metav1.SetInternFieldsV1(b, true)
 		benchmarkPodDecode(b, codec.Decode, protoData)
 	})
 }
