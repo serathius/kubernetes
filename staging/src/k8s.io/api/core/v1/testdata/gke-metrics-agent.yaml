@@ -1,0 +1,1170 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  annotations:
+    components.gke.io/component-name: gke-metrics-agent
+    components.gke.io/component-version: 2.134.13-gke.0
+    configHash: V5zg+cXjw5WWRPEJ2vQsXTP7zJmCyPJP90xGwUcixMY=
+  creationTimestamp: "2026-02-09T05:24:34Z"
+  generateName: gke-metrics-agent-
+  generation: 1
+  labels:
+    component: gke-metrics-agent
+    controller-revision-hash: 697cdb644d
+    k8s-app: gke-metrics-agent
+    pod-template-generation: "10"
+  managedFields:
+  - apiVersion: v1
+    fieldsType: FieldsV1
+    fieldsV1:
+      f:metadata:
+        f:annotations:
+          .: {}
+          f:components.gke.io/component-name: {}
+          f:components.gke.io/component-version: {}
+          f:configHash: {}
+        f:generateName: {}
+        f:labels:
+          .: {}
+          f:component: {}
+          f:controller-revision-hash: {}
+          f:k8s-app: {}
+          f:pod-template-generation: {}
+        f:ownerReferences:
+          .: {}
+          k:{"uid":"203ab983-1bb3-4325-9e64-92e7ebee2ac0"}: {}
+      f:spec:
+        f:affinity:
+          .: {}
+          f:nodeAffinity:
+            .: {}
+            f:requiredDuringSchedulingIgnoredDuringExecution: {}
+        f:containers:
+          k:{"name":"core-metrics-exporter"}:
+            .: {}
+            f:command: {}
+            f:env:
+              .: {}
+              k:{"name":"ARG1"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"ARG2"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"FEATURE_GENERATE_PROMETHEUS_ALLOWLIST"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"GKE_COMPONENT_NAME"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"GKE_COMPONENT_VERSION"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:fieldRef: {}
+              k:{"name":"GODEBUG"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"GOMAXPROCS"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"GOOGLE_APPLICATION_CREDENTIALS"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"HOST_LOOPBACK"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"KUBELET_HOST"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:fieldRef: {}
+              k:{"name":"KUBELET_HOST_URL"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"NODE_NAME"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:fieldRef: {}
+              k:{"name":"POD_NAME"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:fieldRef: {}
+              k:{"name":"POD_NAMESPACE"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:fieldRef: {}
+            f:image: {}
+            f:imagePullPolicy: {}
+            f:livenessProbe:
+              .: {}
+              f:failureThreshold: {}
+              f:httpGet:
+                .: {}
+                f:host: {}
+                f:path: {}
+                f:port: {}
+                f:scheme: {}
+              f:initialDelaySeconds: {}
+              f:periodSeconds: {}
+              f:successThreshold: {}
+              f:timeoutSeconds: {}
+            f:name: {}
+            f:resources:
+              .: {}
+              f:limits:
+                .: {}
+                f:memory: {}
+              f:requests:
+                .: {}
+                f:cpu: {}
+                f:memory: {}
+            f:securityContext:
+              .: {}
+              f:allowPrivilegeEscalation: {}
+              f:capabilities:
+                .: {}
+                f:drop: {}
+              f:readOnlyRootFilesystem: {}
+            f:terminationMessagePath: {}
+            f:terminationMessagePolicy: {}
+            f:volumeMounts:
+              .: {}
+              k:{"mountPath":"/conf"}:
+                .: {}
+                f:mountPath: {}
+                f:name: {}
+              k:{"mountPath":"/var/run/token_broker/adc"}:
+                .: {}
+                f:mountPath: {}
+                f:name: {}
+                f:readOnly: {}
+              k:{"mountPath":"/var/run/token_broker/ksa"}:
+                .: {}
+                f:mountPath: {}
+                f:name: {}
+                f:readOnly: {}
+          k:{"name":"gke-metrics-agent"}:
+            .: {}
+            f:command: {}
+            f:env:
+              .: {}
+              k:{"name":"ARG1"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"ARG2"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"FEATURE_GENERATE_PROMETHEUS_ALLOWLIST"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"GKE_COMPONENT_NAME"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"GKE_COMPONENT_VERSION"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:fieldRef: {}
+              k:{"name":"GKE_NODE_SYSTEM_WORKLOAD_CREDENTIALS"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"GODEBUG"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"GOMAXPROCS"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"HOST_LOOPBACK"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"KUBELET_HOST"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:fieldRef: {}
+              k:{"name":"KUBELET_HOST_URL"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"LINUX_JOB_ACTION"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"NODE_NAME"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:fieldRef: {}
+              k:{"name":"POD_NAME"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:fieldRef: {}
+              k:{"name":"POD_NAMESPACE"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:fieldRef: {}
+              k:{"name":"TOKEN_SOURCE_MODE"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"WINDOWS_JOB_ACTION"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+            f:image: {}
+            f:imagePullPolicy: {}
+            f:livenessProbe:
+              .: {}
+              f:failureThreshold: {}
+              f:httpGet:
+                .: {}
+                f:host: {}
+                f:path: {}
+                f:port: {}
+                f:scheme: {}
+              f:initialDelaySeconds: {}
+              f:periodSeconds: {}
+              f:successThreshold: {}
+              f:timeoutSeconds: {}
+            f:name: {}
+            f:resources:
+              .: {}
+              f:limits:
+                .: {}
+                f:memory: {}
+              f:requests:
+                .: {}
+                f:cpu: {}
+                f:memory: {}
+            f:securityContext:
+              .: {}
+              f:allowPrivilegeEscalation: {}
+              f:capabilities:
+                .: {}
+                f:drop: {}
+              f:readOnlyRootFilesystem: {}
+            f:terminationMessagePath: {}
+            f:terminationMessagePolicy: {}
+            f:volumeMounts:
+              .: {}
+              k:{"mountPath":"/conf"}:
+                .: {}
+                f:mountPath: {}
+                f:name: {}
+              k:{"mountPath":"/var/run/token_broker/adc"}:
+                .: {}
+                f:mountPath: {}
+                f:name: {}
+                f:readOnly: {}
+              k:{"mountPath":"/var/run/token_broker/ksa"}:
+                .: {}
+                f:mountPath: {}
+                f:name: {}
+                f:readOnly: {}
+          k:{"name":"prometheus-metrics-collector"}:
+            .: {}
+            f:env:
+              .: {}
+              k:{"name":"CLUSTER_NAME"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"COLLECTOR_CONFIG_PATH"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"COMPONENT_NAME"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:fieldRef: {}
+              k:{"name":"COMPONENT_VERSION"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:fieldRef: {}
+              k:{"name":"CONTAINER_NAME"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"GKE_HOSTNAME"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"GKE_NODE_SYSTEM_WORKLOAD_CREDENTIALS"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"GOMAXPROCS"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"HOST_LOOPBACK"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"KUBELET_HOST"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:fieldRef: {}
+              k:{"name":"KUBELET_HOST_URL"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"LOCATION"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"NODE_NAME"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:fieldRef: {}
+              k:{"name":"POD_NAME"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:fieldRef: {}
+              k:{"name":"POD_NAMESPACE"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:fieldRef: {}
+              k:{"name":"PROJECT_NUMBER"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"SPLIT_GAUGE_BUFFER"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"TOKEN_SOURCE_MODE"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+            f:image: {}
+            f:imagePullPolicy: {}
+            f:name: {}
+            f:resources:
+              .: {}
+              f:limits:
+                .: {}
+                f:cpu: {}
+                f:memory: {}
+              f:requests:
+                .: {}
+                f:cpu: {}
+                f:memory: {}
+            f:securityContext:
+              .: {}
+              f:allowPrivilegeEscalation: {}
+              f:capabilities:
+                .: {}
+                f:drop: {}
+              f:readOnlyRootFilesystem: {}
+            f:terminationMessagePath: {}
+            f:terminationMessagePolicy: {}
+            f:volumeMounts:
+              .: {}
+              k:{"mountPath":"/conf"}:
+                .: {}
+                f:mountPath: {}
+                f:name: {}
+              k:{"mountPath":"/var/run/token_broker/adc"}:
+                .: {}
+                f:mountPath: {}
+                f:name: {}
+                f:readOnly: {}
+              k:{"mountPath":"/var/run/token_broker/ksa"}:
+                .: {}
+                f:mountPath: {}
+                f:name: {}
+                f:readOnly: {}
+        f:dnsPolicy: {}
+        f:enableServiceLinks: {}
+        f:hostNetwork: {}
+        f:initContainers:
+          .: {}
+          k:{"name":"token-broker-adc-init"}:
+            .: {}
+            f:command: {}
+            f:image: {}
+            f:imagePullPolicy: {}
+            f:name: {}
+            f:resources: {}
+            f:terminationMessagePath: {}
+            f:terminationMessagePolicy: {}
+            f:volumeMounts:
+              .: {}
+              k:{"mountPath":"/var/run/token_broker/adc"}:
+                .: {}
+                f:mountPath: {}
+                f:name: {}
+        f:priorityClassName: {}
+        f:restartPolicy: {}
+        f:schedulerName: {}
+        f:securityContext:
+          .: {}
+          f:runAsGroup: {}
+          f:runAsNonRoot: {}
+          f:runAsUser: {}
+          f:seccompProfile:
+            .: {}
+            f:type: {}
+        f:serviceAccount: {}
+        f:serviceAccountName: {}
+        f:terminationGracePeriodSeconds: {}
+        f:tolerations: {}
+        f:volumes:
+          .: {}
+          k:{"name":"core-metrics-exporter-config-vol"}:
+            .: {}
+            f:configMap:
+              .: {}
+              f:defaultMode: {}
+              f:items: {}
+              f:name: {}
+            f:name: {}
+          k:{"name":"gke-metrics-agent-config-vol"}:
+            .: {}
+            f:configMap:
+              .: {}
+              f:defaultMode: {}
+              f:items: {}
+              f:name: {}
+            f:name: {}
+          k:{"name":"prometheus-metrics-collector-config-map-vol"}:
+            .: {}
+            f:configMap:
+              .: {}
+              f:defaultMode: {}
+              f:items: {}
+              f:name: {}
+            f:name: {}
+          k:{"name":"token-broker-adc"}:
+            .: {}
+            f:emptyDir: {}
+            f:name: {}
+          k:{"name":"token-broker-ksa"}:
+            .: {}
+            f:name: {}
+            f:projected:
+              .: {}
+              f:defaultMode: {}
+              f:sources: {}
+    manager: kube-controller-manager
+    operation: Update
+    time: "2026-02-09T05:24:34Z"
+  - apiVersion: v1
+    fieldsType: FieldsV1
+    fieldsV1:
+      f:status:
+        f:conditions:
+          k:{"type":"ContainersReady"}:
+            .: {}
+            f:lastProbeTime: {}
+            f:lastTransitionTime: {}
+            f:observedGeneration: {}
+            f:status: {}
+            f:type: {}
+          k:{"type":"Initialized"}:
+            .: {}
+            f:lastProbeTime: {}
+            f:lastTransitionTime: {}
+            f:observedGeneration: {}
+            f:status: {}
+            f:type: {}
+          k:{"type":"PodReadyToStartContainers"}:
+            .: {}
+            f:lastProbeTime: {}
+            f:lastTransitionTime: {}
+            f:observedGeneration: {}
+            f:status: {}
+            f:type: {}
+          k:{"type":"PodScheduled"}:
+            f:observedGeneration: {}
+          k:{"type":"Ready"}:
+            .: {}
+            f:lastProbeTime: {}
+            f:lastTransitionTime: {}
+            f:observedGeneration: {}
+            f:status: {}
+            f:type: {}
+        f:containerStatuses: {}
+        f:hostIP: {}
+        f:hostIPs: {}
+        f:initContainerStatuses: {}
+        f:observedGeneration: {}
+        f:phase: {}
+        f:podIP: {}
+        f:podIPs:
+          .: {}
+          k:{"ip":"254.96.123.119"}:
+            .: {}
+            f:ip: {}
+        f:startTime: {}
+    manager: kubelet
+    operation: Update
+    subresource: status
+    time: "2026-02-11T10:21:16Z"
+  name: gke-metrics-agent-22gfz
+  namespace: kube-system
+  ownerReferences:
+  - apiVersion: apps/v1
+    blockOwnerDeletion: true
+    controller: true
+    kind: DaemonSet
+    name: gke-metrics-agent
+    uid: 203ab983-1bb3-4325-9e64-92e7ebee2ac0
+  uid: c261deb8-f2f1-4f42-b190-34ebda161c61
+spec:
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchFields:
+          - key: metadata.name
+            operator: In
+            values:
+            - gke-tpu-76d5d630-pgm4
+  containers:
+  - command:
+    - /otelsvc
+    - --config=/conf/gke-metrics-agent-config.yaml
+    - --metrics-prefix=
+    - --log-profile=prod
+    - --log-format=json
+    - --metrics-addr=localhost:8200
+    - --uas-metrics-traffic-admission-class=METRICS_AGENT_ACTUATION
+    - --enable-uas-sink=true
+    env:
+    - name: NODE_NAME
+      valueFrom:
+        fieldRef:
+          apiVersion: v1
+          fieldPath: spec.nodeName
+    - name: POD_NAME
+      valueFrom:
+        fieldRef:
+          apiVersion: v1
+          fieldPath: metadata.name
+    - name: POD_NAMESPACE
+      valueFrom:
+        fieldRef:
+          apiVersion: v1
+          fieldPath: metadata.namespace
+    - name: HOST_LOOPBACK
+      value: 127.0.0.1
+    - name: KUBELET_HOST
+      valueFrom:
+        fieldRef:
+          apiVersion: v1
+          fieldPath: status.hostIP
+    - name: KUBELET_HOST_URL
+      value: $(KUBELET_HOST)
+    - name: GKE_COMPONENT_VERSION
+      valueFrom:
+        fieldRef:
+          apiVersion: v1
+          fieldPath: metadata.annotations['components.gke.io/component-version']
+    - name: GKE_COMPONENT_NAME
+      value: gke-metrics-agent
+    - name: GOMAXPROCS
+      value: "1"
+    - name: GODEBUG
+      value: memprofilerate=0
+    - name: ARG1
+      value: ${1}
+    - name: ARG2
+      value: ${2}
+    - name: WINDOWS_JOB_ACTION
+      value: drop
+    - name: LINUX_JOB_ACTION
+      value: keep
+    - name: FEATURE_GENERATE_PROMETHEUS_ALLOWLIST
+      value: "true"
+    - name: TOKEN_SOURCE_MODE
+      value: MODE_TOKEN_BROKER_WITH_FALLBACK
+    - name: GKE_NODE_SYSTEM_WORKLOAD_CREDENTIALS
+      value: /var/run/token_broker/adc/google-application-credentials.json
+    image: us-east5-artifactregistry.gcr.io/gke-release/gke-release/gke-metrics-agent:1.15.7-gke.0@sha256:7e35e18f6310862cc9a4a63ea864a8cf5b3fe0ff168ccbb06580b20244ffeec6
+    imagePullPolicy: IfNotPresent
+    livenessProbe:
+      failureThreshold: 3
+      httpGet:
+        host: 127.0.0.1
+        path: /
+        port: 8201
+        scheme: HTTP
+      initialDelaySeconds: 50
+      periodSeconds: 50
+      successThreshold: 1
+      timeoutSeconds: 3
+    name: gke-metrics-agent
+    resources:
+      limits:
+        memory: 50Mi
+      requests:
+        cpu: 5m
+        memory: 50Mi
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+        - all
+      readOnlyRootFilesystem: true
+    terminationMessagePath: /dev/termination-log
+    terminationMessagePolicy: File
+    volumeMounts:
+    - mountPath: /conf
+      name: gke-metrics-agent-config-vol
+    - mountPath: /var/run/token_broker/ksa
+      name: token-broker-ksa
+      readOnly: true
+    - mountPath: /var/run/token_broker/adc
+      name: token-broker-adc
+      readOnly: true
+    - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+      name: kube-api-access-6cqs9
+      readOnly: true
+  - command:
+    - /otelsvc
+    - --config=/conf/core-metrics-exporter-config.yaml
+    - --metrics-prefix=
+    - --log-profile=prod
+    - --log-format=json
+    - --metrics-addr=localhost:8202
+    env:
+    - name: NODE_NAME
+      valueFrom:
+        fieldRef:
+          apiVersion: v1
+          fieldPath: spec.nodeName
+    - name: POD_NAME
+      valueFrom:
+        fieldRef:
+          apiVersion: v1
+          fieldPath: metadata.name
+    - name: POD_NAMESPACE
+      valueFrom:
+        fieldRef:
+          apiVersion: v1
+          fieldPath: metadata.namespace
+    - name: HOST_LOOPBACK
+      value: 127.0.0.1
+    - name: KUBELET_HOST
+      valueFrom:
+        fieldRef:
+          apiVersion: v1
+          fieldPath: status.hostIP
+    - name: KUBELET_HOST_URL
+      value: $(KUBELET_HOST)
+    - name: GKE_COMPONENT_VERSION
+      valueFrom:
+        fieldRef:
+          apiVersion: v1
+          fieldPath: metadata.annotations['components.gke.io/component-version']
+    - name: GKE_COMPONENT_NAME
+      value: core-metrics-exporter
+    - name: GOMAXPROCS
+      value: "1"
+    - name: GODEBUG
+      value: memprofilerate=0
+    - name: ARG1
+      value: ${1}
+    - name: ARG2
+      value: ${2}
+    - name: FEATURE_GENERATE_PROMETHEUS_ALLOWLIST
+      value: "true"
+    - name: GOOGLE_APPLICATION_CREDENTIALS
+      value: /var/run/token_broker/adc/google-application-credentials.json
+    image: us-east5-artifactregistry.gcr.io/gke-release/gke-release/gke-metrics-agent:1.15.7-gke.0@sha256:7e35e18f6310862cc9a4a63ea864a8cf5b3fe0ff168ccbb06580b20244ffeec6
+    imagePullPolicy: IfNotPresent
+    livenessProbe:
+      failureThreshold: 3
+      httpGet:
+        host: 127.0.0.1
+        path: /
+        port: 8203
+        scheme: HTTP
+      initialDelaySeconds: 50
+      periodSeconds: 50
+      successThreshold: 1
+      timeoutSeconds: 3
+    name: core-metrics-exporter
+    resources:
+      limits:
+        memory: 50Mi
+      requests:
+        cpu: 6m
+        memory: 50Mi
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+        - all
+      readOnlyRootFilesystem: true
+    terminationMessagePath: /dev/termination-log
+    terminationMessagePolicy: File
+    volumeMounts:
+    - mountPath: /conf
+      name: core-metrics-exporter-config-vol
+    - mountPath: /var/run/token_broker/ksa
+      name: token-broker-ksa
+      readOnly: true
+    - mountPath: /var/run/token_broker/adc
+      name: token-broker-adc
+      readOnly: true
+    - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+      name: kube-api-access-6cqs9
+      readOnly: true
+  - env:
+    - name: GOMAXPROCS
+      value: "2"
+    - name: COLLECTOR_CONFIG_PATH
+      value: /conf/kubelet-metrics-collector-config-data.textproto,/conf/containerd-metrics-collector-config-data.textproto,/conf/kubelet-prober-metrics-collector-config-data.textproto,/conf/node-problem-detector-metrics-collector-config-data.textproto,/conf/kubelet-resource-metrics-collector-config-data.textproto
+    - name: SPLIT_GAUGE_BUFFER
+      value: "true"
+    - name: PROJECT_NUMBER
+      value: "496537482084"
+    - name: LOCATION
+      value: us-east5
+    - name: CLUSTER_NAME
+      value: gcp-cmh-12
+    - name: POD_NAMESPACE
+      valueFrom:
+        fieldRef:
+          apiVersion: v1
+          fieldPath: metadata.namespace
+    - name: NODE_NAME
+      valueFrom:
+        fieldRef:
+          apiVersion: v1
+          fieldPath: spec.nodeName
+    - name: POD_NAME
+      valueFrom:
+        fieldRef:
+          apiVersion: v1
+          fieldPath: metadata.name
+    - name: CONTAINER_NAME
+      value: prometheus-metrics-collector
+    - name: HOST_LOOPBACK
+      value: 127.0.0.1
+    - name: KUBELET_HOST
+      valueFrom:
+        fieldRef:
+          apiVersion: v1
+          fieldPath: status.hostIP
+    - name: KUBELET_HOST_URL
+      value: $(KUBELET_HOST)
+    - name: COMPONENT_VERSION
+      valueFrom:
+        fieldRef:
+          apiVersion: v1
+          fieldPath: metadata.annotations['components.gke.io/component-version']
+    - name: COMPONENT_NAME
+      valueFrom:
+        fieldRef:
+          apiVersion: v1
+          fieldPath: metadata.annotations['components.gke.io/component-name']
+    - name: TOKEN_SOURCE_MODE
+      value: MODE_TOKEN_BROKER_WITH_FALLBACK
+    - name: GKE_NODE_SYSTEM_WORKLOAD_CREDENTIALS
+      value: /var/run/token_broker/adc/google-application-credentials.json
+    - name: GKE_HOSTNAME
+      value: container.googleapis.com
+    image: us-east5-artifactregistry.gcr.io/gke-release/gke-release/gke-metrics-collector:20250807_2300_RC0@sha256:aa1ed41571fa937da61b5bcd7cf842981c7f026b516c18655bc2f3a9362b1fa5
+    imagePullPolicy: IfNotPresent
+    name: prometheus-metrics-collector
+    resources:
+      limits:
+        cpu: "1"
+        memory: 80Mi
+      requests:
+        cpu: 10m
+        memory: 45Mi
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+        - all
+      readOnlyRootFilesystem: true
+    terminationMessagePath: /dev/termination-log
+    terminationMessagePolicy: File
+    volumeMounts:
+    - mountPath: /conf
+      name: prometheus-metrics-collector-config-map-vol
+    - mountPath: /var/run/token_broker/ksa
+      name: token-broker-ksa
+      readOnly: true
+    - mountPath: /var/run/token_broker/adc
+      name: token-broker-adc
+      readOnly: true
+    - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+      name: kube-api-access-6cqs9
+      readOnly: true
+  dnsPolicy: ClusterFirst
+  enableServiceLinks: true
+  hostNetwork: true
+  initContainers:
+  - command:
+    - /node_token_broker_init
+    - --audience=https://container.googleapis.com/v1/projects/496537482084/locations/us-east5/clusters/gcp-cmh-12/generateClusterNodeAgentToken
+    - --token_url=https://container.googleapis.com/v1/projects/496537482084/locations/us-east5/clusters/gcp-cmh-12/generateClusterNodeAgentToken
+    - --token_file=/var/run/token_broker/ksa/token
+    - --output_path=/var/run/token_broker/adc/google-application-credentials.json
+    - --project_id=xxx-sodium
+    image: us-east5-artifactregistry.gcr.io/gke-release/gke-release/node_token_broker/init:gke_node_token_broker_init_20250408.00_p0@sha256:37e96e6fdb960fd60b14599e4aca02f4c4e46dac9700f27500e06f9442ab1046
+    imagePullPolicy: IfNotPresent
+    name: token-broker-adc-init
+    resources: {}
+    terminationMessagePath: /dev/termination-log
+    terminationMessagePolicy: File
+    volumeMounts:
+    - mountPath: /var/run/token_broker/adc
+      name: token-broker-adc
+    - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+      name: kube-api-access-6cqs9
+      readOnly: true
+  nodeName: gke-tpu-76d5d630-pgm4
+  preemptionPolicy: PreemptLowerPriority
+  priority: 2000001000
+  priorityClassName: system-node-critical
+  restartPolicy: Always
+  schedulerName: default-scheduler
+  securityContext:
+    runAsGroup: 1000
+    runAsNonRoot: true
+    runAsUser: 1000
+    seccompProfile:
+      type: RuntimeDefault
+  serviceAccount: gke-metrics-agent
+  serviceAccountName: gke-metrics-agent
+  terminationGracePeriodSeconds: 30
+  tolerations:
+  - effect: NoExecute
+    operator: Exists
+  - effect: NoSchedule
+    operator: Exists
+  - key: components.gke.io/gke-managed-components
+    operator: Exists
+  - effect: NoExecute
+    key: node.kubernetes.io/not-ready
+    operator: Exists
+  - effect: NoExecute
+    key: node.kubernetes.io/unreachable
+    operator: Exists
+  - effect: NoSchedule
+    key: node.kubernetes.io/disk-pressure
+    operator: Exists
+  - effect: NoSchedule
+    key: node.kubernetes.io/memory-pressure
+    operator: Exists
+  - effect: NoSchedule
+    key: node.kubernetes.io/pid-pressure
+    operator: Exists
+  - effect: NoSchedule
+    key: node.kubernetes.io/unschedulable
+    operator: Exists
+  - effect: NoSchedule
+    key: node.kubernetes.io/network-unavailable
+    operator: Exists
+  volumes:
+  - configMap:
+      defaultMode: 420
+      items:
+      - key: gke-metrics-agent-config
+        path: gke-metrics-agent-config.yaml
+      name: gke-metrics-agent-conf
+    name: gke-metrics-agent-config-vol
+  - configMap:
+      defaultMode: 420
+      items:
+      - key: core-metrics-exporter-config
+        path: core-metrics-exporter-config.yaml
+      name: core-metrics-exporter-conf
+    name: core-metrics-exporter-config-vol
+  - configMap:
+      defaultMode: 420
+      items:
+      - key: kubelet-metrics-collector-config-data
+        path: kubelet-metrics-collector-config-data.textproto
+      - key: containerd-metrics-collector-config-data
+        path: containerd-metrics-collector-config-data.textproto
+      - key: kubelet-prober-metrics-collector-config-data
+        path: kubelet-prober-metrics-collector-config-data.textproto
+      - key: kube-proxy-metrics-collector-config-data
+        path: kube-proxy-metrics-collector-config-data.textproto
+      - key: node-problem-detector-metrics-collector-config-data
+        path: node-problem-detector-metrics-collector-config-data.textproto
+      - key: kubelet-resource-metrics-collector-config-data
+        path: kubelet-resource-metrics-collector-config-data.textproto
+      name: prometheus-metrics-collector-config-map
+    name: prometheus-metrics-collector-config-map-vol
+  - name: token-broker-ksa
+    projected:
+      defaultMode: 420
+      sources:
+      - serviceAccountToken:
+          audience: https://container.googleapis.com/v1/projects/496537482084/locations/us-east5/clusters/gcp-cmh-12/generateClusterNodeAgentToken
+          expirationSeconds: 3600
+          path: token
+  - emptyDir: {}
+    name: token-broker-adc
+  - name: kube-api-access-6cqs9
+    projected:
+      defaultMode: 420
+      sources:
+      - serviceAccountToken:
+          expirationSeconds: 3607
+          path: token
+      - configMap:
+          items:
+          - key: ca.crt
+            path: ca.crt
+          name: kube-root-ca.crt
+      - downwardAPI:
+          items:
+          - fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.namespace
+            path: namespace
+status:
+  conditions:
+  - lastProbeTime: null
+    lastTransitionTime: "2026-02-09T05:24:38Z"
+    observedGeneration: 1
+    status: "True"
+    type: PodReadyToStartContainers
+  - lastProbeTime: null
+    lastTransitionTime: "2026-02-09T05:24:38Z"
+    observedGeneration: 1
+    status: "True"
+    type: Initialized
+  - lastProbeTime: null
+    lastTransitionTime: "2026-02-11T10:21:16Z"
+    observedGeneration: 1
+    status: "True"
+    type: Ready
+  - lastProbeTime: null
+    lastTransitionTime: "2026-02-11T10:21:16Z"
+    observedGeneration: 1
+    status: "True"
+    type: ContainersReady
+  - lastProbeTime: null
+    lastTransitionTime: "2026-02-09T05:24:34Z"
+    observedGeneration: 1
+    status: "True"
+    type: PodScheduled
+  containerStatuses:
+  - allocatedResources:
+      cpu: 6m
+      memory: 50Mi
+    containerID: containerd://06fefc5fb4bacbb3262b933987d5ff20e13d564d762c8dea11b74d188c53b083
+    image: sha256:f9450fdc0ba59a485889663c9c3280ddcf33c7d56b24e4af1b675c11d98847cf
+    imageID: us-east5-artifactregistry.gcr.io/gke-release/gke-release/gke-metrics-agent@sha256:7e35e18f6310862cc9a4a63ea864a8cf5b3fe0ff168ccbb06580b20244ffeec6
+    lastState: {}
+    name: core-metrics-exporter
+    ready: true
+    resources:
+      limits:
+        memory: 50Mi
+      requests:
+        cpu: 6m
+        memory: 50Mi
+    restartCount: 0
+    started: true
+    state:
+      running:
+        startedAt: "2026-02-09T05:24:41Z"
+    user:
+      linux:
+        gid: 1000
+        supplementalGroups:
+        - 1000
+        uid: 1000
+    volumeMounts:
+    - mountPath: /conf
+      name: core-metrics-exporter-config-vol
+    - mountPath: /var/run/token_broker/ksa
+      name: token-broker-ksa
+      readOnly: true
+      recursiveReadOnly: Disabled
+    - mountPath: /var/run/token_broker/adc
+      name: token-broker-adc
+      readOnly: true
+      recursiveReadOnly: Disabled
+    - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+      name: kube-api-access-6cqs9
+      readOnly: true
+      recursiveReadOnly: Disabled
+  - allocatedResources:
+      cpu: 5m
+      memory: 50Mi
+    containerID: containerd://6a3d1c6289d5b186954967ed6d9038f83bffc0df9d46844734e9cbe02dba777f
+    image: sha256:f9450fdc0ba59a485889663c9c3280ddcf33c7d56b24e4af1b675c11d98847cf
+    imageID: us-east5-artifactregistry.gcr.io/gke-release/gke-release/gke-metrics-agent@sha256:7e35e18f6310862cc9a4a63ea864a8cf5b3fe0ff168ccbb06580b20244ffeec6
+    lastState:
+      terminated:
+        containerID: containerd://aa8b622b19241957677037ffabd3ce75b27d0863a16096d0cf78c4874683888d
+        exitCode: 137
+        finishedAt: "2026-02-11T10:21:15Z"
+        reason: OOMKilled
+        startedAt: "2026-02-10T18:38:15Z"
+    name: gke-metrics-agent
+    ready: true
+    resources:
+      limits:
+        memory: 50Mi
+      requests:
+        cpu: 5m
+        memory: 50Mi
+    restartCount: 3
+    started: true
+    state:
+      running:
+        startedAt: "2026-02-11T10:21:15Z"
+    user:
+      linux:
+        gid: 1000
+        supplementalGroups:
+        - 1000
+        uid: 1000
+    volumeMounts:
+    - mountPath: /conf
+      name: gke-metrics-agent-config-vol
+    - mountPath: /var/run/token_broker/ksa
+      name: token-broker-ksa
+      readOnly: true
+      recursiveReadOnly: Disabled
+    - mountPath: /var/run/token_broker/adc
+      name: token-broker-adc
+      readOnly: true
+      recursiveReadOnly: Disabled
+    - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+      name: kube-api-access-6cqs9
+      readOnly: true
+      recursiveReadOnly: Disabled
+  - allocatedResources:
+      cpu: 10m
+      memory: 45Mi
+    containerID: containerd://0968f195350627563edb6030ef5db2b2221bd7fb96348988a807fcb98d8e94d1
+    image: sha256:339b70c232225f9773a421d1831105a2da109bbfc233cbeba173ff27da270855
+    imageID: us-east5-artifactregistry.gcr.io/gke-release/gke-release/gke-metrics-collector@sha256:aa1ed41571fa937da61b5bcd7cf842981c7f026b516c18655bc2f3a9362b1fa5
+    lastState: {}
+    name: prometheus-metrics-collector
+    ready: true
+    resources:
+      limits:
+        cpu: "1"
+        memory: 80Mi
+      requests:
+        cpu: 10m
+        memory: 45Mi
+    restartCount: 0
+    started: true
+    state:
+      running:
+        startedAt: "2026-02-09T05:24:44Z"
+    user:
+      linux:
+        gid: 1000
+        supplementalGroups:
+        - 1000
+        uid: 1000
+    volumeMounts:
+    - mountPath: /conf
+      name: prometheus-metrics-collector-config-map-vol
+    - mountPath: /var/run/token_broker/ksa
+      name: token-broker-ksa
+      readOnly: true
+      recursiveReadOnly: Disabled
+    - mountPath: /var/run/token_broker/adc
+      name: token-broker-adc
+      readOnly: true
+      recursiveReadOnly: Disabled
+    - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+      name: kube-api-access-6cqs9
+      readOnly: true
+      recursiveReadOnly: Disabled
+  hostIP: 254.96.123.119
+  hostIPs:
+  - ip: 254.96.123.119
+  initContainerStatuses:
+  - containerID: containerd://bc1064b3205d162f960d73a6fe2052e5778a6e61025b4393c23bca69cba41f59
+    image: sha256:b0bb950012f9e98eb20d0324b07fd0104999d7ed24f86a4ec67b96021502f42e
+    imageID: us-east5-artifactregistry.gcr.io/gke-release/gke-release/node_token_broker/init@sha256:37e96e6fdb960fd60b14599e4aca02f4c4e46dac9700f27500e06f9442ab1046
+    lastState: {}
+    name: token-broker-adc-init
+    ready: true
+    resources: {}
+    restartCount: 0
+    started: false
+    state:
+      terminated:
+        containerID: containerd://bc1064b3205d162f960d73a6fe2052e5778a6e61025b4393c23bca69cba41f59
+        exitCode: 0
+        finishedAt: "2026-02-09T05:24:37Z"
+        reason: Completed
+        startedAt: "2026-02-09T05:24:37Z"
+    user:
+      linux:
+        gid: 1000
+        supplementalGroups:
+        - 1000
+        uid: 1000
+    volumeMounts:
+    - mountPath: /var/run/token_broker/adc
+      name: token-broker-adc
+    - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+      name: kube-api-access-6cqs9
+      readOnly: true
+      recursiveReadOnly: Disabled
+  observedGeneration: 1
+  phase: Running
+  podIP: 254.96.123.119
+  podIPs:
+  - ip: 254.96.123.119
+  qosClass: Burstable
+  startTime: "2026-02-09T05:24:34Z"
+

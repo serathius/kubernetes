@@ -1,0 +1,1056 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  annotations:
+    components.gke.io/component-name: netd-combined
+    components.gke.io/component-version: 14.1.19
+  creationTimestamp: "2026-02-07T04:50:09Z"
+  generateName: netd-
+  generation: 1
+  labels:
+    controller-revision-hash: 7675b79db8
+    k8s-app: netd
+    pod-template-generation: "4"
+  managedFields:
+  - apiVersion: v1
+    fieldsType: FieldsV1
+    fieldsV1:
+      f:metadata:
+        f:annotations:
+          .: {}
+          f:components.gke.io/component-name: {}
+          f:components.gke.io/component-version: {}
+        f:generateName: {}
+        f:labels:
+          .: {}
+          f:controller-revision-hash: {}
+          f:k8s-app: {}
+          f:pod-template-generation: {}
+        f:ownerReferences:
+          .: {}
+          k:{"uid":"28a56a40-2a37-4845-a821-bae4a81afc53"}: {}
+      f:spec:
+        f:affinity:
+          .: {}
+          f:nodeAffinity:
+            .: {}
+            f:requiredDuringSchedulingIgnoredDuringExecution: {}
+        f:containers:
+          k:{"name":"netd"}:
+            .: {}
+            f:args: {}
+            f:env:
+              .: {}
+              k:{"name":"CURRENT_NODE_NAME"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:fieldRef: {}
+              k:{"name":"ENABLE_POLICY_ROUTING"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"ENABLE_SOURCE_VALID_MARK"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"EXCLUDE_DNS"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"METRICS_ADDRESS"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:configMapKeyRef: {}
+              k:{"name":"METRICS_COLLECTORS"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:configMapKeyRef: {}
+              k:{"name":"RECONCILE_INTERVAL_SECONDS"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:configMapKeyRef: {}
+              k:{"name":"STACK_TYPE"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:configMapKeyRef: {}
+            f:image: {}
+            f:imagePullPolicy: {}
+            f:name: {}
+            f:resources:
+              .: {}
+              f:requests:
+                .: {}
+                f:cpu: {}
+                f:memory: {}
+            f:securityContext:
+              .: {}
+              f:capabilities:
+                .: {}
+                f:add: {}
+              f:privileged: {}
+            f:terminationMessagePath: {}
+            f:terminationMessagePolicy: {}
+            f:volumeMounts:
+              .: {}
+              k:{"mountPath":"/host/var/lib/cni/networks/gke-pod-network"}:
+                .: {}
+                f:mountPath: {}
+                f:name: {}
+                f:readOnly: {}
+              k:{"mountPath":"/run/xtables.lock"}:
+                .: {}
+                f:mountPath: {}
+                f:name: {}
+          k:{"name":"netd-metrics-collector"}:
+            .: {}
+            f:env:
+              .: {}
+              k:{"name":"CLUSTER_NAME"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"COLLECTOR_CONFIG_PATH"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"COMPONENT_NAME"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:fieldRef: {}
+              k:{"name":"COMPONENT_VERSION"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:fieldRef: {}
+              k:{"name":"CONTAINER_NAME"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"GOMAXPROCS"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"LOCATION"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"METRICS_ADDRESS"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:configMapKeyRef: {}
+              k:{"name":"NODE_NAME"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:fieldRef: {}
+              k:{"name":"POD_NAME"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:fieldRef: {}
+              k:{"name":"POD_NAMESPACE"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:fieldRef: {}
+              k:{"name":"PROJECT_NUMBER"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"SPLIT_GAUGE_BUFFER"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+            f:image: {}
+            f:imagePullPolicy: {}
+            f:name: {}
+            f:resources:
+              .: {}
+              f:limits:
+                .: {}
+                f:cpu: {}
+                f:memory: {}
+              f:requests:
+                .: {}
+                f:cpu: {}
+                f:memory: {}
+            f:securityContext:
+              .: {}
+              f:allowPrivilegeEscalation: {}
+              f:capabilities:
+                .: {}
+                f:drop: {}
+              f:readOnlyRootFilesystem: {}
+              f:runAsGroup: {}
+              f:runAsNonRoot: {}
+              f:runAsUser: {}
+            f:terminationMessagePath: {}
+            f:terminationMessagePolicy: {}
+            f:volumeMounts:
+              .: {}
+              k:{"mountPath":"/conf"}:
+                .: {}
+                f:mountPath: {}
+                f:name: {}
+          k:{"name":"route-manager"}:
+            .: {}
+            f:image: {}
+            f:imagePullPolicy: {}
+            f:name: {}
+            f:resources:
+              .: {}
+              f:requests:
+                .: {}
+                f:cpu: {}
+                f:memory: {}
+            f:securityContext:
+              .: {}
+              f:allowPrivilegeEscalation: {}
+              f:capabilities:
+                .: {}
+                f:add: {}
+                f:drop: {}
+              f:readOnlyRootFilesystem: {}
+            f:terminationMessagePath: {}
+            f:terminationMessagePolicy: {}
+            f:volumeMounts:
+              .: {}
+              k:{"mountPath":"/etc/config"}:
+                .: {}
+                f:mountPath: {}
+                f:name: {}
+        f:dnsPolicy: {}
+        f:enableServiceLinks: {}
+        f:hostNetwork: {}
+        f:initContainers:
+          .: {}
+          k:{"name":"install-cni"}:
+            .: {}
+            f:env:
+              .: {}
+              k:{"name":"CHECK_NODE_DATAPATH_PROVIDER"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"CILIUM_CHAINING_MODE"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:configMapKeyRef: {}
+              k:{"name":"CILIUM_FAST_START_NAMESPACES"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:configMapKeyRef: {}
+              k:{"name":"CILIUM_WATCHDOG_FAILURE_RETRY"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:configMapKeyRef: {}
+              k:{"name":"CILIUM_WATCHDOG_FAST_START_WAIT"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:configMapKeyRef: {}
+              k:{"name":"CILIUM_WATCHDOG_SUCCESS_WAIT"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:configMapKeyRef: {}
+              k:{"name":"CNI_SPEC_IPV6_ROUTE"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:configMapKeyRef: {}
+              k:{"name":"CNI_SPEC_NAME"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:configMapKeyRef: {}
+              k:{"name":"CNI_SPEC_TEMPLATE"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:configMapKeyRef: {}
+              k:{"name":"CURRENT_NODE_NAME"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:fieldRef: {}
+              k:{"name":"ENABLE_CALICO_NETWORK_POLICY"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:configMapKeyRef: {}
+              k:{"name":"ENABLE_CILIUM_PLUGIN"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:configMapKeyRef: {}
+              k:{"name":"ENABLE_IPV6"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:configMapKeyRef: {}
+              k:{"name":"ISTIO_CNI_CONFIG"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:configMapKeyRef: {}
+              k:{"name":"KUBERNETES_SERVICE_HOST"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:configMapKeyRef: {}
+              k:{"name":"RUN_CNI_WATCHDOG"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"WRITE_CALICO_CONFIG_FILE"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+            f:image: {}
+            f:imagePullPolicy: {}
+            f:name: {}
+            f:resources:
+              .: {}
+              f:requests:
+                .: {}
+                f:cpu: {}
+                f:memory: {}
+            f:restartPolicy: {}
+            f:securityContext:
+              .: {}
+              f:allowPrivilegeEscalation: {}
+              f:capabilities:
+                .: {}
+                f:add: {}
+                f:drop: {}
+              f:privileged: {}
+            f:terminationMessagePath: {}
+            f:terminationMessagePolicy: {}
+            f:volumeMounts:
+              .: {}
+              k:{"mountPath":"/host/etc/cni/net.d"}:
+                .: {}
+                f:mountPath: {}
+                f:name: {}
+              k:{"mountPath":"/host/home/kubernetes/bin"}:
+                .: {}
+                f:mountPath: {}
+                f:name: {}
+                f:readOnly: {}
+              k:{"mountPath":"/run/xtables.lock"}:
+                .: {}
+                f:mountPath: {}
+                f:name: {}
+        f:nodeSelector: {}
+        f:priorityClassName: {}
+        f:restartPolicy: {}
+        f:schedulerName: {}
+        f:securityContext:
+          .: {}
+          f:seccompProfile:
+            .: {}
+            f:type: {}
+        f:serviceAccount: {}
+        f:serviceAccountName: {}
+        f:terminationGracePeriodSeconds: {}
+        f:tolerations: {}
+        f:volumes:
+          .: {}
+          k:{"name":"cni-net-dir"}:
+            .: {}
+            f:hostPath:
+              .: {}
+              f:path: {}
+              f:type: {}
+            f:name: {}
+          k:{"name":"gke-pod-network"}:
+            .: {}
+            f:hostPath:
+              .: {}
+              f:path: {}
+              f:type: {}
+            f:name: {}
+          k:{"name":"kubernetes-bin"}:
+            .: {}
+            f:hostPath:
+              .: {}
+              f:path: {}
+              f:type: {}
+            f:name: {}
+          k:{"name":"netd-metrics-collector-config-map-vol"}:
+            .: {}
+            f:configMap:
+              .: {}
+              f:defaultMode: {}
+              f:items: {}
+              f:name: {}
+            f:name: {}
+          k:{"name":"route-manager-volume"}:
+            .: {}
+            f:configMap:
+              .: {}
+              f:defaultMode: {}
+              f:items: {}
+              f:name: {}
+              f:optional: {}
+            f:name: {}
+          k:{"name":"xtables-lock"}:
+            .: {}
+            f:hostPath:
+              .: {}
+              f:path: {}
+              f:type: {}
+            f:name: {}
+    manager: kube-controller-manager
+    operation: Update
+    time: "2026-02-07T04:50:09Z"
+  - apiVersion: v1
+    fieldsType: FieldsV1
+    fieldsV1:
+      f:status:
+        f:conditions:
+          k:{"type":"ContainersReady"}:
+            .: {}
+            f:lastProbeTime: {}
+            f:lastTransitionTime: {}
+            f:observedGeneration: {}
+            f:status: {}
+            f:type: {}
+          k:{"type":"Initialized"}:
+            .: {}
+            f:lastProbeTime: {}
+            f:lastTransitionTime: {}
+            f:observedGeneration: {}
+            f:status: {}
+            f:type: {}
+          k:{"type":"PodReadyToStartContainers"}:
+            .: {}
+            f:lastProbeTime: {}
+            f:lastTransitionTime: {}
+            f:observedGeneration: {}
+            f:status: {}
+            f:type: {}
+          k:{"type":"PodScheduled"}:
+            f:observedGeneration: {}
+          k:{"type":"Ready"}:
+            .: {}
+            f:lastProbeTime: {}
+            f:lastTransitionTime: {}
+            f:observedGeneration: {}
+            f:status: {}
+            f:type: {}
+        f:containerStatuses: {}
+        f:hostIP: {}
+        f:hostIPs: {}
+        f:initContainerStatuses: {}
+        f:observedGeneration: {}
+        f:phase: {}
+        f:podIP: {}
+        f:podIPs:
+          .: {}
+          k:{"ip":"254.96.46.58"}:
+            .: {}
+            f:ip: {}
+        f:startTime: {}
+    manager: kubelet
+    operation: Update
+    subresource: status
+    time: "2026-02-07T04:50:24Z"
+  name: netd-22wnr
+  namespace: kube-system
+  ownerReferences:
+  - apiVersion: apps/v1
+    blockOwnerDeletion: true
+    controller: true
+    kind: DaemonSet
+    name: netd
+    uid: 28a56a40-2a37-4845-a821-bae4a81afc53
+  uid: 77c25963-42ce-4019-9204-b4176c4a84f2
+spec:
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchFields:
+          - key: metadata.name
+            operator: In
+            values:
+            - gke-tpu-fe525859-w5kt
+  containers:
+  - args:
+    - --enable-policy-routing=$(ENABLE_POLICY_ROUTING)
+    - --enable-source-valid-mark=$(ENABLE_SOURCE_VALID_MARK)
+    - --enable-pod-watch=true
+    - --exclude-dns=$(EXCLUDE_DNS)
+    - --logtostderr
+    - --reconcile-interval-seconds=$(RECONCILE_INTERVAL_SECONDS)
+    - --metrics-collectors=$(METRICS_COLLECTORS)
+    - --metrics-address=$(METRICS_ADDRESS)
+    - --stack-type=$(STACK_TYPE)
+    env:
+    - name: ENABLE_POLICY_ROUTING
+      value: "false"
+    - name: ENABLE_SOURCE_VALID_MARK
+      value: "false"
+    - name: EXCLUDE_DNS
+      value: "false"
+    - name: RECONCILE_INTERVAL_SECONDS
+      valueFrom:
+        configMapKeyRef:
+          key: reconcile_interval_seconds
+          name: netd-config
+    - name: METRICS_COLLECTORS
+      valueFrom:
+        configMapKeyRef:
+          key: metrics_collectors
+          name: networking-metrics-config
+    - name: METRICS_ADDRESS
+      valueFrom:
+        configMapKeyRef:
+          key: metrics_address
+          name: networking-metrics-config
+    - name: STACK_TYPE
+      valueFrom:
+        configMapKeyRef:
+          key: stack_type
+          name: networking-metrics-config
+    - name: CURRENT_NODE_NAME
+      valueFrom:
+        fieldRef:
+          apiVersion: v1
+          fieldPath: spec.nodeName
+    image: us-east5-artifactregistry.gcr.io/gke-release/gke-release/netd:v0.10.9-gke.4@sha256:a5a013f00beb85e699947259c587ab1587b17979d8658364ad67a849df661de8
+    imagePullPolicy: IfNotPresent
+    name: netd
+    resources:
+      requests:
+        cpu: 2m
+        memory: 30Mi
+    securityContext:
+      capabilities:
+        add:
+        - NET_ADMIN
+      privileged: true
+    terminationMessagePath: /dev/termination-log
+    terminationMessagePolicy: File
+    volumeMounts:
+    - mountPath: /host/var/lib/cni/networks/gke-pod-network
+      name: gke-pod-network
+      readOnly: true
+    - mountPath: /run/xtables.lock
+      name: xtables-lock
+    - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+      name: kube-api-access-8j65k
+      readOnly: true
+  - env:
+    - name: GOMAXPROCS
+      value: "2"
+    - name: COLLECTOR_CONFIG_PATH
+      value: /conf/netd-metrics-collector-config-data.textproto
+    - name: SPLIT_GAUGE_BUFFER
+      value: "true"
+    - name: PROJECT_NUMBER
+      value: "496537482084"
+    - name: LOCATION
+      value: us-east5
+    - name: CLUSTER_NAME
+      value: gcp-cmh-12
+    - name: METRICS_ADDRESS
+      valueFrom:
+        configMapKeyRef:
+          key: metrics_address
+          name: networking-metrics-config
+    - name: POD_NAMESPACE
+      valueFrom:
+        fieldRef:
+          apiVersion: v1
+          fieldPath: metadata.namespace
+    - name: NODE_NAME
+      valueFrom:
+        fieldRef:
+          apiVersion: v1
+          fieldPath: spec.nodeName
+    - name: POD_NAME
+      valueFrom:
+        fieldRef:
+          apiVersion: v1
+          fieldPath: metadata.name
+    - name: CONTAINER_NAME
+      value: netd-metrics-collector
+    - name: COMPONENT_VERSION
+      valueFrom:
+        fieldRef:
+          apiVersion: v1
+          fieldPath: metadata.annotations['components.gke.io/component-version']
+    - name: COMPONENT_NAME
+      valueFrom:
+        fieldRef:
+          apiVersion: v1
+          fieldPath: metadata.annotations['components.gke.io/component-name']
+    image: us-east5-artifactregistry.gcr.io/gke-release/gke-release/gke-metrics-collector:20251007_2300_RC0@sha256:0d590a9fb5339909d425b2eede28ac05cc76346092cbe82602c7618f047c25f0
+    imagePullPolicy: IfNotPresent
+    name: netd-metrics-collector
+    resources:
+      limits:
+        cpu: "1"
+        memory: 65Mi
+      requests:
+        cpu: 5m
+        memory: 30Mi
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+        - all
+      readOnlyRootFilesystem: true
+      runAsGroup: 1000
+      runAsNonRoot: true
+      runAsUser: 1000
+    terminationMessagePath: /dev/termination-log
+    terminationMessagePolicy: File
+    volumeMounts:
+    - mountPath: /conf
+      name: netd-metrics-collector-config-map-vol
+    - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+      name: kube-api-access-8j65k
+      readOnly: true
+  - image: us-east5-artifactregistry.gcr.io/gke-release/gke-release/route-manager:v0.1.3-gke.4@sha256:f20892b1a319ea76404aa7dd23003f2bb1a96bc0bcfdd746b9b074196bde45b6
+    imagePullPolicy: IfNotPresent
+    name: route-manager
+    resources:
+      requests:
+        cpu: 2m
+        memory: 30Mi
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        add:
+        - NET_ADMIN
+        drop:
+        - all
+      readOnlyRootFilesystem: true
+    terminationMessagePath: /dev/termination-log
+    terminationMessagePolicy: File
+    volumeMounts:
+    - mountPath: /etc/config
+      name: route-manager-volume
+    - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+      name: kube-api-access-8j65k
+      readOnly: true
+  dnsPolicy: ClusterFirst
+  enableServiceLinks: true
+  hostNetwork: true
+  initContainers:
+  - env:
+    - name: CHECK_NODE_DATAPATH_PROVIDER
+      value: "false"
+    - name: CNI_SPEC_TEMPLATE
+      valueFrom:
+        configMapKeyRef:
+          key: cni_spec_template
+          name: netd-config
+    - name: CNI_SPEC_NAME
+      valueFrom:
+        configMapKeyRef:
+          key: cni_spec_name
+          name: netd-config
+    - name: CNI_SPEC_IPV6_ROUTE
+      valueFrom:
+        configMapKeyRef:
+          key: cni_spec_ipv6_route
+          name: netd-config
+    - name: ENABLE_CALICO_NETWORK_POLICY
+      valueFrom:
+        configMapKeyRef:
+          key: enable_calico_network_policy
+          name: netd-config
+    - name: WRITE_CALICO_CONFIG_FILE
+      value: "false"
+    - name: ENABLE_IPV6
+      valueFrom:
+        configMapKeyRef:
+          key: enable_ipv6
+          name: netd-config
+    - name: ENABLE_CILIUM_PLUGIN
+      valueFrom:
+        configMapKeyRef:
+          key: enable_cilium_plugin
+          name: netd-config
+    - name: ISTIO_CNI_CONFIG
+      valueFrom:
+        configMapKeyRef:
+          key: cni_network_config
+          name: istio-cni-plugin-config
+          optional: true
+    - name: KUBERNETES_SERVICE_HOST
+      valueFrom:
+        configMapKeyRef:
+          key: master_ip
+          name: netd-config
+    - name: CILIUM_CHAINING_MODE
+      valueFrom:
+        configMapKeyRef:
+          key: cilium_chaining_mode
+          name: netd-config
+    - name: CURRENT_NODE_NAME
+      valueFrom:
+        fieldRef:
+          apiVersion: v1
+          fieldPath: spec.nodeName
+    - name: CILIUM_FAST_START_NAMESPACES
+      valueFrom:
+        configMapKeyRef:
+          key: fast-start-namespaces
+          name: dpv2-fast-start-config
+          optional: true
+    - name: RUN_CNI_WATCHDOG
+      value: "true"
+    - name: CILIUM_WATCHDOG_SUCCESS_WAIT
+      valueFrom:
+        configMapKeyRef:
+          key: cilium_watchdog_success_wait_seconds
+          name: netd-config
+    - name: CILIUM_WATCHDOG_FAILURE_RETRY
+      valueFrom:
+        configMapKeyRef:
+          key: cilium_watchdog_failure_retry_seconds
+          name: netd-config
+    - name: CILIUM_WATCHDOG_FAST_START_WAIT
+      valueFrom:
+        configMapKeyRef:
+          key: cilium_watchdog_fast_start_wait_seconds
+          name: netd-config
+    image: us-east5-artifactregistry.gcr.io/gke-release/gke-release/netd-init:v0.10.9-gke.4@sha256:8ca3402ac5ccebec6a955d0b77d5fdfd0cb9aaaeb2d227222780b8a6f5b2fac7
+    imagePullPolicy: IfNotPresent
+    name: install-cni
+    resources:
+      requests:
+        cpu: 1m
+        memory: 5Mi
+    restartPolicy: Always
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        add:
+        - NET_ADMIN
+        - NET_RAW
+        drop:
+        - ALL
+      privileged: false
+    terminationMessagePath: /dev/termination-log
+    terminationMessagePolicy: File
+    volumeMounts:
+    - mountPath: /host/etc/cni/net.d
+      name: cni-net-dir
+    - mountPath: /host/home/kubernetes/bin
+      name: kubernetes-bin
+      readOnly: true
+    - mountPath: /run/xtables.lock
+      name: xtables-lock
+    - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+      name: kube-api-access-8j65k
+      readOnly: true
+  nodeName: gke-tpu-fe525859-w5kt
+  nodeSelector:
+    kubernetes.io/os: linux
+  preemptionPolicy: PreemptLowerPriority
+  priority: 2000001000
+  priorityClassName: system-node-critical
+  restartPolicy: Always
+  schedulerName: default-scheduler
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  serviceAccount: netd
+  serviceAccountName: netd
+  terminationGracePeriodSeconds: 0
+  tolerations:
+  - effect: NoExecute
+    operator: Exists
+  - effect: NoSchedule
+    operator: Exists
+  - key: components.gke.io/gke-managed-components
+    operator: Exists
+  - effect: NoExecute
+    key: node.kubernetes.io/not-ready
+    operator: Exists
+  - effect: NoExecute
+    key: node.kubernetes.io/unreachable
+    operator: Exists
+  - effect: NoSchedule
+    key: node.kubernetes.io/disk-pressure
+    operator: Exists
+  - effect: NoSchedule
+    key: node.kubernetes.io/memory-pressure
+    operator: Exists
+  - effect: NoSchedule
+    key: node.kubernetes.io/pid-pressure
+    operator: Exists
+  - effect: NoSchedule
+    key: node.kubernetes.io/unschedulable
+    operator: Exists
+  - effect: NoSchedule
+    key: node.kubernetes.io/network-unavailable
+    operator: Exists
+  volumes:
+  - hostPath:
+      path: /etc/cni/net.d
+      type: Directory
+    name: cni-net-dir
+  - hostPath:
+      path: /home/kubernetes/bin
+      type: Directory
+    name: kubernetes-bin
+  - hostPath:
+      path: /run/xtables.lock
+      type: FileOrCreate
+    name: xtables-lock
+  - hostPath:
+      path: /var/lib/cni/networks/gke-pod-network
+      type: DirectoryOrCreate
+    name: gke-pod-network
+  - configMap:
+      defaultMode: 420
+      items:
+      - key: netd-metrics-collector-config-data
+        path: netd-metrics-collector-config-data.textproto
+      name: netd-metrics-collector-config-map
+    name: netd-metrics-collector-config-map-vol
+  - configMap:
+      defaultMode: 420
+      items:
+      - key: routemanager
+        path: routemanager
+      name: route-manager-config
+      optional: true
+    name: route-manager-volume
+  - name: kube-api-access-8j65k
+    projected:
+      defaultMode: 420
+      sources:
+      - serviceAccountToken:
+          expirationSeconds: 3607
+          path: token
+      - configMap:
+          items:
+          - key: ca.crt
+            path: ca.crt
+          name: kube-root-ca.crt
+      - downwardAPI:
+          items:
+          - fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.namespace
+            path: namespace
+status:
+  conditions:
+  - lastProbeTime: null
+    lastTransitionTime: "2026-02-07T04:50:22Z"
+    observedGeneration: 1
+    status: "True"
+    type: PodReadyToStartContainers
+  - lastProbeTime: null
+    lastTransitionTime: "2026-02-07T04:50:22Z"
+    observedGeneration: 1
+    status: "True"
+    type: Initialized
+  - lastProbeTime: null
+    lastTransitionTime: "2026-02-07T04:50:24Z"
+    observedGeneration: 1
+    status: "True"
+    type: Ready
+  - lastProbeTime: null
+    lastTransitionTime: "2026-02-07T04:50:24Z"
+    observedGeneration: 1
+    status: "True"
+    type: ContainersReady
+  - lastProbeTime: null
+    lastTransitionTime: "2026-02-07T04:50:18Z"
+    observedGeneration: 1
+    status: "True"
+    type: PodScheduled
+  containerStatuses:
+  - allocatedResources:
+      cpu: 2m
+      memory: 30Mi
+    containerID: containerd://df397da2f87ad5d82113db24a0665981e2655d8d3411d5c3d1173380840aa957
+    image: sha256:d8326890f03a06c3edc6a50bf6a321d44c6a7a37c1a9acdfe02fc421e66412b8
+    imageID: us-central1-artifactregistry.gcr.io/gke-release-staging/gke-release-staging/netd@sha256:a5a013f00beb85e699947259c587ab1587b17979d8658364ad67a849df661de8
+    lastState: {}
+    name: netd
+    ready: true
+    resources:
+      requests:
+        cpu: 2m
+        memory: 30Mi
+    restartCount: 0
+    started: true
+    state:
+      running:
+        startedAt: "2026-02-07T04:50:22Z"
+    user:
+      linux:
+        gid: 0
+        supplementalGroups:
+        - 0
+        uid: 0
+    volumeMounts:
+    - mountPath: /host/var/lib/cni/networks/gke-pod-network
+      name: gke-pod-network
+      readOnly: true
+      recursiveReadOnly: Disabled
+    - mountPath: /run/xtables.lock
+      name: xtables-lock
+    - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+      name: kube-api-access-8j65k
+      readOnly: true
+      recursiveReadOnly: Disabled
+  - allocatedResources:
+      cpu: 5m
+      memory: 30Mi
+    containerID: containerd://414fa59141f874d79bb0b2eb778d800fa51021db266c68a4b90eeb63716ca831
+    image: sha256:16bfcd0c2157f3a0eb586c7a2387ee9aa1152a3654d6fe339726b67bc9e9b815
+    imageID: us-central1-artifactregistry.gcr.io/gke-release-staging/gke-release-staging/gke-metrics-collector@sha256:0d590a9fb5339909d425b2eede28ac05cc76346092cbe82602c7618f047c25f0
+    lastState: {}
+    name: netd-metrics-collector
+    ready: true
+    resources:
+      limits:
+        cpu: "1"
+        memory: 65Mi
+      requests:
+        cpu: 5m
+        memory: 30Mi
+    restartCount: 0
+    started: true
+    state:
+      running:
+        startedAt: "2026-02-07T04:50:22Z"
+    user:
+      linux:
+        gid: 1000
+        supplementalGroups:
+        - 1000
+        uid: 1000
+    volumeMounts:
+    - mountPath: /conf
+      name: netd-metrics-collector-config-map-vol
+    - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+      name: kube-api-access-8j65k
+      readOnly: true
+      recursiveReadOnly: Disabled
+  - allocatedResources:
+      cpu: 2m
+      memory: 30Mi
+    containerID: containerd://836a9ffe12279cf6288ab4841439b3714f2126e09f7ffd44a9c1bbcf37013334
+    image: sha256:1ef8d61593d279b0d9061cd1a55984797260c1f83cef83e3947a72c305f43ebf
+    imageID: us-central1-artifactregistry.gcr.io/gke-release-staging/gke-release-staging/route-manager@sha256:f20892b1a319ea76404aa7dd23003f2bb1a96bc0bcfdd746b9b074196bde45b6
+    lastState: {}
+    name: route-manager
+    ready: true
+    resources:
+      requests:
+        cpu: 2m
+        memory: 30Mi
+    restartCount: 0
+    started: true
+    state:
+      running:
+        startedAt: "2026-02-07T04:50:23Z"
+    user:
+      linux:
+        gid: 0
+        supplementalGroups:
+        - 0
+        uid: 0
+    volumeMounts:
+    - mountPath: /etc/config
+      name: route-manager-volume
+    - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+      name: kube-api-access-8j65k
+      readOnly: true
+      recursiveReadOnly: Disabled
+  hostIP: 254.96.46.58
+  hostIPs:
+  - ip: 254.96.46.58
+  initContainerStatuses:
+  - allocatedResources:
+      cpu: 1m
+      memory: 5Mi
+    containerID: containerd://e2dca9770751278bc1f15469d48b1cdee6f20775ca074d7a9d73d53046bd10e5
+    image: sha256:6a2d4cd1d1645b6b4ee5280f0bb6fa12d28e8bc5ac81fd7bd408423804b06f5a
+    imageID: us-central1-artifactregistry.gcr.io/gke-release-staging/gke-release-staging/netd-init@sha256:8ca3402ac5ccebec6a955d0b77d5fdfd0cb9aaaeb2d227222780b8a6f5b2fac7
+    lastState: {}
+    name: install-cni
+    ready: true
+    resources:
+      requests:
+        cpu: 1m
+        memory: 5Mi
+    restartCount: 0
+    started: true
+    state:
+      running:
+        startedAt: "2026-02-07T04:50:21Z"
+    user:
+      linux:
+        gid: 0
+        supplementalGroups:
+        - 0
+        uid: 0
+    volumeMounts:
+    - mountPath: /host/etc/cni/net.d
+      name: cni-net-dir
+    - mountPath: /host/home/kubernetes/bin
+      name: kubernetes-bin
+      readOnly: true
+      recursiveReadOnly: Disabled
+    - mountPath: /run/xtables.lock
+      name: xtables-lock
+    - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+      name: kube-api-access-8j65k
+      readOnly: true
+      recursiveReadOnly: Disabled
+  observedGeneration: 1
+  phase: Running
+  podIP: 254.96.46.58
+  podIPs:
+  - ip: 254.96.46.58
+  qosClass: Burstable
+  startTime: "2026-02-07T04:50:18Z"

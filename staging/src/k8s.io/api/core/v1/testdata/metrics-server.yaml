@@ -1,0 +1,287 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  annotations:
+    cloud.google.com/cluster_autoscaler_unhelpable_since: 2026-02-10T20:04:51+0000
+    cloud.google.com/cluster_autoscaler_unhelpable_until: Inf
+    components.gke.io/component-name: metrics-server
+    components.gke.io/component-version: 1.35.1-gke.0
+  creationTimestamp: "2026-02-10T20:04:50Z"
+  generateName: metrics-server-v1.35.1-67b4d4f7b4-
+  generation: 1
+  labels:
+    k8s-app: metrics-server
+    pod-template-hash: 67b4d4f7b4
+    version: v1.35.1
+  managedFields:
+  - apiVersion: v1
+    fieldsType: FieldsV1
+    fieldsV1:
+      f:metadata:
+        f:annotations:
+          .: {}
+          f:components.gke.io/component-name: {}
+          f:components.gke.io/component-version: {}
+        f:generateName: {}
+        f:labels:
+          .: {}
+          f:k8s-app: {}
+          f:pod-template-hash: {}
+          f:version: {}
+        f:ownerReferences:
+          .: {}
+          k:{"uid":"0c188423-2b0a-4cfa-9de6-044fcad238dd"}: {}
+      f:spec:
+        f:containers:
+          k:{"name":"metrics-server"}:
+            .: {}
+            f:command: {}
+            f:image: {}
+            f:imagePullPolicy: {}
+            f:livenessProbe:
+              .: {}
+              f:failureThreshold: {}
+              f:httpGet:
+                .: {}
+                f:path: {}
+                f:port: {}
+                f:scheme: {}
+              f:initialDelaySeconds: {}
+              f:periodSeconds: {}
+              f:successThreshold: {}
+              f:timeoutSeconds: {}
+            f:name: {}
+            f:ports:
+              .: {}
+              k:{"containerPort":10250,"protocol":"TCP"}:
+                .: {}
+                f:containerPort: {}
+                f:name: {}
+                f:protocol: {}
+            f:readinessProbe:
+              .: {}
+              f:failureThreshold: {}
+              f:httpGet:
+                .: {}
+                f:path: {}
+                f:port: {}
+                f:scheme: {}
+              f:initialDelaySeconds: {}
+              f:periodSeconds: {}
+              f:successThreshold: {}
+              f:timeoutSeconds: {}
+            f:resources: {}
+            f:securityContext:
+              .: {}
+              f:allowPrivilegeEscalation: {}
+              f:capabilities:
+                .: {}
+                f:drop: {}
+              f:readOnlyRootFilesystem: {}
+              f:runAsGroup: {}
+              f:runAsUser: {}
+              f:seccompProfile:
+                .: {}
+                f:type: {}
+            f:terminationMessagePath: {}
+            f:terminationMessagePolicy: {}
+            f:volumeMounts:
+              .: {}
+              k:{"mountPath":"/tmp"}:
+                .: {}
+                f:mountPath: {}
+                f:name: {}
+        f:dnsPolicy: {}
+        f:enableServiceLinks: {}
+        f:nodeSelector: {}
+        f:priorityClassName: {}
+        f:restartPolicy: {}
+        f:schedulerName: {}
+        f:securityContext:
+          .: {}
+          f:seccompProfile:
+            .: {}
+            f:type: {}
+        f:serviceAccount: {}
+        f:serviceAccountName: {}
+        f:terminationGracePeriodSeconds: {}
+        f:tolerations: {}
+        f:volumes:
+          .: {}
+          k:{"name":"metrics-server-config-volume"}:
+            .: {}
+            f:configMap:
+              .: {}
+              f:defaultMode: {}
+              f:name: {}
+            f:name: {}
+          k:{"name":"tmp-dir"}:
+            .: {}
+            f:emptyDir: {}
+            f:name: {}
+    manager: kube-controller-manager
+    operation: Update
+    time: "2026-02-10T20:04:50Z"
+  - apiVersion: v1
+    fieldsType: FieldsV1
+    fieldsV1:
+      f:metadata:
+        f:annotations:
+          f:cloud.google.com/cluster_autoscaler_unhelpable_since: {}
+          f:cloud.google.com/cluster_autoscaler_unhelpable_until: {}
+    manager: cluster-autoscaler
+    operation: Update
+    time: "2026-02-10T20:04:51Z"
+  - apiVersion: v1
+    fieldsType: FieldsV1
+    fieldsV1:
+      f:status:
+        f:conditions:
+          .: {}
+          k:{"type":"PodScheduled"}:
+            .: {}
+            f:lastProbeTime: {}
+            f:lastTransitionTime: {}
+            f:message: {}
+            f:observedGeneration: {}
+            f:reason: {}
+            f:status: {}
+            f:type: {}
+    manager: kube-scheduler
+    operation: Update
+    subresource: status
+    time: "2026-02-10T20:04:51Z"
+  name: metrics-server-v1.35.1-67b4d4f7b4-vcdxj
+  namespace: kube-system
+  ownerReferences:
+  - apiVersion: apps/v1
+    blockOwnerDeletion: true
+    controller: true
+    kind: ReplicaSet
+    name: metrics-server-v1.35.1-67b4d4f7b4
+    uid: 0c188423-2b0a-4cfa-9de6-044fcad238dd
+  uid: de453c75-a4f6-4de7-8b69-a6da7b73726b
+spec:
+  containers:
+  - command:
+    - /metrics-server
+    - --metric-resolution=30s
+    - --kubelet-preferred-address-types=InternalIP,Hostname,InternalDNS,ExternalDNS,ExternalIP
+    - --cert-dir=/tmp
+    - --secure-port=10250
+    - --kubelet-allow-working-set-bytes-zero=false
+    image: us-central1-artifactregistry.gcr.io/gke-release-staging/gke-release-staging/metrics-server:v0.8.0-gke.9@sha256:118471b3c01574009500946a967134d8ee7fae3d6ce10770458f226c81a46f9d
+    imagePullPolicy: IfNotPresent
+    livenessProbe:
+      failureThreshold: 3
+      httpGet:
+        path: /livez
+        port: https
+        scheme: HTTPS
+      initialDelaySeconds: 50
+      periodSeconds: 20
+      successThreshold: 1
+      timeoutSeconds: 1
+    name: metrics-server
+    ports:
+    - containerPort: 10250
+      name: https
+      protocol: TCP
+    readinessProbe:
+      failureThreshold: 3
+      httpGet:
+        path: /readyz
+        port: https
+        scheme: HTTPS
+      initialDelaySeconds: 50
+      periodSeconds: 20
+      successThreshold: 1
+      timeoutSeconds: 1
+    resources: {}
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+        - ALL
+      readOnlyRootFilesystem: true
+      runAsGroup: 1000
+      runAsUser: 1000
+      seccompProfile:
+        type: RuntimeDefault
+    terminationMessagePath: /dev/termination-log
+    terminationMessagePolicy: File
+    volumeMounts:
+    - mountPath: /tmp
+      name: tmp-dir
+    - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+      name: kube-api-access-m88dw
+      readOnly: true
+  dnsPolicy: ClusterFirst
+  enableServiceLinks: true
+  nodeSelector:
+    kubernetes.io/os: linux
+  preemptionPolicy: PreemptLowerPriority
+  priority: 2000000000
+  priorityClassName: system-cluster-critical
+  restartPolicy: Always
+  schedulerName: default-scheduler
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  serviceAccount: metrics-server
+  serviceAccountName: metrics-server
+  terminationGracePeriodSeconds: 30
+  tolerations:
+  - key: CriticalAddonsOnly
+    operator: Exists
+  - key: components.gke.io/gke-managed-components
+    operator: Exists
+  - effect: NoSchedule
+    key: kubernetes.io/arch
+    operator: Equal
+    value: arm64
+  - effect: NoExecute
+    key: node.kubernetes.io/not-ready
+    operator: Exists
+    tolerationSeconds: 300
+  - effect: NoExecute
+    key: node.kubernetes.io/unreachable
+    operator: Exists
+    tolerationSeconds: 300
+  volumes:
+  - configMap:
+      defaultMode: 420
+      name: metrics-server-config
+    name: metrics-server-config-volume
+  - emptyDir: {}
+    name: tmp-dir
+  - name: kube-api-access-m88dw
+    projected:
+      defaultMode: 420
+      sources:
+      - serviceAccountToken:
+          expirationSeconds: 3607
+          path: token
+      - configMap:
+          items:
+          - key: ca.crt
+            path: ca.crt
+          name: kube-root-ca.crt
+      - downwardAPI:
+          items:
+          - fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.namespace
+            path: namespace
+status:
+  conditions:
+  - lastProbeTime: null
+    lastTransitionTime: "2026-02-10T20:04:51Z"
+    message: no nodes available to schedule pods
+    observedGeneration: 1
+    reason: Unschedulable
+    status: "False"
+    type: PodScheduled
+  phase: Pending
+  qosClass: BestEffort
+

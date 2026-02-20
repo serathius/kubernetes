@@ -7520,7 +7520,7 @@ func (m *ObjectMeta) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Name = intern.ToString(dAtA[iNdEx:postIndex])
+			m.Name = string(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -7616,7 +7616,7 @@ func (m *ObjectMeta) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.SelfLink = intern.ToString(dAtA[iNdEx:postIndex])
+			m.SelfLink = string(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 5:
 			if wireType != 2 {
@@ -7680,7 +7680,7 @@ func (m *ObjectMeta) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.ResourceVersion = intern.ToString(dAtA[iNdEx:postIndex])
+			m.ResourceVersion = string(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 7:
 			if wireType != 0 {
@@ -8256,7 +8256,7 @@ func (m *OwnerReference) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Name = intern.ToString(dAtA[iNdEx:postIndex])
+			m.Name = string(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 4:
 			if wireType != 2 {
@@ -8894,7 +8894,7 @@ func (m *Preconditions) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			s := intern.ToString(dAtA[iNdEx:postIndex])
+			s := string(dAtA[iNdEx:postIndex])
 			m.ResourceVersion = &s
 			iNdEx = postIndex
 		default:

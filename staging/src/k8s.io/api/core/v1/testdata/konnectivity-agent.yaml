@@ -1,0 +1,592 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  annotations:
+    cloud.google.com/cluster_autoscaler_unhelpable_since: 2026-01-19T12:33:58+0000
+    cloud.google.com/cluster_autoscaler_unhelpable_until: Inf
+    cluster-autoscaler.kubernetes.io/safe-to-evict: "true"
+    components.gke.io/component-name: konnectivitynetworkproxy-combined
+    components.gke.io/component-version: 1.16.6
+  creationTimestamp: "2026-01-19T12:33:58Z"
+  generateName: konnectivity-agent-6d6dd4dd4-
+  generation: 1
+  labels:
+    k8s-app: konnectivity-agent
+    pod-template-hash: 6d6dd4dd4
+  managedFields:
+  - apiVersion: v1
+    fieldsType: FieldsV1
+    fieldsV1:
+      f:metadata:
+        f:annotations:
+          f:cloud.google.com/cluster_autoscaler_unhelpable_since: {}
+          f:cloud.google.com/cluster_autoscaler_unhelpable_until: {}
+    manager: cluster-autoscaler
+    operation: Update
+    time: "2026-01-19T12:33:58Z"
+  - apiVersion: v1
+    fieldsType: FieldsV1
+    fieldsV1:
+      f:metadata:
+        f:annotations:
+          .: {}
+          f:cluster-autoscaler.kubernetes.io/safe-to-evict: {}
+          f:components.gke.io/component-name: {}
+          f:components.gke.io/component-version: {}
+        f:generateName: {}
+        f:labels:
+          .: {}
+          f:k8s-app: {}
+          f:pod-template-hash: {}
+        f:ownerReferences:
+          .: {}
+          k:{"uid":"30349c74-2048-45d4-b78f-1232878f1cad"}: {}
+      f:spec:
+        f:containers:
+          k:{"name":"konnectivity-agent"}:
+            .: {}
+            f:args: {}
+            f:command: {}
+            f:env:
+              .: {}
+              k:{"name":"POD_NAME"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:fieldRef: {}
+              k:{"name":"POD_NAMESPACE"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:fieldRef: {}
+            f:image: {}
+            f:imagePullPolicy: {}
+            f:livenessProbe:
+              .: {}
+              f:failureThreshold: {}
+              f:httpGet:
+                .: {}
+                f:path: {}
+                f:port: {}
+                f:scheme: {}
+              f:initialDelaySeconds: {}
+              f:periodSeconds: {}
+              f:successThreshold: {}
+              f:timeoutSeconds: {}
+            f:name: {}
+            f:resources:
+              .: {}
+              f:limits:
+                .: {}
+                f:memory: {}
+              f:requests:
+                .: {}
+                f:cpu: {}
+                f:memory: {}
+            f:securityContext:
+              .: {}
+              f:allowPrivilegeEscalation: {}
+              f:capabilities:
+                .: {}
+                f:drop: {}
+              f:readOnlyRootFilesystem: {}
+            f:terminationMessagePath: {}
+            f:terminationMessagePolicy: {}
+            f:volumeMounts:
+              .: {}
+              k:{"mountPath":"/var/run/secrets/tokens"}:
+                .: {}
+                f:mountPath: {}
+                f:name: {}
+          k:{"name":"konnectivity-agent-metrics-collector"}:
+            .: {}
+            f:env:
+              .: {}
+              k:{"name":"CLUSTER_NAME"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"COLLECTOR_CONFIG_PATH"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"COMPONENT_NAME"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:fieldRef: {}
+              k:{"name":"COMPONENT_VERSION"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:fieldRef: {}
+              k:{"name":"CONTAINER_NAME"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"GKE_HOSTNAME"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"GKE_NODE_SYSTEM_WORKLOAD_CREDENTIALS"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"GOMAXPROCS"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"LOCATION"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"NODE_NAME"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:fieldRef: {}
+              k:{"name":"POD_NAME"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:fieldRef: {}
+              k:{"name":"POD_NAMESPACE"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:fieldRef: {}
+              k:{"name":"PROJECT_NUMBER"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"SPLIT_GAUGE_BUFFER"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"TOKEN_SOURCE_MODE"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+            f:image: {}
+            f:imagePullPolicy: {}
+            f:name: {}
+            f:resources:
+              .: {}
+              f:limits:
+                .: {}
+                f:cpu: {}
+                f:memory: {}
+              f:requests:
+                .: {}
+                f:cpu: {}
+                f:memory: {}
+            f:securityContext:
+              .: {}
+              f:allowPrivilegeEscalation: {}
+              f:capabilities:
+                .: {}
+                f:drop: {}
+              f:readOnlyRootFilesystem: {}
+            f:terminationMessagePath: {}
+            f:terminationMessagePolicy: {}
+            f:volumeMounts:
+              .: {}
+              k:{"mountPath":"/conf"}:
+                .: {}
+                f:mountPath: {}
+                f:name: {}
+              k:{"mountPath":"/var/run/token_broker/adc"}:
+                .: {}
+                f:mountPath: {}
+                f:name: {}
+                f:readOnly: {}
+              k:{"mountPath":"/var/run/token_broker/ksa"}:
+                .: {}
+                f:mountPath: {}
+                f:name: {}
+                f:readOnly: {}
+        f:dnsPolicy: {}
+        f:enableServiceLinks: {}
+        f:initContainers:
+          .: {}
+          k:{"name":"token-broker-adc-init"}:
+            .: {}
+            f:command: {}
+            f:image: {}
+            f:imagePullPolicy: {}
+            f:name: {}
+            f:resources: {}
+            f:terminationMessagePath: {}
+            f:terminationMessagePolicy: {}
+            f:volumeMounts:
+              .: {}
+              k:{"mountPath":"/var/run/token_broker/adc"}:
+                .: {}
+                f:mountPath: {}
+                f:name: {}
+        f:nodeSelector: {}
+        f:priorityClassName: {}
+        f:restartPolicy: {}
+        f:schedulerName: {}
+        f:securityContext:
+          .: {}
+          f:fsGroup: {}
+          f:runAsGroup: {}
+          f:runAsUser: {}
+          f:seccompProfile:
+            .: {}
+            f:type: {}
+        f:serviceAccount: {}
+        f:serviceAccountName: {}
+        f:terminationGracePeriodSeconds: {}
+        f:tolerations: {}
+        f:topologySpreadConstraints:
+          .: {}
+          k:{"topologyKey":"kubernetes.io/hostname","whenUnsatisfiable":"ScheduleAnyway"}:
+            .: {}
+            f:labelSelector: {}
+            f:maxSkew: {}
+            f:topologyKey: {}
+            f:whenUnsatisfiable: {}
+          k:{"topologyKey":"topology.kubernetes.io/zone","whenUnsatisfiable":"ScheduleAnyway"}:
+            .: {}
+            f:labelSelector: {}
+            f:maxSkew: {}
+            f:topologyKey: {}
+            f:whenUnsatisfiable: {}
+        f:volumes:
+          .: {}
+          k:{"name":"konnectivity-agent-metrics-collector-config-map-vol"}:
+            .: {}
+            f:configMap:
+              .: {}
+              f:defaultMode: {}
+              f:items: {}
+              f:name: {}
+            f:name: {}
+          k:{"name":"konnectivity-agent-token"}:
+            .: {}
+            f:name: {}
+            f:projected:
+              .: {}
+              f:defaultMode: {}
+              f:sources: {}
+          k:{"name":"token-broker-adc"}:
+            .: {}
+            f:emptyDir: {}
+            f:name: {}
+          k:{"name":"token-broker-ksa"}:
+            .: {}
+            f:name: {}
+            f:projected:
+              .: {}
+              f:defaultMode: {}
+              f:sources: {}
+    manager: kube-controller-manager
+    operation: Update
+    time: "2026-01-19T12:33:58Z"
+  - apiVersion: v1
+    fieldsType: FieldsV1
+    fieldsV1:
+      f:status:
+        f:conditions:
+          .: {}
+          k:{"type":"PodScheduled"}:
+            .: {}
+            f:lastProbeTime: {}
+            f:lastTransitionTime: {}
+            f:message: {}
+            f:observedGeneration: {}
+            f:reason: {}
+            f:status: {}
+            f:type: {}
+    manager: kube-scheduler
+    operation: Update
+    subresource: status
+    time: "2026-01-19T12:33:58Z"
+  name: konnectivity-agent-6d6dd4dd4-qzxm9
+  namespace: kube-system
+  ownerReferences:
+  - apiVersion: apps/v1
+    blockOwnerDeletion: true
+    controller: true
+    kind: ReplicaSet
+    name: konnectivity-agent-6d6dd4dd4
+    uid: 30349c74-2048-45d4-b78f-1232878f1cad
+  uid: eda84c96-3253-4882-afca-595cfe62c342
+spec:
+  containers:
+  - args:
+    - --logtostderr=true
+    - --ca-cert=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    - --proxy-server-host=10.128.0.116
+    - --proxy-server-port=8132
+    - --health-server-port=8093
+    - --admin-server-port=8094
+    - --sync-interval=5s
+    - --sync-interval-cap=30s
+    - --sync-forever=true
+    - --probe-interval=5s
+    - --keepalive-time=60s
+    - --service-account-token-path=/var/run/secrets/tokens/konnectivity-agent-token
+    - --enable-profiling
+    - --count-server-leases
+    - --server-count-source=max
+    - --v=3
+    command:
+    - /proxy-agent
+    env:
+    - name: POD_NAME
+      valueFrom:
+        fieldRef:
+          apiVersion: v1
+          fieldPath: metadata.name
+    - name: POD_NAMESPACE
+      valueFrom:
+        fieldRef:
+          apiVersion: v1
+          fieldPath: metadata.namespace
+    image: us-central1-artifactregistry.gcr.io/gke-release-staging/gke-release-staging/proxy-agent:v0.31.3-gke.2@sha256:b1cad7ebc42a31514b074cc4332c2d5a42feff2b3b2b37fd6ff15f818de80011
+    imagePullPolicy: IfNotPresent
+    livenessProbe:
+      failureThreshold: 3
+      httpGet:
+        path: /healthz
+        port: 8093
+        scheme: HTTP
+      initialDelaySeconds: 15
+      periodSeconds: 10
+      successThreshold: 1
+      timeoutSeconds: 15
+    name: konnectivity-agent
+    resources:
+      limits:
+        memory: 125Mi
+      requests:
+        cpu: 10m
+        memory: 30Mi
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+        - all
+      readOnlyRootFilesystem: true
+    terminationMessagePath: /dev/termination-log
+    terminationMessagePolicy: File
+    volumeMounts:
+    - mountPath: /var/run/secrets/tokens
+      name: konnectivity-agent-token
+    - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+      name: kube-api-access-27gds
+      readOnly: true
+  - env:
+    - name: GOMAXPROCS
+      value: "2"
+    - name: COLLECTOR_CONFIG_PATH
+      value: /conf/konnectivity-agent-metrics-collector-config-data.textproto
+    - name: SPLIT_GAUGE_BUFFER
+      value: "true"
+    - name: PROJECT_NUMBER
+      value: "108822696772"
+    - name: LOCATION
+      value: us-central1-c
+    - name: CLUSTER_NAME
+      value: cluster-1
+    - name: POD_NAMESPACE
+      valueFrom:
+        fieldRef:
+          apiVersion: v1
+          fieldPath: metadata.namespace
+    - name: NODE_NAME
+      valueFrom:
+        fieldRef:
+          apiVersion: v1
+          fieldPath: spec.nodeName
+    - name: POD_NAME
+      valueFrom:
+        fieldRef:
+          apiVersion: v1
+          fieldPath: metadata.name
+    - name: CONTAINER_NAME
+      value: konnectivity-agent-metrics-collector
+    - name: COMPONENT_VERSION
+      valueFrom:
+        fieldRef:
+          apiVersion: v1
+          fieldPath: metadata.annotations['components.gke.io/component-version']
+    - name: COMPONENT_NAME
+      valueFrom:
+        fieldRef:
+          apiVersion: v1
+          fieldPath: metadata.annotations['components.gke.io/component-name']
+    - name: TOKEN_SOURCE_MODE
+      value: MODE_TOKEN_BROKER_WITH_FALLBACK
+    - name: GKE_NODE_SYSTEM_WORKLOAD_CREDENTIALS
+      value: /var/run/token_broker/adc/google-application-credentials.json
+    - name: GKE_HOSTNAME
+      value: staging-container.sandbox.googleapis.com
+    image: us-central1-artifactregistry.gcr.io/gke-release-staging/gke-release-staging/gke-metrics-collector:20250508_2300_RC0@sha256:d074c77bdc0ee1c4245113e62d93ef1ed6f1a51960ea854a972861a6a0c774ce
+    imagePullPolicy: IfNotPresent
+    name: konnectivity-agent-metrics-collector
+    resources:
+      limits:
+        cpu: "1"
+        memory: 30Mi
+      requests:
+        cpu: 5m
+        memory: 30Mi
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+        - all
+      readOnlyRootFilesystem: true
+    terminationMessagePath: /dev/termination-log
+    terminationMessagePolicy: File
+    volumeMounts:
+    - mountPath: /conf
+      name: konnectivity-agent-metrics-collector-config-map-vol
+    - mountPath: /var/run/token_broker/ksa
+      name: token-broker-ksa
+      readOnly: true
+    - mountPath: /var/run/token_broker/adc
+      name: token-broker-adc
+      readOnly: true
+    - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+      name: kube-api-access-27gds
+      readOnly: true
+  dnsPolicy: ClusterFirst
+  enableServiceLinks: true
+  initContainers:
+  - command:
+    - /node_token_broker_init
+    - --audience=https://staging-container.sandbox.googleapis.com/v1/projects/108822696772/locations/us-central1-c/clusters/cluster-1/generateClusterNodeAgentToken
+    - --token_url=https://staging-container.sandbox.googleapis.com/v1/projects/108822696772/locations/us-central1-c/clusters/cluster-1/generateClusterNodeAgentToken
+    - --token_file=/var/run/token_broker/ksa/token
+    - --output_path=/var/run/token_broker/adc/google-application-credentials.json
+    - --project_id=siarkowicz-gke-dev
+    image: us-central1-artifactregistry.gcr.io/gke-release-staging/gke-release-staging/node_token_broker/init:gke_node_token_broker_init_20251019.00_p0@sha256:2e1549e4692726aecc70364a1d6700cf276db2d9b4da90179284ca8de168c976
+    imagePullPolicy: IfNotPresent
+    name: token-broker-adc-init
+    resources: {}
+    terminationMessagePath: /dev/termination-log
+    terminationMessagePolicy: File
+    volumeMounts:
+    - mountPath: /var/run/token_broker/adc
+      name: token-broker-adc
+    - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+      name: kube-api-access-27gds
+      readOnly: true
+  nodeSelector:
+    beta.kubernetes.io/os: linux
+  preemptionPolicy: PreemptLowerPriority
+  priority: 2000000000
+  priorityClassName: system-cluster-critical
+  restartPolicy: Always
+  schedulerName: default-scheduler
+  securityContext:
+    fsGroup: 1000
+    runAsGroup: 1000
+    runAsUser: 1000
+    seccompProfile:
+      type: RuntimeDefault
+  serviceAccount: konnectivity-agent
+  serviceAccountName: konnectivity-agent
+  terminationGracePeriodSeconds: 30
+  tolerations:
+  - key: CriticalAddonsOnly
+    operator: Exists
+  - effect: NoSchedule
+    key: sandbox.gke.io/runtime
+    operator: Equal
+    value: gvisor
+  - effect: NoSchedule
+    key: kubernetes.io/arch
+    operator: Equal
+    value: arm64
+  - key: components.gke.io/gke-managed-components
+    operator: Exists
+  - effect: NoExecute
+    key: node.kubernetes.io/not-ready
+    operator: Exists
+    tolerationSeconds: 300
+  - effect: NoExecute
+    key: node.kubernetes.io/unreachable
+    operator: Exists
+    tolerationSeconds: 300
+  topologySpreadConstraints:
+  - labelSelector:
+      matchLabels:
+        k8s-app: konnectivity-agent
+    maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: ScheduleAnyway
+  - labelSelector:
+      matchLabels:
+        k8s-app: konnectivity-agent
+    maxSkew: 1
+    topologyKey: kubernetes.io/hostname
+    whenUnsatisfiable: ScheduleAnyway
+  volumes:
+  - name: konnectivity-agent-token
+    projected:
+      defaultMode: 420
+      sources:
+      - serviceAccountToken:
+          audience: system:konnectivity-server
+          expirationSeconds: 3600
+          path: konnectivity-agent-token
+  - configMap:
+      defaultMode: 420
+      items:
+      - key: konnectivity-agent-metrics-collector-config-data
+        path: konnectivity-agent-metrics-collector-config-data.textproto
+      name: konnectivity-agent-metrics-collector-config-map
+    name: konnectivity-agent-metrics-collector-config-map-vol
+  - name: token-broker-ksa
+    projected:
+      defaultMode: 420
+      sources:
+      - serviceAccountToken:
+          audience: https://staging-container.sandbox.googleapis.com/v1/projects/108822696772/locations/us-central1-c/clusters/cluster-1/generateClusterNodeAgentToken
+          expirationSeconds: 3600
+          path: token
+  - emptyDir: {}
+    name: token-broker-adc
+  - name: kube-api-access-27gds
+    projected:
+      defaultMode: 420
+      sources:
+      - serviceAccountToken:
+          expirationSeconds: 3607
+          path: token
+      - configMap:
+          items:
+          - key: ca.crt
+            path: ca.crt
+          name: kube-root-ca.crt
+      - downwardAPI:
+          items:
+          - fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.namespace
+            path: namespace
+status:
+  conditions:
+  - lastProbeTime: null
+    lastTransitionTime: "2026-01-19T12:33:58Z"
+    message: no nodes available to schedule pods
+    observedGeneration: 1
+    reason: Unschedulable
+    status: "False"
+    type: PodScheduled
+  phase: Pending
+  qosClass: Burstable
+

@@ -19,20 +19,30 @@ func BenchmarkPodDecode(b *testing.B) {
 	if err != nil {
 		b.Fatalf("Failed to get working directory: %v", err)
 	}
-	podPath := "/testdata/pod.yaml"
-	data, err := os.ReadFile(wd + podPath)
+	entries, err := os.ReadDir(wd + "/testdata")
 	if err != nil {
-		b.Fatalf("Failed to read pod yaml: %v", err)
+		b.Fatal(err)
 	}
-
-	var pod Pod
-	if err := yaml.Unmarshal(data, &pod); err != nil {
-		b.Fatalf("Failed to unmarshal yaml: %v", err)
+	if len(entries) == 0 {
+		b.Fatal("No entries found in testdata directory")
 	}
-
-	protoData, err := pod.Marshal()
-	if err != nil {
-		b.Fatalf("Failed to marshal pod: %v", err)
+	protoData := make([][]byte, len(entries))
+	for i, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		data, err := os.ReadFile(wd + "/testdata/" + e.Name())
+		if err != nil {
+			b.Fatalf("Failed to read pod yaml: %v", err)
+		}
+		var pod Pod
+		if err := yaml.Unmarshal(data, &pod); err != nil {
+			b.Fatalf("Failed to unmarshal yaml: %v", err)
+		}
+		protoData[i], err = pod.Marshal()
+		if err != nil {
+			b.Fatalf("Failed to marshal pod: %v", err)
+		}
 	}
 
 	scheme := kruntime.NewScheme()
@@ -83,7 +93,7 @@ func BenchmarkPodDecode(b *testing.B) {
 
 type DecodeFunc func(data []byte, defaults *schema.GroupVersionKind, into kruntime.Object) (kruntime.Object, *schema.GroupVersionKind, error)
 
-func benchmarkPodDecode(b *testing.B, decode DecodeFunc, protoData []byte) {
+func benchmarkPodDecode(b *testing.B, decode DecodeFunc, protoData [][]byte) {
 	pods := make([]*Pod, b.N)
 	for i := range pods {
 		pods[i] = &Pod{}
@@ -98,7 +108,7 @@ func benchmarkPodDecode(b *testing.B, decode DecodeFunc, protoData []byte) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_, _, err := decode(protoData, nil, pods[i])
+		_, _, err := decode(protoData[i%len(protoData)], nil, pods[i])
 		if err != nil {
 			b.Fatalf("Failed to decode: %v", err)
 		}

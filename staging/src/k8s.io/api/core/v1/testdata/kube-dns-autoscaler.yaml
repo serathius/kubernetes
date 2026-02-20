@@ -1,0 +1,212 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  annotations:
+    cloud.google.com/cluster_autoscaler_unhelpable_since: 2026-01-19T12:33:59+0000
+    cloud.google.com/cluster_autoscaler_unhelpable_until: Inf
+    components.gke.io/component-name: kubedns
+    components.gke.io/component-version: 34.3.3
+  creationTimestamp: "2026-01-19T12:33:58Z"
+  generateName: kube-dns-autoscaler-7d5cb859bf-
+  generation: 1
+  labels:
+    k8s-app: kube-dns-autoscaler
+    pod-template-hash: 7d5cb859bf
+  managedFields:
+  - apiVersion: v1
+    fieldsType: FieldsV1
+    fieldsV1:
+      f:metadata:
+        f:annotations:
+          .: {}
+          f:components.gke.io/component-name: {}
+          f:components.gke.io/component-version: {}
+        f:generateName: {}
+        f:labels:
+          .: {}
+          f:k8s-app: {}
+          f:pod-template-hash: {}
+        f:ownerReferences:
+          .: {}
+          k:{"uid":"32f2657a-e0c0-489a-9eca-9fc7c00234a5"}: {}
+      f:spec:
+        f:containers:
+          k:{"name":"autoscaler"}:
+            .: {}
+            f:command: {}
+            f:image: {}
+            f:imagePullPolicy: {}
+            f:name: {}
+            f:resources:
+              .: {}
+              f:requests:
+                .: {}
+                f:cpu: {}
+                f:memory: {}
+            f:securityContext:
+              .: {}
+              f:allowPrivilegeEscalation: {}
+              f:capabilities:
+                .: {}
+                f:drop: {}
+              f:readOnlyRootFilesystem: {}
+            f:terminationMessagePath: {}
+            f:terminationMessagePolicy: {}
+        f:dnsPolicy: {}
+        f:enableServiceLinks: {}
+        f:nodeSelector: {}
+        f:priorityClassName: {}
+        f:restartPolicy: {}
+        f:schedulerName: {}
+        f:securityContext:
+          .: {}
+          f:fsGroup: {}
+          f:runAsGroup: {}
+          f:runAsUser: {}
+          f:seccompProfile:
+            .: {}
+            f:type: {}
+          f:supplementalGroups: {}
+        f:serviceAccount: {}
+        f:serviceAccountName: {}
+        f:terminationGracePeriodSeconds: {}
+        f:tolerations: {}
+    manager: kube-controller-manager
+    operation: Update
+    time: "2026-01-19T12:33:58Z"
+  - apiVersion: v1
+    fieldsType: FieldsV1
+    fieldsV1:
+      f:metadata:
+        f:annotations:
+          f:cloud.google.com/cluster_autoscaler_unhelpable_since: {}
+          f:cloud.google.com/cluster_autoscaler_unhelpable_until: {}
+    manager: cluster-autoscaler
+    operation: Update
+    time: "2026-01-19T12:33:59Z"
+  - apiVersion: v1
+    fieldsType: FieldsV1
+    fieldsV1:
+      f:status:
+        f:conditions:
+          .: {}
+          k:{"type":"PodScheduled"}:
+            .: {}
+            f:lastProbeTime: {}
+            f:lastTransitionTime: {}
+            f:message: {}
+            f:observedGeneration: {}
+            f:reason: {}
+            f:status: {}
+            f:type: {}
+    manager: kube-scheduler
+    operation: Update
+    subresource: status
+    time: "2026-01-19T12:33:59Z"
+  name: kube-dns-autoscaler-7d5cb859bf-xsl2p
+  namespace: kube-system
+  ownerReferences:
+  - apiVersion: apps/v1
+    blockOwnerDeletion: true
+    controller: true
+    kind: ReplicaSet
+    name: kube-dns-autoscaler-7d5cb859bf
+    uid: 32f2657a-e0c0-489a-9eca-9fc7c00234a5
+  uid: ff037f2d-229f-4163-9203-aa6d0e2c8195
+spec:
+  containers:
+  - command:
+    - /cluster-proportional-autoscaler
+    - --namespace=kube-system
+    - --configmap=kube-dns-autoscaler
+    - --target=Deployment/kube-dns
+    - --default-params={"linear":{"coresPerReplica":256,"nodesPerReplica":16,"preventSinglePointFailure":true,"includeUnschedulableNodes":true}}
+    - --logtostderr=true
+    - --v=2
+    image: us-central1-artifactregistry.gcr.io/gke-release-staging/gke-release-staging/cluster-proportional-autoscaler:v1.10.2-gke.20@sha256:65a7745ebd436a4a236beb8f8201d96034969d50c25fc5689ac54c0a2df746bb
+    imagePullPolicy: IfNotPresent
+    name: autoscaler
+    resources:
+      requests:
+        cpu: 20m
+        memory: 10Mi
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+        - all
+      readOnlyRootFilesystem: true
+    terminationMessagePath: /dev/termination-log
+    terminationMessagePolicy: File
+    volumeMounts:
+    - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+      name: kube-api-access-4z59t
+      readOnly: true
+  dnsPolicy: ClusterFirst
+  enableServiceLinks: true
+  nodeSelector:
+    kubernetes.io/os: linux
+  preemptionPolicy: PreemptLowerPriority
+  priority: 2000000000
+  priorityClassName: system-cluster-critical
+  restartPolicy: Always
+  schedulerName: default-scheduler
+  securityContext:
+    fsGroup: 65534
+    runAsGroup: 1000
+    runAsUser: 1000
+    seccompProfile:
+      type: RuntimeDefault
+    supplementalGroups:
+    - 65534
+  serviceAccount: kube-dns-autoscaler
+  serviceAccountName: kube-dns-autoscaler
+  terminationGracePeriodSeconds: 30
+  tolerations:
+  - key: CriticalAddonsOnly
+    operator: Exists
+  - key: components.gke.io/gke-managed-components
+    operator: Exists
+  - effect: NoSchedule
+    key: kubernetes.io/arch
+    operator: Equal
+    value: arm64
+  - effect: NoExecute
+    key: node.kubernetes.io/not-ready
+    operator: Exists
+    tolerationSeconds: 300
+  - effect: NoExecute
+    key: node.kubernetes.io/unreachable
+    operator: Exists
+    tolerationSeconds: 300
+  volumes:
+  - name: kube-api-access-4z59t
+    projected:
+      defaultMode: 420
+      sources:
+      - serviceAccountToken:
+          expirationSeconds: 3607
+          path: token
+      - configMap:
+          items:
+          - key: ca.crt
+            path: ca.crt
+          name: kube-root-ca.crt
+      - downwardAPI:
+          items:
+          - fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.namespace
+            path: namespace
+status:
+  conditions:
+  - lastProbeTime: null
+    lastTransitionTime: "2026-01-19T12:33:59Z"
+    message: no nodes available to schedule pods
+    observedGeneration: 1
+    reason: Unschedulable
+    status: "False"
+    type: PodScheduled
+  phase: Pending
+  qosClass: Burstable
+
