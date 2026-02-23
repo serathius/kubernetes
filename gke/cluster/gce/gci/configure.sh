@@ -1128,7 +1128,9 @@ function retag-docker-image {
     # ${dest_img##*/} takes the suffix after the prefix */, i.e. everything after the first '/'
     dest_img_arch=${dest_registry}/${dest_img##*/}
     dest_img_no_arch=${dest_registry}/${img_prefix}:${dest_tag}
-    for dest_img in ${dest_img_arch} ${dest_img_no_arch}; do
+    # replace the last path segment with the prefix and image tag to drop the arch
+    src_img_no_arch=${src_img%/*}/${img_prefix}:${img_tag}
+    for dest_img in ${dest_img_arch} ${dest_img_no_arch} ${src_img_no_arch}; do
       if [[ "${dest_img}" != "${src_img}" ]]; then
         cmd="ctr -n=k8s.io image tag --force ${src_img} ${dest_img}"
         echo "Retag command: ${cmd}"
