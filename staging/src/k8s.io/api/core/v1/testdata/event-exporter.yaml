@@ -1,0 +1,404 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  annotations:
+    cloud.google.com/cluster_autoscaler_unhelpable_since: 2026-02-10T20:04:36+0000
+    cloud.google.com/cluster_autoscaler_unhelpable_until: Inf
+    components.gke.io/component-name: event-exporter
+    components.gke.io/component-version: 1.35.2-gke.1
+  creationTimestamp: "2026-02-10T20:04:30Z"
+  generateName: event-exporter-gke-5864f8bbfc-
+  generation: 1
+  labels:
+    k8s-app: event-exporter
+    pod-template-hash: 5864f8bbfc
+    version: v0.4.0
+  managedFields:
+  - apiVersion: v1
+    fieldsType: FieldsV1
+    fieldsV1:
+      f:metadata:
+        f:annotations:
+          .: {}
+          f:components.gke.io/component-name: {}
+          f:components.gke.io/component-version: {}
+        f:generateName: {}
+        f:labels:
+          .: {}
+          f:k8s-app: {}
+          f:pod-template-hash: {}
+          f:version: {}
+        f:ownerReferences:
+          .: {}
+          k:{"uid":"cce48f61-09d2-4bd9-941e-385dddf19338"}: {}
+      f:spec:
+        f:containers:
+          k:{"name":"event-exporter"}:
+            .: {}
+            f:command: {}
+            f:env:
+              .: {}
+              k:{"name":"GOOGLE_APPLICATION_CREDENTIALS"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+            f:image: {}
+            f:imagePullPolicy: {}
+            f:name: {}
+            f:resources:
+              .: {}
+              f:requests:
+                .: {}
+                f:cpu: {}
+                f:memory: {}
+            f:securityContext:
+              .: {}
+              f:allowPrivilegeEscalation: {}
+              f:capabilities:
+                .: {}
+                f:drop: {}
+              f:readOnlyRootFilesystem: {}
+            f:terminationMessagePath: {}
+            f:terminationMessagePolicy: {}
+            f:volumeMounts:
+              .: {}
+              k:{"mountPath":"/var/run/token_broker/adc"}:
+                .: {}
+                f:mountPath: {}
+                f:name: {}
+                f:readOnly: {}
+              k:{"mountPath":"/var/run/token_broker/ksa"}:
+                .: {}
+                f:mountPath: {}
+                f:name: {}
+                f:readOnly: {}
+          k:{"name":"prometheus-to-sd-exporter"}:
+            .: {}
+            f:command: {}
+            f:env:
+              .: {}
+              k:{"name":"GOOGLE_APPLICATION_CREDENTIALS"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+              k:{"name":"NODE_NAME"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:fieldRef: {}
+              k:{"name":"POD_NAME"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:fieldRef: {}
+              k:{"name":"POD_NAMESPACE"}:
+                .: {}
+                f:name: {}
+                f:valueFrom:
+                  .: {}
+                  f:fieldRef: {}
+            f:image: {}
+            f:imagePullPolicy: {}
+            f:name: {}
+            f:resources: {}
+            f:securityContext:
+              .: {}
+              f:allowPrivilegeEscalation: {}
+              f:capabilities:
+                .: {}
+                f:drop: {}
+              f:readOnlyRootFilesystem: {}
+            f:terminationMessagePath: {}
+            f:terminationMessagePolicy: {}
+            f:volumeMounts:
+              .: {}
+              k:{"mountPath":"/var/run/token_broker/adc"}:
+                .: {}
+                f:mountPath: {}
+                f:name: {}
+                f:readOnly: {}
+              k:{"mountPath":"/var/run/token_broker/ksa"}:
+                .: {}
+                f:mountPath: {}
+                f:name: {}
+                f:readOnly: {}
+        f:dnsPolicy: {}
+        f:enableServiceLinks: {}
+        f:initContainers:
+          .: {}
+          k:{"name":"token-broker-adc-init"}:
+            .: {}
+            f:command: {}
+            f:image: {}
+            f:imagePullPolicy: {}
+            f:name: {}
+            f:resources: {}
+            f:terminationMessagePath: {}
+            f:terminationMessagePolicy: {}
+            f:volumeMounts:
+              .: {}
+              k:{"mountPath":"/var/run/token_broker/adc"}:
+                .: {}
+                f:mountPath: {}
+                f:name: {}
+        f:nodeSelector: {}
+        f:restartPolicy: {}
+        f:schedulerName: {}
+        f:securityContext:
+          .: {}
+          f:runAsGroup: {}
+          f:runAsUser: {}
+          f:seccompProfile:
+            .: {}
+            f:type: {}
+        f:serviceAccount: {}
+        f:serviceAccountName: {}
+        f:terminationGracePeriodSeconds: {}
+        f:tolerations: {}
+        f:volumes:
+          .: {}
+          k:{"name":"ssl-certs"}:
+            .: {}
+            f:hostPath:
+              .: {}
+              f:path: {}
+              f:type: {}
+            f:name: {}
+          k:{"name":"token-broker-adc"}:
+            .: {}
+            f:emptyDir: {}
+            f:name: {}
+          k:{"name":"token-broker-ksa"}:
+            .: {}
+            f:name: {}
+            f:projected:
+              .: {}
+              f:defaultMode: {}
+              f:sources: {}
+    manager: kube-controller-manager
+    operation: Update
+    time: "2026-02-10T20:04:30Z"
+  - apiVersion: v1
+    fieldsType: FieldsV1
+    fieldsV1:
+      f:status:
+        f:conditions:
+          .: {}
+          k:{"type":"PodScheduled"}:
+            .: {}
+            f:lastProbeTime: {}
+            f:lastTransitionTime: {}
+            f:message: {}
+            f:observedGeneration: {}
+            f:reason: {}
+            f:status: {}
+            f:type: {}
+    manager: kube-scheduler
+    operation: Update
+    subresource: status
+    time: "2026-02-10T20:04:31Z"
+  - apiVersion: v1
+    fieldsType: FieldsV1
+    fieldsV1:
+      f:metadata:
+        f:annotations:
+          f:cloud.google.com/cluster_autoscaler_unhelpable_since: {}
+          f:cloud.google.com/cluster_autoscaler_unhelpable_until: {}
+    manager: cluster-autoscaler
+    operation: Update
+    time: "2026-02-10T20:04:36Z"
+  name: event-exporter-gke-5864f8bbfc-s45qd
+  namespace: kube-system
+  ownerReferences:
+  - apiVersion: apps/v1
+    blockOwnerDeletion: true
+    controller: true
+    kind: ReplicaSet
+    name: event-exporter-gke-5864f8bbfc
+    uid: cce48f61-09d2-4bd9-941e-385dddf19338
+  uid: 0dfb329b-b30a-4db6-8458-ef46c44d1a7e
+spec:
+  containers:
+  - command:
+    - /event-exporter
+    - -sink-opts=-stackdriver-resource-model=new -endpoint=https://logging.googleapis.com/
+    - -prometheus-endpoint=:8080
+    - -enable-pod-owner-label=true
+    - -lister-watcher-options-limit=100
+    - -lister-watcher-enable-streaming=true
+    - -storage-type=DeltaFIFOStorage
+    - -system-namespaces=kube-system,istio-system,knative-serving,gke-system,config-management-system,gmp-system,gke-managed-cim,gke-managed-volumepopulator,gke-managed-checkpointing,gke-managed-lustrecsi,gke-managed-otel,gke-managed-mldiagnostics
+    env:
+    - name: GOOGLE_APPLICATION_CREDENTIALS
+      value: /var/run/token_broker/adc/google-application-credentials.json
+    image: us-central1-artifactregistry.gcr.io/gke-release-staging/gke-release-staging/event-exporter:event-exporter-v0.5.11-gke.2@sha256:17e118bdc14cbcfb3c7499b53bb90ecd165d3e058ec001bd9d2dbb2deeb27dfe
+    imagePullPolicy: IfNotPresent
+    name: event-exporter
+    resources:
+      requests:
+        cpu: 3m
+        memory: 100Mi
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+        - all
+      readOnlyRootFilesystem: true
+    terminationMessagePath: /dev/termination-log
+    terminationMessagePolicy: File
+    volumeMounts:
+    - mountPath: /var/run/token_broker/ksa
+      name: token-broker-ksa
+      readOnly: true
+    - mountPath: /var/run/token_broker/adc
+      name: token-broker-adc
+      readOnly: true
+    - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+      name: kube-api-access-8btnz
+      readOnly: true
+  - command:
+    - /monitor
+    - --api-override=https://staging-monitoring.sandbox.googleapis.com/
+    - --source=event_exporter:http://localhost:8080?metricsPrefix=container.googleapis.com/internal/addons&whitelisted=stackdriver_sink_received_entry_count,stackdriver_sink_request_count,stackdriver_sink_successfully_sent_entry_count
+    - --source=event_exporter:http://localhost:8080?metricsPrefix=kubernetes.io/internal/addons&customResourceType=k8s_container&customLabels[project_id]&customLabels[location]&customLabels[cluster_name]&customLabels[namespace_name]=kube-system&customLabels[pod_name]=event-exporter-$NODE_NAME&customLabels[container_name]=event-exporter&whitelisted=stackdriver_sink_records_latency_seconds,podlabel_cache_ops_count,podlabel_get_count,podlabel_nolabel_pod_cache_ops_count
+    - --pod-id=$(POD_NAME)
+    - --namespace-id=$(POD_NAMESPACE)
+    - --node-name=$(NODE_NAME)
+    env:
+    - name: GOOGLE_APPLICATION_CREDENTIALS
+      value: /var/run/token_broker/adc/google-application-credentials.json
+    - name: POD_NAME
+      valueFrom:
+        fieldRef:
+          apiVersion: v1
+          fieldPath: metadata.name
+    - name: POD_NAMESPACE
+      valueFrom:
+        fieldRef:
+          apiVersion: v1
+          fieldPath: metadata.namespace
+    - name: NODE_NAME
+      valueFrom:
+        fieldRef:
+          apiVersion: v1
+          fieldPath: spec.nodeName
+    image: us-central1-artifactregistry.gcr.io/gke-release-staging/gke-release-staging/prometheus-to-sd:v0.12.4-gke.7@sha256:fdc6d4040760a0195408b7575d3524c9562cf7dabef6006b59ad620a25ea808f
+    imagePullPolicy: IfNotPresent
+    name: prometheus-to-sd-exporter
+    resources: {}
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+        - all
+      readOnlyRootFilesystem: true
+    terminationMessagePath: /dev/termination-log
+    terminationMessagePolicy: File
+    volumeMounts:
+    - mountPath: /var/run/token_broker/ksa
+      name: token-broker-ksa
+      readOnly: true
+    - mountPath: /var/run/token_broker/adc
+      name: token-broker-adc
+      readOnly: true
+    - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+      name: kube-api-access-8btnz
+      readOnly: true
+  dnsPolicy: ClusterFirst
+  enableServiceLinks: true
+  initContainers:
+  - command:
+    - /node_token_broker_init
+    - --audience=https://staging-container.sandbox.googleapis.com/v1/projects/108822696772/locations/us-central1-c/clusters/cluster-1/generateClusterNodeAgentToken
+    - --token_url=https://staging-container.sandbox.googleapis.com/v1/projects/108822696772/locations/us-central1-c/clusters/cluster-1/generateClusterNodeAgentToken
+    - --token_file=/var/run/token_broker/ksa/token
+    - --output_path=/var/run/token_broker/adc/google-application-credentials.json
+    - --project_id=siarkowicz-gke-dev
+    image: us-central1-artifactregistry.gcr.io/gke-release-staging/gke-release-staging/node_token_broker/init:gke_node_token_broker_init_20251007.00_p0@sha256:638afa0822ed4c4aad9ff9f8528667a9d04dd5e1c7b1c251e9344ca7dd4aad68
+    imagePullPolicy: IfNotPresent
+    name: token-broker-adc-init
+    resources: {}
+    terminationMessagePath: /dev/termination-log
+    terminationMessagePolicy: File
+    volumeMounts:
+    - mountPath: /var/run/token_broker/adc
+      name: token-broker-adc
+    - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+      name: kube-api-access-8btnz
+      readOnly: true
+  nodeSelector:
+    kubernetes.io/os: linux
+  preemptionPolicy: PreemptLowerPriority
+  priority: 0
+  restartPolicy: Always
+  schedulerName: default-scheduler
+  securityContext:
+    runAsGroup: 1000
+    runAsUser: 1000
+    seccompProfile:
+      type: RuntimeDefault
+  serviceAccount: event-exporter-sa
+  serviceAccountName: event-exporter-sa
+  terminationGracePeriodSeconds: 120
+  tolerations:
+  - effect: NoSchedule
+    key: kubernetes.io/arch
+    operator: Equal
+    value: arm64
+  - key: components.gke.io/gke-managed-components
+    operator: Exists
+  - effect: NoExecute
+    key: node.kubernetes.io/not-ready
+    operator: Exists
+    tolerationSeconds: 300
+  - effect: NoExecute
+    key: node.kubernetes.io/unreachable
+    operator: Exists
+    tolerationSeconds: 300
+  volumes:
+  - hostPath:
+      path: /etc/ssl/certs
+      type: Directory
+    name: ssl-certs
+  - name: token-broker-ksa
+    projected:
+      defaultMode: 420
+      sources:
+      - serviceAccountToken:
+          audience: https://staging-container.sandbox.googleapis.com/v1/projects/108822696772/locations/us-central1-c/clusters/cluster-1/generateClusterNodeAgentToken
+          expirationSeconds: 3600
+          path: token
+  - emptyDir: {}
+    name: token-broker-adc
+  - name: kube-api-access-8btnz
+    projected:
+      defaultMode: 420
+      sources:
+      - serviceAccountToken:
+          expirationSeconds: 3607
+          path: token
+      - configMap:
+          items:
+          - key: ca.crt
+            path: ca.crt
+          name: kube-root-ca.crt
+      - downwardAPI:
+          items:
+          - fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.namespace
+            path: namespace
+status:
+  conditions:
+  - lastProbeTime: null
+    lastTransitionTime: "2026-02-10T20:04:31Z"
+    message: no nodes available to schedule pods
+    observedGeneration: 1
+    reason: Unschedulable
+    status: "False"
+    type: PodScheduled
+  phase: Pending
+  qosClass: Burstable
+

@@ -1,0 +1,329 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  annotations:
+    cloud.google.com/cluster_autoscaler_unhelpable_since: 2026-02-11T19:35:32+0000
+    cloud.google.com/cluster_autoscaler_unhelpable_until: Inf
+    components.gke.io/component-name: managed-prometheus
+    components.gke.io/component-version: 0.17.3-gke.0
+  creationTimestamp: "2026-02-11T19:35:32Z"
+  generateName: gmp-operator-74ddc69784-
+  generation: 1
+  labels:
+    app: managed-prometheus-operator
+    app.kubernetes.io/component: operator
+    app.kubernetes.io/name: gmp-operator
+    app.kubernetes.io/part-of: gmp
+    app.kubernetes.io/version: 0.17.3
+    pod-template-hash: 74ddc69784
+  managedFields:
+  - apiVersion: v1
+    fieldsType: FieldsV1
+    fieldsV1:
+      f:metadata:
+        f:annotations:
+          f:cloud.google.com/cluster_autoscaler_unhelpable_since: {}
+          f:cloud.google.com/cluster_autoscaler_unhelpable_until: {}
+    manager: cluster-autoscaler
+    operation: Update
+    time: "2026-02-11T19:35:32Z"
+  - apiVersion: v1
+    fieldsType: FieldsV1
+    fieldsV1:
+      f:metadata:
+        f:annotations:
+          .: {}
+          f:components.gke.io/component-name: {}
+          f:components.gke.io/component-version: {}
+        f:generateName: {}
+        f:labels:
+          .: {}
+          f:app: {}
+          f:app.kubernetes.io/component: {}
+          f:app.kubernetes.io/name: {}
+          f:app.kubernetes.io/part-of: {}
+          f:app.kubernetes.io/version: {}
+          f:pod-template-hash: {}
+        f:ownerReferences:
+          .: {}
+          k:{"uid":"fbef8ae2-3cd3-4f4e-b4c5-7e1d99427bc9"}: {}
+      f:spec:
+        f:affinity:
+          .: {}
+          f:nodeAffinity:
+            .: {}
+            f:requiredDuringSchedulingIgnoredDuringExecution: {}
+        f:automountServiceAccountToken: {}
+        f:containers:
+          k:{"name":"operator"}:
+            .: {}
+            f:args: {}
+            f:env:
+              .: {}
+              k:{"name":"GCE_METADATA_HOST"}:
+                .: {}
+                f:name: {}
+                f:value: {}
+            f:image: {}
+            f:imagePullPolicy: {}
+            f:livenessProbe:
+              .: {}
+              f:failureThreshold: {}
+              f:httpGet:
+                .: {}
+                f:path: {}
+                f:port: {}
+                f:scheme: {}
+              f:periodSeconds: {}
+              f:successThreshold: {}
+              f:timeoutSeconds: {}
+            f:name: {}
+            f:ports:
+              .: {}
+              k:{"containerPort":10250,"protocol":"TCP"}:
+                .: {}
+                f:containerPort: {}
+                f:name: {}
+                f:protocol: {}
+              k:{"containerPort":18080,"protocol":"TCP"}:
+                .: {}
+                f:containerPort: {}
+                f:name: {}
+                f:protocol: {}
+            f:readinessProbe:
+              .: {}
+              f:failureThreshold: {}
+              f:httpGet:
+                .: {}
+                f:path: {}
+                f:port: {}
+                f:scheme: {}
+              f:periodSeconds: {}
+              f:successThreshold: {}
+              f:timeoutSeconds: {}
+            f:resources:
+              .: {}
+              f:limits:
+                .: {}
+                f:memory: {}
+              f:requests:
+                .: {}
+                f:cpu: {}
+                f:memory: {}
+            f:securityContext:
+              .: {}
+              f:allowPrivilegeEscalation: {}
+              f:capabilities:
+                .: {}
+                f:drop: {}
+              f:privileged: {}
+              f:readOnlyRootFilesystem: {}
+            f:terminationMessagePath: {}
+            f:terminationMessagePolicy: {}
+            f:volumeMounts:
+              .: {}
+              k:{"mountPath":"/etc/tls/private"}:
+                .: {}
+                f:mountPath: {}
+                f:name: {}
+        f:dnsPolicy: {}
+        f:enableServiceLinks: {}
+        f:priorityClassName: {}
+        f:restartPolicy: {}
+        f:schedulerName: {}
+        f:securityContext:
+          .: {}
+          f:runAsGroup: {}
+          f:runAsNonRoot: {}
+          f:runAsUser: {}
+          f:seccompProfile:
+            .: {}
+            f:type: {}
+        f:serviceAccount: {}
+        f:serviceAccountName: {}
+        f:terminationGracePeriodSeconds: {}
+        f:tolerations: {}
+        f:volumes:
+          .: {}
+          k:{"name":"certs"}:
+            .: {}
+            f:emptyDir: {}
+            f:name: {}
+    manager: kube-controller-manager
+    operation: Update
+    time: "2026-02-11T19:35:32Z"
+  - apiVersion: v1
+    fieldsType: FieldsV1
+    fieldsV1:
+      f:status:
+        f:conditions:
+          .: {}
+          k:{"type":"PodScheduled"}:
+            .: {}
+            f:lastProbeTime: {}
+            f:lastTransitionTime: {}
+            f:message: {}
+            f:observedGeneration: {}
+            f:reason: {}
+            f:status: {}
+            f:type: {}
+    manager: kube-scheduler
+    operation: Update
+    subresource: status
+    time: "2026-02-11T19:35:32Z"
+  name: gmp-operator-74ddc69784-vd9s4
+  namespace: gmp-system
+  ownerReferences:
+  - apiVersion: apps/v1
+    blockOwnerDeletion: true
+    controller: true
+    kind: ReplicaSet
+    name: gmp-operator-74ddc69784
+    uid: fbef8ae2-3cd3-4f4e-b4c5-7e1d99427bc9
+  uid: beb0949e-454d-4223-9590-ee99ffd373f0
+spec:
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: kubernetes.io/arch
+            operator: In
+            values:
+            - arm64
+            - amd64
+          - key: kubernetes.io/os
+            operator: In
+            values:
+            - linux
+  automountServiceAccountToken: true
+  containers:
+  - args:
+    - --operator-namespace=gmp-system
+    - --public-namespace=gmp-public
+    - --webhook-addr=:10250
+    - --tls-cert-base64=LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUVIakNDQW9hZ0F3SUJBZ0lRSk54MWgraUs2WUh0cWt3MmFMU2RpREFOQmdrcWhraUc5dzBCQVFzRkFEQXYKTVMwd0t3WURWUVFERXlSbE9EUTFZV00yTWkwM09ERmpMVFF6WTJNdFltWTJOUzFqT0RGbE9XTTJNVGt4TkdJdwpIaGNOTWpZd01qRXhNVGt5TmpNeldoY05NekV3TWpFd01Ua3lPRE16V2pBME1USXdNQVlEVlFRREV5bG5iWEF0CmIzQmxjbUYwYjNJdVoyMXdMWE41YzNSbGJTNXpkbU11WTJ4MWMzUmxjaTVzYjJOaGJEQ0NBU0l3RFFZSktvWkkKaHZjTkFRRUJCUUFEZ2dFUEFEQ0NBUW9DZ2dFQkFMeHlVWUJYWUV5UTJoQlJXK2pOMXBJU2RGSTgxblpEeWY3Ngo4RHNMaUdPQTliR0lzTmk3QVFPRGhwQ3FoczBSNG90TEg2aHFLVUdDdWZaOFZPenpHUGtCbldIVzl2aEc3cGRICjMzQnZsa1ZWU2pBRmM5SDk3a215THVneTVtSXNaMFdGYnVJcTVtTE9GWGxON0RLeWdmMlZzNnd2bVBLbWhGbEEKZkx4ek5maktHNWZzK1RveXFwQ2VlVmlYVFNJbDRUcnRpemtTZGI1UC9YMi9uVHdFU0ZweXRXVUFDNFRzSHVIUgpjRWVybjl0VzRaQXVsRHRGZExoSFdSbDRucjRiOXJpcUpvcys3OC9FUkZ2bGFhOWFhbGwxSzJxdVBVeWd0c3hPCmFSZnpHR1hQUEN6SE1PWmlBUlMrMFlXcTcraVlHUmF1dDdNRU14S1RMZ0xJMk9oeFRBa0NBd0VBQWFPQnNEQ0IKclRBT0JnTlZIUThCQWY4RUJBTUNCYUF3SFFZRFZSMGxCQll3RkFZSUt3WUJCUVVIQXdFR0NDc0dBUVVGQndNQwpNQXdHQTFVZEV3RUIvd1FDTUFBd0h3WURWUjBqQkJnd0ZvQVVMY2J2bVNSRk9EWDErYjNRd2hhWjE4QVd2UlF3ClRRWURWUjBSQkVZd1JJSU1aMjF3TFc5d1pYSmhkRzl5Z2hkbmJYQXRiM0JsY21GMGIzSXVaMjF3TFhONWMzUmwKYllJYloyMXdMVzl3WlhKaGRHOXlMbWR0Y0MxemVYTjBaVzB1YzNaak1BMEdDU3FHU0liM0RRRUJDd1VBQTRJQgpnUUF2aTcySU80UVhjMGNCajZsSWFDRUNyTXlkY0swQWZDYm9VZlMyWG9HRkFDTjNiajBhb2tueEduSEdLOXBwCnJOS3NxZ2sxWWNZMEJlSUtqMklyK0J0Y1FXRnFDZVh1TGVVeDNsbG4yYUlGRlJTcFQrZE9hakw5MU50ZlJRem0KZ1dlYno0OEU4ZmZubVdLdGpSTHpKdmh3Rk8vQ3hNZlN1WlJ3MUFSR2ZWbUZsb3hGN1FiUCt2QkxFcWxsY0dyZworV2VGN2JyMlRYSTRXMmxXcmNzbWJJYU1xRmxXS3NMQ3dzTURMa0dTaTloM0VaRVdwL05UK3g2eWVVQU5aZ3JmCngvK2ZKRytselhyUDNwN21sM0RHeUxNOFN4NVprQS8zZHJPazRqbXVpYXRESHVGS0RVcitHVlFVelpYNER3NWUKZ3ZMdTdaY213VmFtZ0o1OUVUaUgrT2NrcHRmS1VqbmFQR0hXdTJZeXdkSmpidFUwQTQrRE5FWnlicVNsbkpmNQowV3pURkRtMUpIaGtDNU1ISTlJSXk5Z0FyQnBGQjhLbGl1R0NrUUFmbnFVZlN6NmNmQWc0OHovaEM3WjFWVUlpCklIbEx1N0JkRnpVcU5EcnVWeGNhNlBGNk1PNHlQQlo4Yk9vNlFpYkJFWFZ4YzM0Qk52VmZEZlBCemk1MzROTWQKZmR3PQotLS0tLUVORCBDRVJUSUZJQ0FURS0tLS0tCg==
+    - --tls-key-base64=LS0tLS1CRUdJTiBSU0EgUFJJVkFURSBLRVktLS0tLQpNSUlFcFFJQkFBS0NBUUVBdkhKUmdGZGdUSkRhRUZGYjZNM1draEowVWp6V2RrUEovdnJ3T3d1SVk0RDFzWWl3CjJMc0JBNE9Ha0txR3pSSGlpMHNmcUdvcFFZSzU5bnhVN1BNWStRR2RZZGIyK0VidWwwZmZjRytXUlZWS01BVnoKMGYzdVNiSXU2RExtWWl4blJZVnU0aXJtWXM0VmVVM3NNcktCL1pXenJDK1k4cWFFV1VCOHZITTErTW9ibCt6NQpPaktxa0o1NVdKZE5JaVhoT3UyTE9SSjF2ay85ZmIrZFBBUklXbksxWlFBTGhPd2U0ZEZ3UjZ1ZjIxYmhrQzZVCk8wVjB1RWRaR1hpZXZodjJ1S29taXo3dno4UkVXK1ZwcjFwcVdYVXJhcTQ5VEtDMnpFNXBGL01ZWmM4OExNY3cKNW1JQkZMN1JoYXJ2NkpnWkZxNjNzd1F6RXBNdUFzalk2SEZNQ1FJREFRQUJBb0lCQUQ5YVRXVVF1dXF5cmVUYgpmVU1rWkRVQ2FFRzNlMEFTSlNnSUU5ZzkxZEhoNm5lUFpTalBvWlVkVkJGeGl0VUpaTGlBZm5tZml4UWZqMFk2CjRWQXhuOTBpdWxiSXJvbWtTeFRuMEVuYjhkQ0lUbU1iaWliNEwvSnRxVkJkd0U4VDczb1RWRVpMdHQxVHZDdG0KVTNodHc3N05ZN1NJNGVuOXFqUFpOcllpSTJ4cWJoZDY3cHBja083aTZVdHJDU3pSaFJObU5HdlZmL3U4ZDh3eQo1QitKeHZhU2lmTERPczA3RWo2eWRxelgxTklrVmRMZjN6b2QrdEpXYURLV1J2UUhybkNoa1VwZDVsbk55bVYvCllGOUVWNXJFQmFKSXlpNUdPZ2g2dEFTcmliWklMWXVqMFNHVm8zNVdIRXFnVzJ1NnJNdThvQzdQcnlXZEJoZGkKOGptSUNrc0NnWUVBNUNWQmRuRVVBdG91b25ka3h0NXRpN2ZROTBxdmFVRmJPNkxob0pMK05BRHlvY0NGRHA4cgpjR3VqbSt1OUFjYmtFMTA0RXNHam5tSmJyb3E5TXRnZzM4OU44T1hCYmo2QUREVXErdWJ2ekNpcUYxd0ZGY0dUCmsvZVR6c3R2U1ovL2pwakUveEIxSnNDN3RHUEZ5Q3Fnelg4MW5uTEJJZzEybG9jV0crMTB0ejhDZ1lFQTAzUkMKOHVEaENQdTYwbCtYelZpL29GVzl2L1l5S0VYT1hmVDZwZFN2SFphdjNjTENDMW9xdVhISTE3NFhUTnN1Y2I0ZgpzRmRlM1dueGtBVDFMNVJjTlh2ZDJJcmx3ejRiTWdmSitaV0xqZFhYcjdSWjl0Y3VidUJRK25wd2FTdXpodGVFCmlTTThlUFdteE10dzFidVZQQms0UUxqZ2FnWi9pZGZpYll2SU1yY0NnWUVBM3FiNVR6VW1PVzVqS3Mxb2ZhamYKc2dadm1wZTV2dmc0cUdmYTJOSDc0aGEydEdObHQ1SmhXM0xCRms4bmcwOXVrUE5kNFBnM3pUL2loK0lBcVZsQwpKQXAxMzA3cXlzT1dSZE94b1hHMXYwSkVWVTNKN0tTaGVUdWFkYXdXYlAwSDlFdGxuaU9hb1hwZzliaVZjamNmCi9jMVRMOUtBWjlKSjFMZjdQTUF1TXhNQ2dZRUF2WFM2azJDM1g5UWp0Ri9mNUNXek05WCt1Q0svRitSTG5WVmsKeWZZQW5ITXB5WGk1WVhCOVBVQmNvaWg0T2UxYjlKOVRSeTFSR3ZMVWM2UnRoaDdZYXpjN01zeG9Sb0c3M2h5cQpjNHZ3eUxramtoTDJWRHJDS0tlbEJuZHpobGVZZDZWYjQzK0ZyQjcxTi9mTGRrU20xbjBHTUw4MG11cU5sUlN2CmxGVWNuNHNDZ1lFQWdJdGZ0c1hRYW14MWVTWUdjWG9GNjRmZm1vQ05GcjdsdU1tdVlkWUl0djhGdlJkUUpsaVMKR2hlbXRUZmgzU2ZXNGVFUGU4K3ZEejJXZks1bThOSXJQZ05DT2E5TnFpbXFzb3BJUCs0QlN1Z1dPMzdQUThycgo3RXlYUVVQVnlWYzNzSUszTm82ZkJhM3NxOHA5TkZraHo3SEZHVXVERWhXT203UTBFOW56MmhvPQotLS0tLUVORCBSU0EgUFJJVkFURSBLRVktLS0tLQo=
+    - --project-id=siarkowicz-gke-dev
+    - --location=us-central1-c
+    - --cluster=cluster-1
+    env:
+    - name: GCE_METADATA_HOST
+      value: 169.254.169.254
+    image: us-central1-artifactregistry.gcr.io/gke-release-staging/gke-release-staging/prometheus-engine/operator:v0.17.3-gke.0@sha256:1ad61ce711bde2b81094c89cebda34a763089087513253a9665530c4c5df2161
+    imagePullPolicy: IfNotPresent
+    livenessProbe:
+      failureThreshold: 3
+      httpGet:
+        path: /healthz
+        port: 18081
+        scheme: HTTP
+      periodSeconds: 10
+      successThreshold: 1
+      timeoutSeconds: 1
+    name: operator
+    ports:
+    - containerPort: 10250
+      name: web
+      protocol: TCP
+    - containerPort: 18080
+      name: metrics
+      protocol: TCP
+    readinessProbe:
+      failureThreshold: 3
+      httpGet:
+        path: /readyz
+        port: 18081
+        scheme: HTTP
+      periodSeconds: 10
+      successThreshold: 1
+      timeoutSeconds: 1
+    resources:
+      limits:
+        memory: 2G
+      requests:
+        cpu: 1m
+        memory: 16M
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+        - all
+      privileged: false
+      readOnlyRootFilesystem: true
+    terminationMessagePath: /dev/termination-log
+    terminationMessagePolicy: File
+    volumeMounts:
+    - mountPath: /etc/tls/private
+      name: certs
+    - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+      name: kube-api-access-k642j
+      readOnly: true
+  dnsPolicy: ClusterFirst
+  enableServiceLinks: true
+  preemptionPolicy: PreemptLowerPriority
+  priority: 1000000000
+  priorityClassName: gmp-critical
+  restartPolicy: Always
+  schedulerName: default-scheduler
+  securityContext:
+    runAsGroup: 1000
+    runAsNonRoot: true
+    runAsUser: 1000
+    seccompProfile:
+      type: RuntimeDefault
+  serviceAccount: operator
+  serviceAccountName: operator
+  terminationGracePeriodSeconds: 30
+  tolerations:
+  - key: components.gke.io/gke-managed-components
+    operator: Exists
+  - effect: NoSchedule
+    key: kubernetes.io/arch
+    operator: Equal
+    value: amd64
+  - effect: NoSchedule
+    key: kubernetes.io/arch
+    operator: Equal
+    value: arm64
+  - effect: NoExecute
+    key: node.kubernetes.io/not-ready
+    operator: Exists
+    tolerationSeconds: 300
+  - effect: NoExecute
+    key: node.kubernetes.io/unreachable
+    operator: Exists
+    tolerationSeconds: 300
+  volumes:
+  - emptyDir: {}
+    name: certs
+  - name: kube-api-access-k642j
+    projected:
+      defaultMode: 420
+      sources:
+      - serviceAccountToken:
+          expirationSeconds: 3607
+          path: token
+      - configMap:
+          items:
+          - key: ca.crt
+            path: ca.crt
+          name: kube-root-ca.crt
+      - downwardAPI:
+          items:
+          - fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.namespace
+            path: namespace
+status:
+  conditions:
+  - lastProbeTime: null
+    lastTransitionTime: "2026-02-11T19:35:32Z"
+    message: no nodes available to schedule pods
+    observedGeneration: 1
+    reason: Unschedulable
+    status: "False"
+    type: PodScheduled
+  phase: Pending
+  qosClass: Burstable
+
