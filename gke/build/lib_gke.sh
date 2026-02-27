@@ -4,7 +4,7 @@
 #
 # This script is meant to be used on a traditional "workstation", or by being
 # executed in the cloud using GCB. The main requirement is that the 'docker'
-# binary is available on the PATH, as well as 'gcloud' and 'gsutil' (part of
+# binary is available on the PATH, as well as 'gcloud' and 'gcloud storage' (part of
 # Google Cloud SDK).
 #
 # If this script runs on a workstation, then the build artifacts are left in the
@@ -1754,7 +1754,8 @@ push_gcs()
     # List all files up in the bucket as a validity check. The trailing "**"
     # literal wildcard is gsutil syntax for a flat listing of all objects in
     # the trailing subdirectory (in this case, "${version_dir}").
-    gsutil ls -l "${gcs_bucket}/${KUBE_GIT_VERSION}/**"
+    # gcloud storage respects this.
+    gcloud storage ls -l "${gcs_bucket}/${KUBE_GIT_VERSION}/**"
   done
 }
 
@@ -1772,11 +1773,10 @@ push_gcs_to_bucket()
 
   version_dir="$(basename "${artifact_dir}")"
 
-  # -m: multi-threaded / parallel
-  # -n: dry-run
-  # -c: use checksums instead of size/mtime
-  # -r: recursive
-  gsutil -m rsync -c -r "${artifact_dir}" "${gcs_bucket}/${version_dir}"
+  local real_dir
+  real_dir="$(cd "${artifact_dir}" && pwd -P)"
+
+  gcloud storage rsync -r "${real_dir}" "${gcs_bucket}/${version_dir}"
 }
 
 # Finds Docker images in the local Docker daemon. The name_regex argument ($1)
