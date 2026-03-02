@@ -215,8 +215,8 @@ function snapshot-initial-kubelet-config {
     return
   fi
   echo "Creating initial kubelet config snapshot for NPD"
-  mkdir -p "${KUBE_HOME}/npd-custom-plugins/configs"
-  cp "${KUBE_HOME}/kubelet-config.yaml" "${KUBE_HOME}/npd-custom-plugins/configs/init-kubelet-config.yaml"
+  mkdir -p "${KUBE_HOME}/npd-custom-plugins/backups${KUBE_HOME}"
+  cp "${KUBE_HOME}/kubelet-config.yaml" "${KUBE_HOME}/npd-custom-plugins/backups${KUBE_HOME}/kubelet-config.yaml"
 }
 
 # A function to pull kube-master-certs from HMS using hurl

@@ -956,7 +956,7 @@ function gke-configure-npd-custom-plugins {
     GKE_NPD_CUSTOM_PLUGINS_CONFIG+=",${config_dir}/ek-node-checker/balloon-pod-checker.json,${config_dir}/ek-node-checker/cgroups-cpu-checker.json,${config_dir}/ek-node-checker/cpu-and-ram-balloon-checker.json,${config_dir}/ek-node-checker/cpu-and-ram-balloon-monitor.json,${config_dir}/ek-node-checker/unsupported-configs-checker.json"
   fi
 
-  GKE_NPD_CUSTOM_PLUGINS_CONFIG+=",${config_dir}/swap-monitor.json,${config_dir}/fs-readonly-monitor.json,${config_dir}/fs-capacity-monitor.json,${config_dir}/kubelet-monitor.json,${config_dir}/resource-monitor.json,${config_dir}/dpv2-migration-cni-checker.json,${config_dir}/unsupported-ebpf-checker.json"
+  GKE_NPD_CUSTOM_PLUGINS_CONFIG+=",${config_dir}/swap-monitor.json,${config_dir}/fs-readonly-monitor.json,${config_dir}/fs-capacity-monitor.json,${config_dir}/kubelet-drift.json,${config_dir}/resource-monitor.json,${config_dir}/dpv2-migration-cni-checker.json,${config_dir}/unsupported-ebpf-checker.json"
 }
 
 # Set up GCFS daemons.
