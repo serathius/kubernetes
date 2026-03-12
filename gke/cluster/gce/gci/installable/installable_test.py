@@ -499,6 +499,23 @@ class CtrTests(unittest.TestCase):
     got = result.stdout.decode('utf-8').strip()
     self.assertEqual(got, want)
 
+  def test_ctr_with_cap_add(self):
+    """Tests that a ctr adds capabilities."""
+    result = installable.ctr.run(
+      container_name='cap_add_container',
+      url=self.gcloud_image,
+      ctr_args=[
+        '--cap-add', 'CAP_SYS_TIME',
+        '--net-host',
+      ],
+      container_args=[
+        '/bin/sh',
+        '-c',
+        'apt update > /dev/null 2>&1; apt install -yq libcap2-bin > /dev/null 2>&1; capsh --has-p=cap_sys_time'
+      ],
+    )
+    self.assertEqual(result.returncode, 0, msg=result)
+
 fake_creds = "fake_creds"
 
 def is_fake():
