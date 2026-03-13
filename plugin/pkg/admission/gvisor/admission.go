@@ -616,7 +616,7 @@ func validateGVisorPod(pod *core.Pod) error {
 func validateContainer(c *core.Container) error {
 	if c.SecurityContext != nil {
 		if c.SecurityContext.Privileged != nil && *c.SecurityContext.Privileged {
-			return fmt.Errorf("Privileged=true is not supported")
+			return fmt.Errorf("Privileged=true is not supported. If you need extra capabilities inside the sandbox (e.g CAP_SYS_ADMIN), please set each of them on the pod explicitly.")
 		}
 		if c.SecurityContext.SELinuxOptions != nil {
 			return fmt.Errorf("SELinuxOptions is not supported")
