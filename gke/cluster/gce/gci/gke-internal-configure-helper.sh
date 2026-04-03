@@ -583,6 +583,9 @@ function gke-setup-containerd-drop-in-systemd-config {
   gke-setup-containerd-nofile-infinity
 }
 
+# New customizations to containerd config should be added in
+# installable container gke-containerd-config instead of the bootstrap script
+# https://gke-internal.git.corp.google.com/kubernetes/gke-containerd-config/
 function gke-setup-containerd {
   local -r CONTAINERD_HOME="/home/containerd"
   mkdir -p "${CONTAINERD_HOME}"
