@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -32,6 +33,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/apiserver/pkg/endpoints/request"
 	"k8s.io/apiserver/pkg/features"
 	"k8s.io/apiserver/pkg/storage"
 	"k8s.io/apiserver/pkg/storage/cacher/delegator"
@@ -620,6 +622,10 @@ func (w *watchCache) waitAndListConsistent(ctx context.Context, key, continueKey
 	resourceVersion, err := w.getCurrentRV(ctx)
 	if err != nil {
 		return listResp{}, "", err
+	}
+	requestInfo, ok := request.RequestInfoFrom(ctx)
+	if ok && strings.HasPrefix(requestInfo.UserAgent, "force-fallback") {
+		return listResp{}, "", storage.NewTooLargeResourceVersionError(resourceVersion, resourceVersion-1, resourceVersionTooHighRetrySeconds)
 	}
 	return w.waitAndListLatestRV(ctx, resourceVersion, key, continueKey, matchValues)
 }

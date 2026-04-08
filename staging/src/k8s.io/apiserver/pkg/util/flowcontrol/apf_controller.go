@@ -889,8 +889,9 @@ func (meal *cfgMeal) finishQueueSetReconfigsLocked() {
 				// while clusters with lower inflight requests will use max seats no greater than nominalCL/handSize.
 				// Calculated max seats can return arbitrarily high values but work estimator currently limits max seats at 10.
 				handSize := plState.pl.Spec.Limited.LimitResponse.Queuing.HandSize
-				maxSeats := uint64(math.Max(1, math.Min(math.Ceil(float64(concurrencyLimit)*priorityLevelMaxSeatsPercent), float64(int32(concurrencyLimit)/handSize))))
+				maxSeats := uint64(math.Max(1, float64(concurrencyLimit)))
 				meal.cfgCtlr.MaxSeatsTracker.SetMaxSeats(plName, maxSeats)
+				klog.Infof("DEBUG: maxSeats: %v, handSize: %v, concurrencyLimit: %v, plName: %v", maxSeats, handSize, concurrencyLimit, plName)
 			}
 		}
 		if plState.queues == nil {

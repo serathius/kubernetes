@@ -3190,9 +3190,8 @@ func RunTestListInconsistentContinuation(ctx context.Context, t *testing.T, stor
 
 	out := &example.PodList{}
 	options := storage.ListOptions{
-		ResourceVersion: "0",
-		Predicate:       pred(1, ""),
-		Recursive:       true,
+		Predicate: pred(1, ""),
+		Recursive: true,
 	}
 	if err := store.GetList(ctx, "/pods/", options, out); err != nil {
 		t.Fatalf("Unable to get initial list: %v", err)
@@ -3227,9 +3226,8 @@ func RunTestListInconsistentContinuation(ctx context.Context, t *testing.T, stor
 
 	// The old continue token should have expired
 	options = storage.ListOptions{
-		ResourceVersion: "0",
-		Predicate:       pred(0, continueFromSecondItem),
-		Recursive:       true,
+		Predicate: pred(0, continueFromSecondItem),
+		Recursive: true,
 	}
 	err := store.GetList(ctx, "/pods/", options, out)
 	if err == nil {
@@ -3249,7 +3247,6 @@ func RunTestListInconsistentContinuation(ctx context.Context, t *testing.T, stor
 
 	out = &example.PodList{}
 	options = storage.ListOptions{
-		ResourceVersion: "0",
 		Predicate:       pred(1, inconsistentContinueFromSecondItem),
 		Recursive:       true,
 	}
@@ -3268,7 +3265,6 @@ func RunTestListInconsistentContinuation(ctx context.Context, t *testing.T, stor
 	resolvedResourceVersionFromThirdItem := out.ResourceVersion
 	out = &example.PodList{}
 	options = storage.ListOptions{
-		ResourceVersion: "0",
 		Predicate:       pred(1, continueFromThirdItem),
 		Recursive:       true,
 	}

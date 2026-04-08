@@ -66,6 +66,7 @@ func (e *listWorkEstimator) estimate(r *http.Request, flowSchemaName, priorityLe
 	if !ok {
 		// no RequestInfo should never happen, but to be on the safe side
 		// let's return maximumSeats
+		klog.Errorf("DEBUG: no RequestInfo found, seats: %v", maxSeats)
 		return WorkEstimate{InitialSeats: maxSeats}
 	}
 
@@ -79,10 +80,9 @@ func (e *listWorkEstimator) estimate(r *http.Request, flowSchemaName, priorityLe
 	query := r.URL.Query()
 	listOptions := metav1.ListOptions{}
 	if err := metav1.Convert_url_Values_To_v1_ListOptions(&query, &listOptions, nil); err != nil {
-		klog.ErrorS(err, "Failed to convert options while estimating work for the list request")
-
 		// This request is destined to fail in the validation layer,
 		// return maximumSeats for this request to be consistent.
+		klog.Errorf("DEBUG: Failed to convert options while estimating work for the list request, seats: %v", maxSeats)
 		return WorkEstimate{InitialSeats: maxSeats}
 	}
 
@@ -92,6 +92,7 @@ func (e *listWorkEstimator) estimate(r *http.Request, flowSchemaName, priorityLe
 		sendInitEvents := listOptions.SendInitialEvents != nil && *listOptions.SendInitialEvents
 		legacyWatch := listOptions.ResourceVersion == "" || listOptions.ResourceVersion == "0"
 		if !sendInitEvents && !legacyWatch {
+			klog.Errorf("DEBUG: Watch request without init events, seats: %v", e.config.MinimumSeats)
 			return WorkEstimate{InitialSeats: e.config.MinimumSeats}
 		}
 	}
@@ -114,6 +115,7 @@ func (e *listWorkEstimator) estimate(r *http.Request, flowSchemaName, priorityLe
 		// NOTE: if a CRD is removed, its count will go stale first and then the
 		// pruner will eventually remove the CRD from the cache.
 		stats = storage.Stats{ObjectCount: infiniteObjectCount, EstimatedAverageObjectSizeBytes: maxObjectSize}
+		klog.Errorf("DEBUG: Object count going stale")
 	case err == ObjectCountNotFoundErr:
 		// there are multiple scenarios in which we can see this error:
 		//  a. the type is truly unknown, a typo on the caller's part.
@@ -127,19 +129,22 @@ func (e *listWorkEstimator) estimate(r *http.Request, flowSchemaName, priorityLe
 		// when aggregated API calls are overestimated, we allocate the minimum
 		// possible seats (see #109106 as an example when being more conservative
 		// led to problems).
+		klog.Errorf("DEBUG: Object count not found")
 		return WorkEstimate{InitialSeats: minSeats}
 	case err != nil:
 		// we should never be here since Get returns either ObjectCountStaleErr or
 		// ObjectCountNotFoundErr, return maximum object count and size.
-		klog.ErrorS(err, "Unexpected error from object count tracker")
+		klog.ErrorS(err, "DEBUG: Unexpected error from object count tracker")
 		stats = storage.Stats{ObjectCount: infiniteObjectCount, EstimatedAverageObjectSizeBytes: maxObjectSize}
 	}
 
 	var seats uint64
 	if utilfeature.DefaultFeatureGate.Enabled(features.SizeBasedListCostEstimate) {
 		seats = e.seatsBasedOnObjectSize(stats, listOptions, isListFromCache, matchesSingle)
+		klog.Errorf("DEBUG: SizeBasedListCostEstimate enabled, seats: %v", seats)
 	} else {
 		seats = e.seatsBasedOnObjectCount(stats, listOptions, isListFromCache, matchesSingle)
+		klog.Errorf("DEBUG: SizeBasedListCostEstimate disabled, seats: %v", seats)
 	}
 
 	// make sure we never return a seat of zero
@@ -149,6 +154,8 @@ func (e *listWorkEstimator) estimate(r *http.Request, flowSchemaName, priorityLe
 	if seats > maxSeats {
 		seats = maxSeats
 	}
+
+	klog.Errorf("DEBUG: Normalized seats: %v", seats)
 	return WorkEstimate{InitialSeats: seats}
 }
 
@@ -185,6 +192,7 @@ func (e *listWorkEstimator) seatsBasedOnObjectSize(stats storage.Stats, listOpti
 	if stats.EstimatedAverageObjectSizeBytes <= 0 && stats.ObjectCount != 0 {
 		stats.EstimatedAverageObjectSizeBytes = maxObjectSize
 	}
+	klog.Errorf("DEBUG: stats.EstimatedAverageObjectSizeBytes: %v", stats.EstimatedAverageObjectSizeBytes)
 	limited := stats.ObjectCount
 	if listOptions.Limit > 0 && listOptions.Limit < limited {
 		limited = listOptions.Limit
@@ -193,18 +201,24 @@ func (e *listWorkEstimator) seatsBasedOnObjectSize(stats storage.Stats, listOpti
 	switch {
 	case matchesSingle:
 		objectsLoadedInMemory = 1
+		klog.Errorf("DEBUG: matchesSingle, objectsLoadedInMemory: %v", objectsLoadedInMemory)
 	case isListFromCache:
 		objectsLoadedInMemory = limited
+		klog.Errorf("DEBUG: isListFromCache, objectsLoadedInMemory: %v", objectsLoadedInMemory)
 	case listOptions.FieldSelector != "" || listOptions.LabelSelector != "":
 		objectsLoadedInMemory = max(limited, stats.ObjectCount/2)
+		klog.Errorf("DEBUG: fieldSelector or labelSelector, objectsLoadedInMemory: %v", objectsLoadedInMemory)
 	default:
 		objectsLoadedInMemory = limited
+		klog.Errorf("DEBUG: default, objectsLoadedInMemory: %v", objectsLoadedInMemory)
 	}
 
 	memoryUsedAtOnce := objectsLoadedInMemory * stats.EstimatedAverageObjectSizeBytes
+	klog.Errorf("DEBUG: memoryUsedAtOnce: %v", memoryUsedAtOnce)
 	if isListFromCache {
 		// TODO: Identify if the resource is streamed
 		memoryUsedAtOnce = min(memoryUsedAtOnce, cacheWithStreamingMaxMemoryUsage)
+		klog.Errorf("DEBUG: isListFromCache, memoryUsedAtOnce: %v", memoryUsedAtOnce)
 	}
 	return uint64(math.Ceil(float64(memoryUsedAtOnce) / bytesPerSeat))
 }

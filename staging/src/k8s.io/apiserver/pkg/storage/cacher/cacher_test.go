@@ -339,7 +339,9 @@ func TestListContinuationWithFilter(t *testing.T) {
 }
 
 func TestListInconsistentContinuation(t *testing.T) {
-	// TODO(#109831): Enable use of this by setting compaction.
+	ctx, cacher, server, terminate := testSetupWithEtcdServer(t)
+	t.Cleanup(terminate)
+	storagetesting.RunTestListInconsistentContinuation(ctx, t, cacher, compactStore(cacher, server.V3Client.Client))
 }
 
 func TestListResourceVersionMatch(t *testing.T) {

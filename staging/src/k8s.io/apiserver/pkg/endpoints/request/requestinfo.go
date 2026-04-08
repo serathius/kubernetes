@@ -71,6 +71,8 @@ type RequestInfo struct {
 	// LabelSelector contains the unparsed field selector from a request.  It is only present if the apiserver
 	// honors field selectors for the verb this request is associated with.
 	LabelSelector string
+
+	UserAgent string
 }
 
 // specialVerbs contains just strings which are used in REST paths for special actions that don't fall under the normal
@@ -132,6 +134,7 @@ func (r *RequestInfoFactory) NewRequestInfo(req *http.Request) (*RequestInfo, er
 		IsResourceRequest: false,
 		Path:              req.URL.Path,
 		Verb:              strings.ToLower(req.Method),
+		UserAgent: 				 req.UserAgent(),
 	}
 
 	currentParts := splitPath(req.URL.Path)
