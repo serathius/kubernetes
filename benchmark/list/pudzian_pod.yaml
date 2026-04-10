@@ -1,0 +1,518 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  annotations:
+    cluster-autoscaler.kubernetes.io/enable-ds-eviction: "false"
+    components.gke.io/component-name: advanceddatapath
+    components.gke.io/component-version: 34.8.16-gke.10000
+    prometheus.io/port: "9990"
+    prometheus.io/scrape: "true"
+  creationTimestamp: "2026-02-09T03:24:00Z"
+  labels:
+    controller-revision-hash: 7c9db86f79
+    k8s-app: cilium
+    pod-template-generation: "14"
+  name: anetd-244wb
+spec:
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchFields:
+          - key: metadata.name
+            operator: In
+            values:
+            - gke-tpu-6291e798-nd5p
+  automountServiceAccountToken: false
+  containers:
+  - args:
+    - |
+      exec {BASH_XTRACEFD}>&1 && set -x
+
+      if [[ -n "$${CILIUM_CONFIG_MAP}" ]] \
+          && [[ ! -f "$${CILIUM_CONFIG_MAP}/mtu" ]] \
+          && [[ -n "$${MTU_DEVICE_IP}" ]]; then
+        # Get mtu of the interface which has ip address '$${MTU_DEVICE_IP}'
+        mtu="$$(ip addr show to "$${MTU_DEVICE_IP}" | grep mtu | awk '{for (I=1;I<NF;I++) if ($$I == "mtu") print $$(I+1)}')"
+
+        # Check if we could retrive a number in 'mtu'
+        if [[ "$${mtu}" =~ ^[0-9]+$$ ]]; then
+          mtuArg="--mtu=$${mtu}"
+        fi
+      fi
+
+      exec /usr/bin/cilium-agent \
+        --k8s-kubeconfig-path=/var/lib/kubelet/kubeconfig \
+        --config-dir="$${CILIUM_CONFIG_MAP}" \
+        $${mtuArg:-}
+    command:
+    - bash
+    - -euc
+    env:
+    - name: GOPS_CONFIG_DIR
+      value: /.config
+    - name: K8S_NODE_NAME
+      valueFrom:
+        fieldRef:
+          apiVersion: v1
+          fieldPath: spec.nodeName
+    - name: CILIUM_K8S_NAMESPACE
+      valueFrom:
+        fieldRef:
+          apiVersion: v1
+          fieldPath: metadata.namespace
+    - name: CILIUM_FLANNEL_MASTER_DEVICE
+      valueFrom:
+        configMapKeyRef:
+          key: flannel-master-device
+          name: cilium-config
+          optional: true
+    - name: CILIUM_FLANNEL_UNINSTALL_ON_EXIT
+      valueFrom:
+        configMapKeyRef:
+          key: flannel-uninstall-on-exit
+          name: cilium-config
+          optional: true
+    - name: MTU_DEVICE_IP
+      valueFrom:
+        fieldRef:
+          apiVersion: v1
+          fieldPath: status.hostIP
+    - name: CILIUM_CONFIG_MAP
+      value: /tmp/cilium/config-map
+    - name: CILIUM_CLUSTERMESH_CONFIG
+      value: /var/lib/cilium/clustermesh/
+    - name: CILIUM_CNI_CHAINING_MODE
+      valueFrom:
+        configMapKeyRef:
+          key: cni-chaining-mode
+          name: cilium-config
+          optional: true
+    - name: CILIUM_CUSTOM_CNI_CONF
+      valueFrom:
+        configMapKeyRef:
+          key: custom-cni-conf
+          name: cilium-config
+          optional: true
+    image: us-east5-artifactregistry.gcr.io/gke-release/gke-release/cilium/cilium:v1.17.8-gke1.34-gke.1@sha256:76c275c44c4934eacafa33acbe659e8b1485316e01dbd15ef00ced46d1f5be89
+    imagePullPolicy: IfNotPresent
+    livenessProbe:
+      failureThreshold: 60
+      httpGet:
+        host: 127.0.0.1
+        httpHeaders:
+        - name: brief
+          value: "true"
+        path: /healthz
+        port: agenthealth
+        scheme: HTTP
+      periodSeconds: 30
+      successThreshold: 1
+      timeoutSeconds: 5
+    name: cilium-agent
+    ports:
+    - containerPort: 9879
+      hostPort: 9879
+      name: agenthealth
+      protocol: TCP
+    readinessProbe:
+      failureThreshold: 3
+      httpGet:
+        host: 127.0.0.1
+        httpHeaders:
+        - name: brief
+          value: "true"
+        path: /healthz
+        port: agenthealth
+        scheme: HTTP
+      periodSeconds: 30
+      successThreshold: 1
+      timeoutSeconds: 5
+    resources:
+      requests:
+        cpu: 195m
+        memory: 170Mi
+    securityContext:
+      capabilities:
+        add:
+        - NET_ADMIN
+        - SYS_MODULE
+      privileged: true
+    startupProbe:
+      failureThreshold: 300
+      httpGet:
+        host: 127.0.0.1
+        httpHeaders:
+        - name: brief
+          value: "true"
+        path: /healthz
+        port: agenthealth
+        scheme: HTTP
+      periodSeconds: 2
+      successThreshold: 1
+      timeoutSeconds: 1
+    terminationMessagePath: /dev/termination-log
+    terminationMessagePolicy: File
+    volumeMounts:
+    - mountPath: /.config
+      name: gops-config-dir
+    - mountPath: /sys/fs/bpf
+      name: bpf-maps
+    - mountPath: /var/run/cilium
+      name: cilium-run
+    - mountPath: /host/etc/cni/net.d
+      name: etc-cni-netd
+    - mountPath: /var/lib/cilium/clustermesh
+      name: clustermesh-secrets
+      readOnly: true
+    - mountPath: /tmp/cilium/config-map
+      name: cilium-config-path
+      readOnly: true
+    - mountPath: /lib/modules
+      name: lib-modules
+      readOnly: true
+    - mountPath: /run/xtables.lock
+      name: xtables-lock
+    - mountPath: /var/log/network
+      name: network-log
+    - mountPath: /var/lib/kubelet/kubeconfig
+      name: kubelet-credentials
+      readOnly: true
+    - mountPath: /var/lib/kubelet/pki/
+      name: kubelet-certs
+      readOnly: true
+    - mountPath: /etc/srv/kubernetes/pki/ca-certificates.crt
+      name: kubelet-pki
+      readOnly: true
+    - mountPath: /etc/ssl/certs/
+      name: ca-certificates
+      readOnly: true
+    - mountPath: /home/kubernetes/bin/gke-exec-auth-plugin
+      name: gke-exec-auth-plugin
+      readOnly: true
+    - mountPath: /var/lib/kubelet/pod-resources
+      name: pod-resources
+      readOnly: true
+    - mountPath: /host/var/run/netns
+      mountPropagation: HostToContainer
+      name: host-var-run-netns
+      readOnly: true
+  - env:
+    - name: GOMAXPROCS
+      value: "2"
+    - name: COLLECTOR_CONFIG_PATH
+      value: /conf/cilium-agent-metrics-collector-config-data.textproto,/conf/cilium-agent-hubble-metrics-collector-config-data.textproto
+    - name: SPLIT_GAUGE_BUFFER
+      value: "true"
+    - name: PROJECT_NUMBER
+      value: "496537482084"
+    - name: LOCATION
+      value: us-east5
+    - name: CLUSTER_NAME
+      value: gcp-cmh-12
+    - name: POD_NAMESPACE
+      valueFrom:
+        fieldRef:
+          apiVersion: v1
+          fieldPath: metadata.namespace
+    - name: NODE_NAME
+      valueFrom:
+        fieldRef:
+          apiVersion: v1
+          fieldPath: spec.nodeName
+    - name: POD_NAME
+      valueFrom:
+        fieldRef:
+          apiVersion: v1
+          fieldPath: metadata.name
+    - name: CONTAINER_NAME
+      value: cilium-agent-metrics-collector
+    - name: COMPONENT_VERSION
+      valueFrom:
+        fieldRef:
+          apiVersion: v1
+          fieldPath: metadata.annotations['components.gke.io/component-version']
+    - name: COMPONENT_NAME
+      valueFrom:
+        fieldRef:
+          apiVersion: v1
+          fieldPath: metadata.annotations['components.gke.io/component-name']
+    image: us-east5-artifactregistry.gcr.io/gke-release/gke-release/gke-metrics-collector:20251009_2300_RC0@sha256:4c8e8cc4f739fc539e35c1581af031232d8885ee10f28484cb2085f5dfbb2b7d
+    imagePullPolicy: IfNotPresent
+    name: cilium-agent-metrics-collector
+    resources:
+      limits:
+        cpu: "1"
+        memory: 65Mi
+      requests:
+        cpu: 5m
+        memory: 30Mi
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+        - all
+      readOnlyRootFilesystem: true
+      runAsGroup: 1001
+      runAsNonRoot: true
+      runAsUser: 1001
+      seccompProfile:
+        type: RuntimeDefault
+    terminationMessagePath: /dev/termination-log
+    terminationMessagePolicy: File
+    volumeMounts:
+    - mountPath: /conf
+      name: cilium-agent-metrics-collector-config-map-vol
+  dnsPolicy: ClusterFirst
+  enableServiceLinks: true
+  hostNetwork: true
+  initContainers:
+  - args:
+    - -enable-google-multi-nic=true
+    - -k8s-kubeconfig-path=/var/lib/kubelet/kubeconfig
+    - -cni-path=/host/etc/cni/net.d/10-gke-cni.conflist
+    - -fast-start-health-check-due-file=/dpv2-fast-start-health-check/health-check-due
+    env:
+    - name: K8S_NODE_NAME
+      valueFrom:
+        fieldRef:
+          apiVersion: v1
+          fieldPath: spec.nodeName
+    image: us-east5-artifactregistry.gcr.io/gke-release/gke-release/anet/cni-writer:v0.1.35-gke.0@sha256:50a749f9529d97a379d1b8f39719a0aac0aeb77b9a2074c8eee7a1d2bf11a3dd
+    imagePullPolicy: IfNotPresent
+    name: cni-writer
+    resources:
+      requests:
+        cpu: 5m
+        memory: 30Mi
+    restartPolicy: Always
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+        - ALL
+      readOnlyRootFilesystem: true
+    terminationMessagePath: /dev/termination-log
+    terminationMessagePolicy: File
+    volumeMounts:
+    - mountPath: /var/lib/kubelet/kubeconfig
+      name: kubelet-credentials
+      readOnly: true
+    - mountPath: /var/lib/kubelet/pki/
+      name: kubelet-certs
+      readOnly: true
+    - mountPath: /etc/srv/kubernetes/pki/ca-certificates.crt
+      name: kubelet-pki
+      readOnly: true
+    - mountPath: /etc/ssl/certs/
+      name: ca-certificates
+      readOnly: true
+    - mountPath: /home/kubernetes/bin/gke-exec-auth-plugin
+      name: gke-exec-auth-plugin
+      readOnly: true
+    - mountPath: /host/etc/cni/net.d
+      name: etc-cni-netd
+    - mountPath: /dpv2-fast-start-config
+      name: dpv2-fast-start-config-vol
+      readOnly: true
+    - mountPath: /istio-cni-config
+      name: istio-cni-plugin-config-vol
+      readOnly: true
+    - mountPath: /dpv2-fast-start-health-check
+      name: cilium-run
+      subPath: fast-start
+  - command:
+    - /install-plugin.sh
+    env:
+    - name: OVERWRITE_CILIUM
+      value: "false"
+    image: us-east5-artifactregistry.gcr.io/gke-release/gke-release/cilium/cilium:v1.17.8-gke1.34-gke.1@sha256:76c275c44c4934eacafa33acbe659e8b1485316e01dbd15ef00ced46d1f5be89
+    imagePullPolicy: IfNotPresent
+    name: install-cni-binaries
+    resources:
+      requests:
+        cpu: 100m
+        memory: 10Mi
+    securityContext:
+      capabilities:
+        drop:
+        - ALL
+    terminationMessagePath: /dev/termination-log
+    terminationMessagePolicy: FallbackToLogsOnError
+    volumeMounts:
+    - mountPath: /host/opt/cni/bin
+      name: cni-path
+  - command:
+    - /init-container.sh
+    env:
+    - name: CILIUM_ALL_STATE
+      valueFrom:
+        configMapKeyRef:
+          key: clean-cilium-state
+          name: cilium-config
+          optional: true
+    - name: CILIUM_BPF_STATE
+      valueFrom:
+        configMapKeyRef:
+          key: clean-cilium-bpf-state
+          name: cilium-config
+          optional: true
+    - name: CILIUM_WAIT_BPF_MOUNT
+      valueFrom:
+        configMapKeyRef:
+          key: wait-bpf-mount
+          name: cilium-config
+          optional: true
+    image: us-east5-artifactregistry.gcr.io/gke-release/gke-release/cilium/cilium:v1.17.8-gke1.34-gke.1@sha256:76c275c44c4934eacafa33acbe659e8b1485316e01dbd15ef00ced46d1f5be89
+    imagePullPolicy: IfNotPresent
+    name: clean-cilium-state
+    resources:
+      requests:
+        cpu: 100m
+        memory: 100Mi
+    securityContext:
+      capabilities:
+        add:
+        - NET_ADMIN
+      privileged: true
+    terminationMessagePath: /dev/termination-log
+    terminationMessagePolicy: File
+    volumeMounts:
+    - mountPath: /sys/fs/bpf
+      mountPropagation: HostToContainer
+      name: bpf-maps
+    - mountPath: /var/run/cilium
+      name: cilium-run
+  nodeSelector:
+    kubernetes.io/os: linux
+  preemptionPolicy: PreemptLowerPriority
+  priority: 2000001000
+  priorityClassName: system-node-critical
+  restartPolicy: Always
+  schedulerName: default-scheduler
+  securityContext: {}
+  terminationGracePeriodSeconds: 1
+  tolerations:
+  - operator: Exists
+  - key: components.gke.io/gke-managed-components
+    operator: Exists
+  - effect: NoExecute
+    key: node.kubernetes.io/not-ready
+    operator: Exists
+  - effect: NoExecute
+    key: node.kubernetes.io/unreachable
+    operator: Exists
+  - effect: NoSchedule
+    key: node.kubernetes.io/disk-pressure
+    operator: Exists
+  - effect: NoSchedule
+    key: node.kubernetes.io/memory-pressure
+    operator: Exists
+  - effect: NoSchedule
+    key: node.kubernetes.io/pid-pressure
+    operator: Exists
+  - effect: NoSchedule
+    key: node.kubernetes.io/unschedulable
+    operator: Exists
+  - effect: NoSchedule
+    key: node.kubernetes.io/network-unavailable
+    operator: Exists
+  volumes:
+  - emptyDir: {}
+    name: gops-config-dir
+  - hostPath:
+      path: /var/lib/kubelet/pki/
+      type: Directory
+    name: kubelet-certs
+  - hostPath:
+      path: /var/lib/kubelet/kubeconfig
+      type: File
+    name: kubelet-credentials
+  - hostPath:
+      path: /etc/srv/kubernetes/pki/ca-certificates.crt
+      type: File
+    name: kubelet-pki
+  - hostPath:
+      path: /etc/ssl/certs/
+      type: Directory
+    name: ca-certificates
+  - hostPath:
+      path: /home/kubernetes/bin/gke-exec-auth-plugin
+      type: File
+    name: gke-exec-auth-plugin
+  - hostPath:
+      path: /var/run/cilium
+      type: DirectoryOrCreate
+    name: cilium-run
+  - hostPath:
+      path: /sys/fs/bpf
+      type: DirectoryOrCreate
+    name: bpf-maps
+  - hostPath:
+      path: /home/kubernetes/bin
+      type: DirectoryOrCreate
+    name: cni-path
+  - hostPath:
+      path: /etc/cni/net.d
+      type: DirectoryOrCreate
+    name: etc-cni-netd
+  - hostPath:
+      path: /lib/modules
+      type: DirectoryOrCreate
+    name: lib-modules
+  - hostPath:
+      path: /run/xtables.lock
+      type: FileOrCreate
+    name: xtables-lock
+  - hostPath:
+      path: /var/log/network
+      type: DirectoryOrCreate
+    name: network-log
+  - name: clustermesh-secrets
+    secret:
+      defaultMode: 420
+      optional: true
+      secretName: cilium-clustermesh
+  - name: cilium-config-path
+    projected:
+      defaultMode: 420
+      sources:
+      - configMap:
+          name: cilium-config
+      - configMap:
+          name: cilium-hubble-config
+      - configMap:
+          name: cilium-config-emergency-override
+  - hostPath:
+      path: /var/lib/kubelet/pod-resources
+      type: Directory
+    name: pod-resources
+  - hostPath:
+      path: /var/run/netns
+      type: DirectoryOrCreate
+    name: host-var-run-netns
+  - configMap:
+      defaultMode: 420
+      items:
+      - key: fast-start-namespaces
+        path: fast-start-namespaces
+      name: dpv2-fast-start-config
+      optional: true
+    name: dpv2-fast-start-config-vol
+  - configMap:
+      defaultMode: 420
+      items:
+      - key: cni_network_config
+        path: cni_network_config
+      name: istio-cni-plugin-config
+      optional: true
+    name: istio-cni-plugin-config-vol
+  - configMap:
+      defaultMode: 420
+      items:
+      - key: cilium-agent-metrics-collector-config-data
+        path: cilium-agent-metrics-collector-config-data.textproto
+      - key: cilium-agent-hubble-metrics-collector-config-data
+        path: cilium-agent-hubble-metrics-collector-config-data.textproto
+      name: cilium-agent-metrics-collector-config-map
+    name: cilium-agent-metrics-collector-config-map-vol

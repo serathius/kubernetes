@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	gerrors "errors"
 	"fmt"
 	"io"
 	"mime"
@@ -1193,6 +1194,12 @@ func (r *Request) transformResponse(ctx context.Context, resp *http.Response, re
 				logger: logger,
 			}
 		default:
+			if gerrors.Is(err, context.DeadlineExceeded) {
+				return Result{
+					err:    err,
+					logger: logger,
+				}
+			}
 			logger.Error(err, "Unexpected error when reading response body")
 			unexpectedErr := fmt.Errorf("unexpected error when reading response body. Please retry. Original error: %w", err)
 			return Result{
@@ -1200,6 +1207,7 @@ func (r *Request) transformResponse(ctx context.Context, resp *http.Response, re
 				logger: logger,
 			}
 		}
+		body = data
 	}
 
 	// Call depth is tricky. This one is okay for Do and DoRaw.

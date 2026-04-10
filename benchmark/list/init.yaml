@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx
+spec:
+  containers:
+    - name: nginx
+      image: nginx:stable
+  initContainers:
+    - name: init-1
+      image: busybox:1.28
+      command: ['sh', '-c', 'echo The app is running! && sleep 1']
+    - name: init-2
+      image: busybox:1.28
+      command: ['sh', '-c', 'echo The app is running! && sleep 1']
+    - name: init-3
+      image: busybox:1.28
+      command: ['sh', '-c', 'echo The app is running! && sleep 1']
+    - name: init-4
+      image: busybox:1.28
+      command: ['sh', '-c', 'echo The app is running! && sleep 1']
+    - name: init-5
+      image: busybox:1.28
+      command: ['sh', '-c', 'echo The app is running! && sleep 1']
+    - name: init-6
+      image: busybox:1.28
+      command: ['sh', '-c', 'echo The app is running! && sleep 1']
+    - name: init-7
+      image: busybox:1.28
+      command: ['sh', '-c', 'echo The app is running! && sleep 1']
+    - name: init-8
+      image: busybox:1.28
+      command: ['sh', '-c', 'echo The app is running! && sleep 1']
+    - name: init-9
+      image: busybox:1.28
+      command: ['sh', '-c', 'echo The app is running! && sleep 1']
