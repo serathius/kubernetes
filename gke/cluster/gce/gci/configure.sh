@@ -798,9 +798,28 @@ function install-hurl {
   cd "${KUBE_HOME}"
 
   local -r hurl_bin="hurl"
+  # Legacy variables, used as a fallback when arch specific ones are not set.
   local -r hurl_gcs_att="instance/attributes/hurl-gcs-url"
-  local -r hurl_gcs_url=${HURL_GCS_URL:-$(get-metadata-value "${hurl_gcs_att}")}
-  local -r hurl_hash=${HURL_HASH:-$(get-metadata-value "instance/attributes/hurl-bin-hash")}
+  local hurl_gcs_url=${HURL_GCS_URL:-$(get-metadata-value "${hurl_gcs_att}")}
+  local hurl_hash=${HURL_HASH:-$(get-metadata-value "instance/attributes/hurl-bin-hash")}
+
+  case "${HOST_PLATFORM}/${HOST_ARCH}" in
+    linux/amd64)
+      local -r hurl_amd64_url="${HURL_GCS_AMD64_URL:-$(get-metadata-value "instance/attributes/hurl-bin-amd64-url")}"
+      local -r hurl_amd64_hash="${HURL_GCS_AMD64_HASH:-$(get-metadata-value "instance/attributes/hurl-bin-amd64-hash")}"
+      hurl_gcs_url=${hurl_amd64_url:-${hurl_gcs_url}}
+      hurl_hash=${hurl_amd64_hash:-${hurl_hash}}
+      ;;
+    linux/arm64)
+      local -r hurl_arm64_url="${HURL_GCS_ARM64_URL:-$(get-metadata-value "instance/attributes/hurl-bin-arm64-url")}"
+      local -r hurl_arm64_hash="${HURL_GCS_ARM64_HASH:-$(get-metadata-value "instance/attributes/hurl-bin-arm64-hash")}"
+      hurl_gcs_url=${hurl_arm64_url:-${hurl_gcs_url}}
+      hurl_hash=${hurl_arm64_hash:-${hurl_hash}}
+      ;;
+    *)
+      echo "Unsupported platform/arch combination: ${HOST_PLATFORM}/${HOST_ARCH}"
+      exit 1
+  esac
 
   ### Fallback to old logic in case hurl_hash is not set
   # extracting version from url, example:
