@@ -495,18 +495,18 @@ well_formed_version()
   is_prod_version "${version}" || is_dev_version "${version}"
 }
 
-#
 # Example of a GKE release (prod) version: "v1.18.14-gke.1700"
 is_prod_version()
 {
   local version="${1}"
 
-  if [[ "${version}" =~ ^v[[:digit:]]+\.[[:digit:]]+\.[[:digit:]]+-gke\.[[:digit:]]+$ ]]; then
-    log.info "version \`${version}' is OK for a GKE release (prod)"
+  # e.g., "v1.18.14-gke.1700" or "v1.23.3-gke.1700+megawhale"
+  if [[ "${version}" =~ ^v[[:digit:]]+\.[[:digit:]]+\.[[:digit:]]+-gke\.[[:digit:]]+(\+[a-zA-Z0-9]+)?$ ]]; then
+    log.info "version \`${version}' is OK for a GKE release (prod) or frontier release"
     return 0
   fi
 
-  log.warn "version \`${version}' is NOT OK for a GKE release (prod expects vX.Y.Z-gke.N)"
+  log.warn "version \`${version}' is NOT OK for a GKE release (prod expects vX.Y.Z-gke.N or megawhale vX.Y.Z-gke.N+megawhale)"
   return 1
 }
 
@@ -1893,6 +1893,11 @@ self_test()
   expected="v1.21.0-gke.1200.99+stuff"
   assert_variable_equality "${got}" "${expected}"
 
+  # Frontier version format.
+  got=$(is_prod_version "v1.35.1-gke.1+example" && echo "true" || echo "false")
+  expected="true"
+  assert_variable_equality "${got}" "${expected}"
+
   log.info "END self_test (OK)"
 }
 
@@ -1905,7 +1910,7 @@ branch_hook()
 
   # INJECT_DEV_VERSION_MARKER by branch.
   case "${branch}" in
-      release-*-gke.*)
+      release-*-gke.* | release-*-*.*-frontier)
         # For release branches, do not inject the dev marker. This is because we
         # are presumably running this build for an actual production release.
         log.info "on a release branch, disabling __INJECT_DEV_VERSION_MARKER"

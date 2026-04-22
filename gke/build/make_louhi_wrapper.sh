@@ -17,7 +17,7 @@ fi
 
 # Otherwise, auto-detect release build branches
 case "${_LOUHI_BRANCH_NAME}" in
-  release-*-gke.*)
+  release-*-gke.* | release-*-*.*-frontier)  # e.g., release-1.35.1-gke.1 or release-1.35.1-megawhale.1-frontier
     "${SCRIPT_DIR}"/make_louhi_prod.sh
   ;;
   *)
