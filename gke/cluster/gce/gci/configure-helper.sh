@@ -3265,12 +3265,19 @@ function main() {
     echo "Running GKE internal configuration script"
     log-wrap 'SourceGKEInternalConfigureHelper' . "${KUBE_HOME}/bin/gke-internal-configure-helper.sh"
   fi
-  log-wrap 'SetupOSParams' setup-os-params
   log-wrap 'ConfigIPFirewall' config-ip-firewall
   log-wrap 'ConfigIPEnvoy' config-ip-envoy
   log-wrap 'CreateDirs' create-dirs
   log-wrap 'EnsureLocalSSDs' ensure-local-ssds
   log-wrap 'SetupKubeletDir' setup-kubelet-dir
+
+  if [[ "${KUBERNETES_MASTER:-}" == "false" ]] && [[ "${ENABLE_NODE_BFQ_IO_SCHEDULER:-}" == "true" ]]; then
+    # b/231636376 has fixed the issue that `systemctl-daemon reload` override bfq weights.
+    # This must be run before setup-os-params to avoid overriding customized io scheduler.
+    log-wrap 'InstallBfq' install-bfq
+  fi
+  # setup-os-params must be run before start-kubelet since it generates pod-sysctls used by kubelet
+  log-wrap 'SetupOSParams' setup-os-params
   log-wrap 'SetupLogrotate' setup-logrotate
   if [[ -e "${KUBE_HOME}/bin/gke-internal-configure-helper.sh" ]]; then
     # configure GKE addons registry in manifest files.
@@ -3400,12 +3407,6 @@ function main() {
       log-wrap 'GKECreateGPUConfig' gke-create-gpu-config
     fi
 
-    # This must be the last step as part of configure-helper.sh, we want to ensure
-    # `systemctl-daemon reload` will not be run after this step.
-    # See b/231636376
-    if [[ "${ENABLE_NODE_BFQ_IO_SCHEDULER:-}" == "true" ]]; then
-      log-wrap 'InstallBfq' install-bfq
-    fi
   fi
   log-wrap 'ResetMotd' reset-motd
 
