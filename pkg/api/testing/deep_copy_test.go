@@ -129,12 +129,18 @@ var benchmarkPod = api.Pod{
 }
 
 func BenchmarkPodCopy(b *testing.B) {
-	var result *api.Pod
-	for i := 0; i < b.N; i++ {
-		result = benchmarkPod.DeepCopy()
+	v1Pod := loadExemplarPod()
+	var apiPod api.Pod
+	if err := legacyscheme.Scheme.Convert(&v1Pod, &apiPod, nil); err != nil {
+		b.Fatal(err)
 	}
-	if !apiequality.Semantic.DeepEqual(benchmarkPod, *result) {
-		b.Fatalf("Incorrect copy: expected %v, got %v", benchmarkPod, *result)
+	var result *api.Pod
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		result = apiPod.DeepCopy()
+	}
+	if !apiequality.Semantic.DeepEqual(apiPod, *result) {
+		b.Fatalf("Incorrect copy: expected %v, got %v", apiPod, *result)
 	}
 }
 
