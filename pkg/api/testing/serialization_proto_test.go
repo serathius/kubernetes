@@ -226,7 +226,7 @@ func BenchmarkDecodeCodecToInternalProtobuf(b *testing.B) {
 
 // BenchmarkDecodeIntoProtobuf provides a baseline for regular protobuf decode performance
 func BenchmarkDecodeIntoProtobuf(b *testing.B) {
-	items := benchmarkItems(b)
+	items := benchmarkExemplarItems(b)
 	width := len(items)
 	encoded := make([][]byte, width)
 	for i := range items {
