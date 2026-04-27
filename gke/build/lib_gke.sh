@@ -797,6 +797,9 @@ set_global_vars()
   __setcap_image=$(get_val "build-env.runtime-image.setcap")
   log.debugvar __setcap_image
 
+  # Set dry run mode from env var.
+  __DRY_RUN="${DRY_RUN:-false}"
+
   # Log remaining variables of interest.
   log.debugvar __INJECT_DEV_VERSION_MARKER
   log.debugvar __SKIP_DOCKER
@@ -804,6 +807,7 @@ set_global_vars()
   log.debugvar __GCS_BUCKET
   log.debugvar TMPDIR
   log.debugvar __GKE_BUILD_ACTIONS
+  log.debugvar __DRY_RUN
 }
 
 # Dynamically creates a build env image tag, from the various inputs provided.
@@ -1690,8 +1694,12 @@ push_gcr()
         log.debugvar child_image
 
         # First, push the per-platform child image.
-        docker push "${child_image}"
-        log.info "done pushing image ${child_image}"
+        if [[ "${__DRY_RUN}" == "true" ]]; then
+          log.info "DRY RUN: Would run: docker push ${child_image}"
+        else
+          docker push "${child_image}"
+          log.info "done pushing image ${child_image}"
+        fi
 
         # Second, create manifest lists to group together all images for all
         # architectures pushed up just above.
@@ -1710,8 +1718,12 @@ push_gcr()
       # afterwards. This is mainly for cleanliness in case this script
       # is run again in a new invocation (useful for debugging; NOP
       # for production pushes).
-      docker manifest push --purge "${manifest_list}:${__docker_tag}"
-      log.info "done pushing docker manifest ${manifest_list}:${__docker_tag}"
+      if [[ "${__DRY_RUN}" == "true" ]]; then
+        log.info "DRY RUN: Would run: docker manifest push --purge ${manifest_list}:${__docker_tag}"
+      else
+        docker manifest push --purge "${manifest_list}:${__docker_tag}"
+        log.info "done pushing docker manifest ${manifest_list}:${__docker_tag}"
+      fi
     done
   done
 }
@@ -1749,12 +1761,17 @@ push_gcs()
   fi
 
   for gcs_bucket in "${gcs_buckets[@]}"; do
-    push_gcs_to_bucket "${artifact_dir}" "${gcs_bucket}"
+    if [[ "${__DRY_RUN}" == "true" ]]; then
+      log.info "DRY RUN: Would run: push_gcs_to_bucket ${artifact_dir} ${gcs_bucket}"
+      log.info "DRY RUN: Would run: gsutil ls -l ${gcs_bucket}/${KUBE_GIT_VERSION}/**"
+    else
+      push_gcs_to_bucket "${artifact_dir}" "${gcs_bucket}"
 
-    # List all files up in the bucket as a validity check. The trailing "**"
-    # literal wildcard is gsutil syntax for a flat listing of all objects in
-    # the trailing subdirectory (in this case, "${version_dir}").
-    gsutil ls -l "${gcs_bucket}/${KUBE_GIT_VERSION}/**"
+      # List all files up in the bucket as a validity check. The trailing "**"
+      # literal wildcard is gsutil syntax for a flat listing of all objects in
+      # the trailing subdirectory (in this case, "${version_dir}").
+      gsutil ls -l "${gcs_bucket}/${KUBE_GIT_VERSION}/**"
+    fi
   done
 }
 
