@@ -20,7 +20,9 @@ import (
 	"bytes"
 	"encoding/hex"
 	gojson "encoding/json"
+	"fmt"
 	"io"
+	"os"
 	"math/rand"
 	"reflect"
 	"testing"
@@ -446,6 +448,28 @@ func benchmarkItemsList(b *testing.B, numItems int) v1.PodList {
 	return v1.PodList{
 		Items: items,
 	}
+}
+
+func loadExemplarPod() v1.Pod {
+	data, err := os.ReadFile("exemplar_pod.yaml")
+	if err != nil {
+		panic(err)
+	}
+	var pod v1.Pod
+	if err := yaml.Unmarshal(data, &pod); err != nil {
+		panic(err)
+	}
+	return pod
+}
+
+func benchmarkExemplarItems(b *testing.B) []v1.Pod {
+	pod := loadExemplarPod()
+	items := make([]v1.Pod, 10)
+	for i := range items {
+		items[i] = *pod.DeepCopy()
+		items[i].Name = fmt.Sprintf("%s-%d", pod.Name, i)
+	}
+	return items
 }
 
 // BenchmarkEncodeCodec measures the cost of performing a codec encode, which includes

@@ -119,7 +119,7 @@ func TestProtobufRoundTrip(t *testing.T) {
 // BenchmarkEncodeCodec measures the cost of performing a codec encode, which includes
 // reflection (to clear APIVersion and Kind)
 func BenchmarkEncodeCodecProtobuf(b *testing.B) {
-	items := benchmarkItems(b)
+	items := benchmarkExemplarItems(b)
 	width := len(items)
 	s := protobuf.NewSerializer(nil, nil)
 	b.ResetTimer()
