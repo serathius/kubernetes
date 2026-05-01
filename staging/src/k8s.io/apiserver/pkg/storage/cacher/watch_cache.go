@@ -560,9 +560,10 @@ func (w *watchCache) waitUntilFreshAndList(ctx context.Context, key string, opts
 	if err != nil {
 		return listResp{}, "", err
 	}
+	limit := int(computeListLimit(opts))
 	switch opts.ResourceVersionMatch {
 	case metav1.ResourceVersionMatchExact:
-		return w.waitAndListExactRV(ctx, key, "", listRV)
+		return w.waitAndListExactRV(ctx, key, "", listRV, limit)
 	case metav1.ResourceVersionMatchNotOlderThan:
 	case "":
 		// Continue
@@ -572,24 +573,24 @@ func (w *watchCache) waitUntilFreshAndList(ctx context.Context, key string, opts
 				return listResp{}, "", errors.NewBadRequest(fmt.Sprintf("invalid continue token: %v", err))
 			}
 			if continueRV > 0 {
-				return w.waitAndListExactRV(ctx, key, continueKey, uint64(continueRV))
+				return w.waitAndListExactRV(ctx, key, continueKey, uint64(continueRV), limit)
 			} else {
 				// Don't pass matchValues as they don't support continueKey
-				return w.waitAndListConsistent(ctx, key, continueKey, nil)
+				return w.waitAndListConsistent(ctx, key, continueKey, nil, limit)
 			}
 		}
 		// Legacy exact match
 		if opts.Predicate.Limit > 0 && len(opts.ResourceVersion) > 0 && opts.ResourceVersion != "0" {
-			return w.waitAndListExactRV(ctx, key, "", listRV)
+			return w.waitAndListExactRV(ctx, key, "", listRV, limit)
 		}
 		if opts.ResourceVersion == "" {
-			return w.waitAndListConsistent(ctx, key, "", opts.Predicate.MatcherIndex(ctx))
+			return w.waitAndListConsistent(ctx, key, "", opts.Predicate.MatcherIndex(ctx), limit)
 		}
 	}
-	return w.waitAndListLatestRV(ctx, listRV, key, "", opts.Predicate.MatcherIndex(ctx))
+	return w.waitAndListLatestRV(ctx, listRV, key, "", opts.Predicate.MatcherIndex(ctx), limit)
 }
 
-func (w *watchCache) waitAndListExactRV(ctx context.Context, key, continueKey string, resourceVersion uint64) (resp listResp, index string, err error) {
+func (w *watchCache) waitAndListExactRV(ctx context.Context, key, continueKey string, resourceVersion uint64, limit int) (resp listResp, index string, err error) {
 	if delegator.ConsistentReadSupported() && w.notFresh(resourceVersion) {
 		w.waitingUntilFresh.Add()
 		err = w.waitUntilFreshAndBlock(ctx, resourceVersion)
@@ -609,22 +610,22 @@ func (w *watchCache) waitAndListExactRV(ctx context.Context, key, continueKey st
 	if !ok {
 		return listResp{}, "", errors.NewResourceExpired(fmt.Sprintf("too old resource version: %d", resourceVersion))
 	}
-	items := store.ListPrefix(key, continueKey)
+	items := store.ListPrefix(key, continueKey, limit)
 	return listResp{
 		Items:           items,
 		ResourceVersion: resourceVersion,
 	}, "", nil
 }
 
-func (w *watchCache) waitAndListConsistent(ctx context.Context, key, continueKey string, matchValues []storage.MatchValue) (resp listResp, index string, err error) {
+func (w *watchCache) waitAndListConsistent(ctx context.Context, key, continueKey string, matchValues []storage.MatchValue, limit int) (resp listResp, index string, err error) {
 	resourceVersion, err := w.getCurrentRV(ctx)
 	if err != nil {
 		return listResp{}, "", err
 	}
-	return w.waitAndListLatestRV(ctx, resourceVersion, key, continueKey, matchValues)
+	return w.waitAndListLatestRV(ctx, resourceVersion, key, continueKey, matchValues, limit)
 }
 
-func (w *watchCache) waitAndListLatestRV(ctx context.Context, resourceVersion uint64, key, continueKey string, matchValues []storage.MatchValue) (resp listResp, index string, err error) {
+func (w *watchCache) waitAndListLatestRV(ctx context.Context, resourceVersion uint64, key, continueKey string, matchValues []storage.MatchValue, limit int) (resp listResp, index string, err error) {
 	if delegator.ConsistentReadSupported() && w.notFresh(resourceVersion) {
 		w.waitingUntilFresh.Add()
 		err = w.waitUntilFreshAndBlock(ctx, resourceVersion)
@@ -636,10 +637,10 @@ func (w *watchCache) waitAndListLatestRV(ctx context.Context, resourceVersion ui
 	if err != nil {
 		return listResp{}, "", err
 	}
-	return w.listLatestRV(key, continueKey, matchValues)
+	return w.listLatestRV(key, continueKey, matchValues, limit)
 }
 
-func (w *watchCache) listLatestRV(key, continueKey string, matchValues []storage.MatchValue) (resp listResp, index string, err error) {
+func (w *watchCache) listLatestRV(key, continueKey string, matchValues []storage.MatchValue, limit int) (resp listResp, index string, err error) {
 	// This isn't the place where we do "final filtering" - only some "prefiltering" is happening here. So the only
 	// requirement here is to NOT miss anything that should be returned. We can return as many non-matching items as we
 	// want - they will be filtered out later. The fact that we return less things is only further performance improvement.
@@ -654,7 +655,7 @@ func (w *watchCache) listLatestRV(key, continueKey string, matchValues []storage
 		}
 	}
 	if store, ok := w.store.(store.OrderedLister); ok {
-		result := store.ListPrefix(key, continueKey)
+		result := store.ListPrefix(key, continueKey, limit)
 		return listResp{
 			Items:           result,
 			ResourceVersion: w.resourceVersion,

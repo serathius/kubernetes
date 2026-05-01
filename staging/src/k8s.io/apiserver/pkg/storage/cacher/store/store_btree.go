@@ -99,10 +99,10 @@ func (si *threadedStoreIndexer) List() []interface{} {
 	return si.store.List()
 }
 
-func (si *threadedStoreIndexer) ListPrefix(prefix, continueKey string) []interface{} {
+func (si *threadedStoreIndexer) ListPrefix(prefix, continueKey string, limit int) []interface{} {
 	si.lock.RLock()
 	defer si.lock.RUnlock()
-	return si.store.ListPrefix(prefix, continueKey)
+	return si.store.ListPrefix(prefix, continueKey, limit)
 }
 
 func (si *threadedStoreIndexer) ListKeys() []string {
@@ -253,11 +253,15 @@ func (s *btreeStore) getByKey(key string) (item interface{}, exists bool, err er
 	return item, exists, nil
 }
 
-func (s *btreeStore) ListPrefix(prefix, continueKey string) []interface{} {
+func (s *btreeStore) ListPrefix(prefix, continueKey string, limit int) []interface{} {
 	if continueKey == "" {
 		continueKey = prefix
 	}
-	result := make([]interface{}, 0, s.listPrefixCapacityHint(prefix, continueKey))
+	capacity := limit
+	if limit == 0 {
+		capacity = s.listPrefixCapacityHint(prefix, continueKey)
+	}
+	result := make([]interface{}, 0, capacity)
 	s.tree.AscendGreaterOrEqual(&Element{Key: continueKey}, func(item *Element) bool {
 		if !strings.HasPrefix(item.Key, prefix) {
 			return false

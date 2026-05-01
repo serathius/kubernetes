@@ -73,7 +73,7 @@ type Indexer interface {
 }
 
 type OrderedLister interface {
-	ListPrefix(prefix, continueKey string) []interface{}
+	ListPrefix(prefix, continueKey string, limit int) []interface{}
 	Count(prefix, continueKey string) (count int)
 	Clone() OrderedLister
 }
