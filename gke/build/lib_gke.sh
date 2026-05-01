@@ -500,13 +500,13 @@ is_prod_version()
 {
   local version="${1}"
 
-  # e.g., "v1.18.14-gke.1700" or "v1.23.3-gke.1700+megawhale"
-  if [[ "${version}" =~ ^v[[:digit:]]+\.[[:digit:]]+\.[[:digit:]]+-gke\.[[:digit:]]+(\+[a-zA-Z0-9]+)?$ ]]; then
+  # e.g., "v1.18.14-gke.1700" or "v1.23.3-gke.1700-megawhale"
+  if [[ "${version}" =~ ^v[[:digit:]]+\.[[:digit:]]+\.[[:digit:]]+-gke\.[[:digit:]]+(-[a-zA-Z0-9]+)?$ ]]; then
     log.info "version \`${version}' is OK for a GKE release (prod) or frontier release"
     return 0
   fi
 
-  log.warn "version \`${version}' is NOT OK for a GKE release (prod expects vX.Y.Z-gke.N or megawhale vX.Y.Z-gke.N+megawhale)"
+  log.warn "version \`${version}' is NOT OK for a GKE release (prod expects vX.Y.Z-gke.N or megawhale vX.Y.Z-gke.N-megawhale)"
   return 1
 }
 
@@ -1911,7 +1911,7 @@ self_test()
   assert_variable_equality "${got}" "${expected}"
 
   # Frontier version format.
-  got=$(is_prod_version "v1.35.1-gke.1+example" && echo "true" || echo "false")
+  got=$(is_prod_version "v1.35.1-gke.1-example" && echo "true" || echo "false")
   expected="true"
   assert_variable_equality "${got}" "${expected}"
 
