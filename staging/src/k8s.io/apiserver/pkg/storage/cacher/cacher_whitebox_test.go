@@ -3335,10 +3335,10 @@ func (f fakeOrderedLister) Add(obj interface{}) error    { return nil }
 func (f fakeOrderedLister) Update(obj interface{}) error { return nil }
 func (f fakeOrderedLister) Delete(obj interface{}) error { return nil }
 func (f fakeOrderedLister) Clone() store.OrderedLister   { return f }
-func (f fakeOrderedLister) ListPrefix(prefixKey, continueKey string, limit int) []interface{} {
-	return nil
+func (f fakeOrderedLister) AscendPrefix(prefixKey, continueKey string, iterator func(item interface{}) bool) {
 }
 func (f fakeOrderedLister) Count(prefixKey, continueKey string) int { return 0 }
+func (f fakeOrderedLister) CapacityHint(prefixKey, continueKey string) int { return 0 }
 
 type fakeSnapshotter struct {
 	getLessOrEqual func(rv uint64) (store.OrderedLister, bool)

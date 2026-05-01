@@ -560,10 +560,9 @@ func (w *watchCache) waitUntilFreshAndList(ctx context.Context, key string, opts
 	if err != nil {
 		return listResp{}, "", err
 	}
-	limit := int(computeListLimit(opts))
 	switch opts.ResourceVersionMatch {
 	case metav1.ResourceVersionMatchExact:
-		return w.waitAndListExactRV(ctx, key, "", listRV, limit)
+		return w.waitAndListExactRV(ctx, key, "", listRV, opts.Predicate)
 	case metav1.ResourceVersionMatchNotOlderThan:
 	case "":
 		// Continue
@@ -573,24 +572,24 @@ func (w *watchCache) waitUntilFreshAndList(ctx context.Context, key string, opts
 				return listResp{}, "", errors.NewBadRequest(fmt.Sprintf("invalid continue token: %v", err))
 			}
 			if continueRV > 0 {
-				return w.waitAndListExactRV(ctx, key, continueKey, uint64(continueRV), limit)
+				return w.waitAndListExactRV(ctx, key, continueKey, uint64(continueRV), opts.Predicate)
 			} else {
 				// Don't pass matchValues as they don't support continueKey
-				return w.waitAndListConsistent(ctx, key, continueKey, nil, limit)
+				return w.waitAndListConsistent(ctx, key, continueKey, nil, opts.Predicate)
 			}
 		}
 		// Legacy exact match
 		if opts.Predicate.Limit > 0 && len(opts.ResourceVersion) > 0 && opts.ResourceVersion != "0" {
-			return w.waitAndListExactRV(ctx, key, "", listRV, limit)
+			return w.waitAndListExactRV(ctx, key, "", listRV, opts.Predicate)
 		}
 		if opts.ResourceVersion == "" {
-			return w.waitAndListConsistent(ctx, key, "", opts.Predicate.MatcherIndex(ctx), limit)
+			return w.waitAndListConsistent(ctx, key, "", opts.Predicate.MatcherIndex(ctx), opts.Predicate)
 		}
 	}
-	return w.waitAndListLatestRV(ctx, listRV, key, "", opts.Predicate.MatcherIndex(ctx), limit)
+	return w.waitAndListLatestRV(ctx, listRV, key, "", opts.Predicate.MatcherIndex(ctx), opts.Predicate)
 }
 
-func (w *watchCache) waitAndListExactRV(ctx context.Context, key, continueKey string, resourceVersion uint64, limit int) (resp listResp, index string, err error) {
+func (w *watchCache) waitAndListExactRV(ctx context.Context, key, continueKey string, resourceVersion uint64, pred storage.SelectionPredicate) (resp listResp, index string, err error) {
 	if delegator.ConsistentReadSupported() && w.notFresh(resourceVersion) {
 		w.waitingUntilFresh.Add()
 		err = w.waitUntilFreshAndBlock(ctx, resourceVersion)
@@ -606,26 +605,34 @@ func (w *watchCache) waitAndListExactRV(ctx context.Context, key, continueKey st
 	if w.snapshots == nil {
 		return listResp{}, "", errors.NewResourceExpired(fmt.Sprintf("too old resource version: %d", resourceVersion))
 	}
-	store, ok := w.snapshots.GetLessOrEqual(resourceVersion)
+	snapshotStore, ok := w.snapshots.GetLessOrEqual(resourceVersion)
 	if !ok {
 		return listResp{}, "", errors.NewResourceExpired(fmt.Sprintf("too old resource version: %d", resourceVersion))
 	}
-	items := store.ListPrefix(key, continueKey, limit)
+	capacity := int(pred.Limit)
+	if capacity == 0 {
+		capacity = snapshotStore.CapacityHint(key, continueKey)
+	}
+	items := make([]interface{}, 0, capacity)
+	snapshotStore.AscendPrefix(key, continueKey, func(item interface{}) bool {
+		items = append(items, item)
+		return true
+	})
 	return listResp{
 		Items:           items,
 		ResourceVersion: resourceVersion,
 	}, "", nil
 }
 
-func (w *watchCache) waitAndListConsistent(ctx context.Context, key, continueKey string, matchValues []storage.MatchValue, limit int) (resp listResp, index string, err error) {
+func (w *watchCache) waitAndListConsistent(ctx context.Context, key, continueKey string, matchValues []storage.MatchValue, pred storage.SelectionPredicate) (resp listResp, index string, err error) {
 	resourceVersion, err := w.getCurrentRV(ctx)
 	if err != nil {
 		return listResp{}, "", err
 	}
-	return w.waitAndListLatestRV(ctx, resourceVersion, key, continueKey, matchValues, limit)
+	return w.waitAndListLatestRV(ctx, resourceVersion, key, continueKey, matchValues, pred)
 }
 
-func (w *watchCache) waitAndListLatestRV(ctx context.Context, resourceVersion uint64, key, continueKey string, matchValues []storage.MatchValue, limit int) (resp listResp, index string, err error) {
+func (w *watchCache) waitAndListLatestRV(ctx context.Context, resourceVersion uint64, key, continueKey string, matchValues []storage.MatchValue, pred storage.SelectionPredicate) (resp listResp, index string, err error) {
 	if delegator.ConsistentReadSupported() && w.notFresh(resourceVersion) {
 		w.waitingUntilFresh.Add()
 		err = w.waitUntilFreshAndBlock(ctx, resourceVersion)
@@ -637,10 +644,10 @@ func (w *watchCache) waitAndListLatestRV(ctx context.Context, resourceVersion ui
 	if err != nil {
 		return listResp{}, "", err
 	}
-	return w.listLatestRV(key, continueKey, matchValues, limit)
+	return w.listLatestRV(key, continueKey, matchValues, pred)
 }
 
-func (w *watchCache) listLatestRV(key, continueKey string, matchValues []storage.MatchValue, limit int) (resp listResp, index string, err error) {
+func (w *watchCache) listLatestRV(key, continueKey string, matchValues []storage.MatchValue, pred storage.SelectionPredicate) (resp listResp, index string, err error) {
 	// This isn't the place where we do "final filtering" - only some "prefiltering" is happening here. So the only
 	// requirement here is to NOT miss anything that should be returned. We can return as many non-matching items as we
 	// want - they will be filtered out later. The fact that we return less things is only further performance improvement.
@@ -654,10 +661,18 @@ func (w *watchCache) listLatestRV(key, continueKey string, matchValues []storage
 			}, matchValue.IndexName, err
 		}
 	}
-	if store, ok := w.store.(store.OrderedLister); ok {
-		result := store.ListPrefix(key, continueKey, limit)
+	if orderedLister, ok := w.store.(store.OrderedLister); ok {
+		capacity := int(pred.Limit)
+		if capacity == 0 {
+			capacity = orderedLister.CapacityHint(key, continueKey)
+		}
+		items := make([]interface{}, 0, capacity)
+		orderedLister.AscendPrefix(key, continueKey, func(item interface{}) bool {
+			items = append(items, item)
+			return true
+		})
 		return listResp{
-			Items:           result,
+			Items:           items,
 			ResourceVersion: w.resourceVersion,
 		}, "", nil
 	}

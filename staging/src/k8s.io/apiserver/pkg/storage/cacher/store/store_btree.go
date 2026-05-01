@@ -99,10 +99,16 @@ func (si *threadedStoreIndexer) List() []interface{} {
 	return si.store.List()
 }
 
-func (si *threadedStoreIndexer) ListPrefix(prefix, continueKey string, limit int) []interface{} {
+func (si *threadedStoreIndexer) AscendPrefix(prefix, continueKey string, iterator func(item interface{}) bool) {
 	si.lock.RLock()
 	defer si.lock.RUnlock()
-	return si.store.ListPrefix(prefix, continueKey, limit)
+	si.store.AscendPrefix(prefix, continueKey, iterator)
+}
+
+func (si *threadedStoreIndexer) CapacityHint(prefix, continueKey string) int {
+	si.lock.RLock()
+	defer si.lock.RUnlock()
+	return si.store.CapacityHint(prefix, continueKey)
 }
 
 func (si *threadedStoreIndexer) ListKeys() []string {
@@ -253,38 +259,27 @@ func (s *btreeStore) getByKey(key string) (item interface{}, exists bool, err er
 	return item, exists, nil
 }
 
-func (s *btreeStore) ListPrefix(prefix, continueKey string, limit int) []interface{} {
+func (s *btreeStore) AscendPrefix(prefix, continueKey string, iterator func(item interface{}) bool) {
 	if continueKey == "" {
 		continueKey = prefix
 	}
-	capacity := limit
-	if limit == 0 {
-		capacity = s.listPrefixCapacityHint(prefix, continueKey)
-	}
-	result := make([]interface{}, 0, capacity)
 	s.tree.AscendGreaterOrEqual(&Element{Key: continueKey}, func(item *Element) bool {
 		if !strings.HasPrefix(item.Key, prefix) {
 			return false
 		}
-		result = append(result, item)
-		return true
+		return iterator(item)
 	})
-	return result
 }
 
-// listPrefixCapacityHint returns the exact result size for ListPrefix.
-// Keys matching a given prefix form a contiguous range in key order, so if the
-// tree's smallest key is at or after continueKey and its largest key carries
-// the prefix, every key in the tree will be returned and Len() is the answer.
-// Otherwise the matching range is counted explicitly, trading a second walk
-// over that range for an exactly sized result slice.
-func (s *btreeStore) listPrefixCapacityHint(prefix, continueKey string) int {
+// CapacityHint returns the exact result size for ListPrefix if it covers the entire tree.
+// Otherwise it returns 0.
+func (s *btreeStore) CapacityHint(prefix, continueKey string) int {
 	minElem, hasMin := s.tree.Min()
 	maxElem, hasMax := s.tree.Max()
 	if hasMin && hasMax && minElem.Key >= continueKey && strings.HasPrefix(maxElem.Key, prefix) {
 		return s.tree.Len()
 	}
-	return s.Count(prefix, continueKey)
+	return 0
 }
 
 func (s *btreeStore) Count(prefix, continueKey string) (count int) {

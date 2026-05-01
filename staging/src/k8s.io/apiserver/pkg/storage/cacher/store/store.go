@@ -73,9 +73,10 @@ type Indexer interface {
 }
 
 type OrderedLister interface {
-	ListPrefix(prefix, continueKey string, limit int) []interface{}
+	AscendPrefix(prefix, continueKey string, iterator func(item interface{}) bool)
 	Count(prefix, continueKey string) (count int)
 	Clone() OrderedLister
+	CapacityHint(prefix, continueKey string) int
 }
 
 func NewIndexer(indexers *cache.Indexers) Indexer {
