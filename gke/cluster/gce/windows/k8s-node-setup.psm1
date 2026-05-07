@@ -481,9 +481,13 @@ function Start-GKEMetadataServer {
   Log-Output "gke-metadata-server args: ${args}"
 
 
-  Log-Output "Creating gke-metadata-server service"
-
-  New-Service -Name gke-metadata-server -BinaryPathName "${env:NODE_DIR}\gke-metadata-server.exe ${args}" -StartupType Manual
+  $service = Get-Service -Name gke-metadata-server -ErrorAction SilentlyContinue
+  if ($null -eq $service) {
+    Log-Output "Creating gke-metadata-server service"
+    New-Service -Name gke-metadata-server -BinaryPathName "${env:NODE_DIR}\gke-metadata-server.exe ${args}" -StartupType Manual
+  } else {
+    Log-Output "Service gke-metadata-server already exists, skipping creation."
+  }
 
   $attempt = 0
   $max_start_attempts = 3
