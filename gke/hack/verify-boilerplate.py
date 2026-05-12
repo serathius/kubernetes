@@ -107,9 +107,12 @@ def main():
     # The files walked by this script should match the set of files
     # We exclude from the upstream script via the companion shell script
     # (verify-boilerplate.sh)
+    skip_roots = [os.path.join(rootdir, 'gke', 'build', 'tools', 'bin')]
     for root, dirs, files in os.walk(os.path.join(rootdir, "gke")):
         # Skip certain directories
-        skip_dirs = ["__pycache__", os.path.join('build', 'tools', 'bin')]
+        if root in skip_roots:
+            continue
+        skip_dirs = ["__pycache__"]
         for skip_dir in skip_dirs:
             if skip_dir in dirs:
                 dirs.remove(skip_dir)
