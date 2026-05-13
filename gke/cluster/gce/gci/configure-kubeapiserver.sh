@@ -454,9 +454,44 @@ EOF
 
   local container_env=""
 
+  # Set GOMEMLIMIT to a configurable fraction of total memory if both are specified.
+  local mem_limit="${KUBE_APISERVER_MEMORY_LIMIT:-}"
+  local gomemlimit=""
+  local limit_percent="${KUBE_APISERVER_GOMEMLIMIT:-}"
+
+  if [[ -n "${mem_limit}" && -n "${limit_percent}" ]]; then
+    if [[ "${mem_limit: -1}" =~ [0-9] ]]; then
+      # It's in bytes
+      gomemlimit=$((mem_limit * limit_percent / 100))
+    else
+      local unit="${mem_limit: -2}"
+      local value="${mem_limit%??}"
+
+      if [[ "$unit" == "Ti" ]]; then
+        value=$((value * 1024 * 1024))
+        unit="Mi"
+      elif [[ "$unit" == "Gi" ]]; then
+        value=$((value * 1024))
+        unit="Mi"
+      fi
+
+      local limit_value=$((value * limit_percent / 100))
+      gomemlimit="${limit_value}MiB"
+    fi
+  fi
+
   # b/255296578
   container_env+="{\"name\": \"HTTP2_READ_IDLE_TIMEOUT_SECONDS\", \"value\": \"${KUBE_APISERVER_HTTP2_READ_IDLE_TIMEOUT_SECONDS:-30}\"}"
   container_env+=",{\"name\": \"HTTP2_PING_TIMEOUT_SECONDS\", \"value\": \"${KUBE_APISERVER_HTTP2_PING_TIMEOUT_SECONDS:-15}\"}"
+
+  if [[ -n "${gomemlimit}" ]]; then
+    container_env+=",{\"name\": \"GOMEMLIMIT\", \"value\": \"${gomemlimit}\"}"
+  fi
+
+  local gogc="${KUBE_APISERVER_GOGC:-}"
+  if [[ -n "${gogc}" ]]; then
+    container_env+=",{\"name\": \"GOGC\", \"value\": \"${gogc}\"}"
+  fi
 
   if [[ -n "${ENABLE_CACHE_MUTATION_DETECTOR:-}" ]]; then
     container_env+=",{\"name\": \"KUBE_CACHE_MUTATION_DETECTOR\", \"value\": \"${ENABLE_CACHE_MUTATION_DETECTOR}\"}"
