@@ -23,9 +23,12 @@ import re
 import subprocess
 import sys
 import tempfile
+import urllib3
 from typing import Any
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+from unittest import mock
 
 
 def credentials_in_log(log: str) -> bool:
@@ -152,6 +155,59 @@ class AppPkgTests(unittest.TestCase):
     with self.assertRaisesRegex(ValueError, 'unsupported hash type garbage'):
         installable.process_installable(installable=inst, download=True)
 
+class GetMetadataTests(unittest.TestCase):
+
+    def setUp(self):
+        super().setUp()
+        # Mock urllib3.PoolManager to avoid actual network calls.
+        self.mock_pool_manager_cls = self.enterContext(
+            mock.patch('urllib3.PoolManager', autospec=True)
+        )
+        # Get the mock instance that the 'with' statement will use.
+        self.mock_http = self.mock_pool_manager_cls.return_value.__enter__.return_value
+
+    def test_get_metadata_success(self):
+        """Tests successful retrieval of metadata."""
+        expected_value = 'my-instance-name'
+        mock_response = mock.Mock(spec=urllib3.response.HTTPResponse)
+        mock_response.status = 200
+        mock_response.data = expected_value.encode('utf-8')
+        self.mock_http.request.return_value = mock_response
+
+        result = installable.get_metadata('instance/name')
+        self.assertEqual(result, expected_value)
+
+    def test_get_metadata_failure_http_error(self):
+        """Tests handling of non-200 HTTP responses."""
+        mock_response = mock.Mock(spec=urllib3.response.HTTPResponse)
+        mock_response.status = 404
+        mock_response.reason = 'Not Found'
+        self.mock_http.request.return_value = mock_response
+
+        with self.assertRaisesRegex(installable.GetMetadataError,'Failed to get metadata') as context:
+            installable.get_metadata('instance/nonexistent-path')
+
+        self.assertIn('Failed to get metadata for "instance/nonexistent-path"', str(context.exception))
+        self.assertIn('status: 404', str(context.exception))
+        self.assertIn('reason: Not Found', str(context.exception))
+
+    def test_get_metadata_request_arguments(self):
+        """Tests that http.request is called with correct URL and headers."""
+        mock_response = mock.Mock(spec=urllib3.response.HTTPResponse)
+        mock_response.status = 200
+        mock_response.data = b'test-data'
+        self.mock_http.request.return_value = mock_response
+
+        path = 'project/project-id'
+        installable.get_metadata(path)
+
+        expected_url = f"http://metadata.google.internal/computeMetadata/v1/{path}"
+        self.mock_http.request.assert_called_once_with(
+            'GET',
+            expected_url,
+            headers={'Metadata-Flavor': 'Google'}
+        )
+
 class ContainerTests(unittest.TestCase):
   """ContainerTests are tests for the "container" kind."""
 
@@ -170,13 +226,16 @@ class ContainerTests(unittest.TestCase):
     self.assertTrue(isinstance(inst, installable.Container))
     self.assertEqual(inst.name(), 'my-container')
 
-  def test_preload(self):
+  @patch('installable.get_metadata')
+  def test_preload(self, get_metadata):
     """Tests the download function of the container."""
+    get_metadata.return_value = "mocked-value"
     inst = json.loads(container_content)
     with self.assertLogs(logger=installable.LOGGER, level=logging.INFO) as logs:
       with installable.parse_installable(inst) as obj:
         installable.process_installable(installable=obj, download=True)
     self.assertEqual(logs.output, ['INFO:installable:Installable not preloaded...downloading',
+   'INFO:installable:Running on host "mocked-value" at location "mocked-value"',
    'INFO:installable:Running container '
    'gcr.io/gke-release-staging/gke-distroless/bash@sha256:9bd9f35657b03f55a00a33feac0500ee183dcfd5f7f1982cd35a7a032953d466 '
    'succeeded.'])
@@ -192,13 +251,16 @@ class ContainerTests(unittest.TestCase):
       with self.assertRaisesRegex(installable.DownloadError, 'Failed to download container'):
         installable.process_installable(installable=inst, download=True)
 
-  def test_already_preloaded(self):
+  @patch('installable.get_metadata')
+  def test_already_preloaded(self, get_metadata):
+    get_metadata.return_value = "mocked-value"
     container = installable.parse_installable(json.loads(container_content))
     installable.ctr.download(container.get_url())
     self.assertTrue(container.is_preloaded())
     with self.assertLogs(logger=installable.LOGGER, level=logging.INFO) as logs:
       installable.process_installable(installable=container, download=True)
-    self.assertEqual(logs.output, ['INFO:installable:Running container '
+    self.assertEqual(logs.output, ['INFO:installable:Running on host "mocked-value" at location "mocked-value"',
+   'INFO:installable:Running container '
    'gcr.io/gke-release-staging/gke-distroless/bash@sha256:9bd9f35657b03f55a00a33feac0500ee183dcfd5f7f1982cd35a7a032953d466 '
    'succeeded.'])
 
@@ -210,7 +272,9 @@ class ContainerTests(unittest.TestCase):
       installable.process_installable(installable=container, download=False)
     self.assertFalse(container.is_preloaded())
 
-  def test_gvisor_integration(self):
+  @patch('installable.get_metadata')
+  def test_gvisor_integration(self, get_metadata):
+    get_metadata.return_value = "mocked-value"
 
     gvisor_content = """{
       "kind":"Container",
@@ -259,6 +323,7 @@ class ContainerTests(unittest.TestCase):
 
     self.assertEqual(logs.output ,[
    'INFO:installable:Installable not preloaded...downloading',
+   'INFO:installable:Running on host "mocked-value" at location "mocked-value"',
    'INFO:installable:Running container '
    'gcr.io/gke-release-staging/gke-gvisor-installer@sha256:0c3e3ac8b7bfad7db5df9fe3c3d67eff11ce33ed4391a6ce323a5fced0ccef33 '
    'succeeded.'])
@@ -268,10 +333,12 @@ class ContainerTests(unittest.TestCase):
       self.assertTrue(os.path.exists(p))
       os.remove(p)
 
-  def test_cilium_cni_integration(self):
+  @patch('installable.get_metadata')
+  def test_cilium_cni_integration(self, get_metadata):
     if is_fake():
       raise unittest.SkipTest('Test is not hermetic and should be skipped in fakes.')
 
+    get_metadata.return_value = "mocked-value"
     # The container expects these paths to exist.
     os.makedirs('/home/kubernetes/bin', exist_ok=True)
     expected_paths = [
@@ -315,6 +382,7 @@ class ContainerTests(unittest.TestCase):
 
     self.assertEqual(logs.output, [
     'INFO:installable:Installable not preloaded...downloading',
+    'INFO:installable:Running on host "mocked-value" at location "mocked-value"',
     'INFO:installable:Running container '
     'us.gcr.io/gke-release-staging/cilium/cilium:v1.15.6-gke.37@sha256:d285cf77f04947eb3a81bf29362bc6c46e296831ea4d410bf7dc86149295890e '
     'succeeded.'])

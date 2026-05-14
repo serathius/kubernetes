@@ -30,6 +30,17 @@ const (
 	testPath = "installable_test.py"
 )
 
+func TestGetMetadataTests(t *testing.T) {
+	args := fmt.Sprintf("python3 %s --fake GetMetadataTests", testPath)
+	cmd := exec.Command("bash", "-c", args)
+
+	result, err := cmd.CombinedOutput()
+	if err != nil {
+		printOutput(t, result)
+		t.Fatalf("Failed to run %q: %v", cmd.Args, err)
+	}
+}
+
 func TestInstallableTests(t *testing.T) {
 	args := fmt.Sprintf("python3 %s --fake InstallableTests", testPath)
 	cmd := exec.Command("bash", "-c", args)

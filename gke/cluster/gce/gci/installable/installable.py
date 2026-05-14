@@ -36,6 +36,7 @@ import sys
 import tempfile
 import urllib3
 import hashlib
+from urllib.parse import urljoin
 from pathlib import Path
 
 INSTALLABLE_NAMESPACE = "installable.gke.io"
@@ -135,6 +136,9 @@ class PreloadError(Exception):
 class GetCredentialError(Exception):
   """Error to mark failure to get credentials."""
 
+class GetMetadataError(Exception):
+  """Error when getting GCE metadata fails."""
+
 def validate_checksum(file_path: str, digest_algo: str, digest: str):
   hasher = hashlib.new(digest_algo)
 
@@ -165,6 +169,24 @@ def get_gce_credentials() -> str:
       raise GetCredentialError(f'Failed to get credentials: status: {response.status} reason: {response.reason}')
     data = response.data.decode('utf-8')
     return json.loads(data)['access_token']
+
+def get_metadata(path: str) -> str:
+    """Fetches GCE metadata value for the given path (eg: 'instance/name')."""
+    base_url = "http://metadata.google.internal/computeMetadata/v1/"
+    url = urljoin(base_url, path)
+    retries = urllib3.util.Retry(
+      total=5,
+      backoff_factor=0.5,
+    )
+    timeout = urllib3.util.Timeout(connect=10.0)
+    with urllib3.PoolManager(
+      retries=retries,
+      timeout=timeout,
+    ) as http:
+      response = http.request('GET', url, headers={'Metadata-Flavor': 'Google'})
+      if response.status != 200:
+        raise GetMetadataError(f'Failed to get metadata for "{path}": status: {response.status} reason: {response.reason}')
+      return response.data.decode()
 
 class GCS:
   def download(self, gcs_path: str, install_path: str) -> str:
@@ -427,6 +449,11 @@ class Container(Installable):
     run_spec = self.content.get('run', {})
     ctr_args = run_spec.get('ctrArgs', [])
     ctr_args.extend(['--env', f'GKE_PRELOADER_RUN={str(is_preloader).lower()}'])
+    if not is_preloader:
+      host_name = get_metadata('instance/name')
+      host_location = get_metadata('instance/zone')
+      ctr_args.extend(['--env', f'GKE_HOST_NAME={host_name}', '--env', f'GKE_HOST_LOCATION={host_location}'])
+      LOGGER.info(f'Running on host "{host_name}" at location "{host_location}"')
     container_args = run_spec.get('containerArgs', [])
     out = ctr.run(self.name(), self.get_url(), ctr_args=ctr_args,  container_args=container_args)
     if out.returncode != 0:
