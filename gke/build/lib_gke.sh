@@ -1029,7 +1029,7 @@ compile()
     -e KUBE_CGO_OVERRIDES="${__KUBE_CGO_OVERRIDES:-}" \
     -e GOFLAGS="${__GOFLAGS:-}" \
     -e GOEXPERIMENT="${__GOEXPERIMENT:-}" \
-    -e GOTOOLCHAIN="local" \
+    -e GOTOOLCHAIN="$("${KUBE_ROOT}"/gke/build/gotoolchain.sh)" \
     -v "${KUBE_ROOT}":"${__KUBE_ROOT_MOUNT_PATH}" \
     -w "${__KUBE_ROOT_MOUNT_PATH}" \
     -u "$(id -u):$(id -g)" \
@@ -1042,6 +1042,13 @@ compile()
     -w "${__KUBE_ROOT_MOUNT_PATH}" \
     "${__compiler_image_full}" \
     gke/cluster/kubectl.sh version --client
+
+  # Print compiled go version (for debugging).
+  docker run --rm \
+    -v "${KUBE_ROOT}":"${__KUBE_ROOT_MOUNT_PATH}" \
+    -w "${__KUBE_ROOT_MOUNT_PATH}" \
+    "${__compiler_image_full}" \
+    sh -c 'go version $(gke/cluster/kubectl.sh path)'
 
   log.info "binary artifacts are in ${KUBE_ROOT}/${__output_subpath}/bin"
 }

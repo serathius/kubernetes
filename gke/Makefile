@@ -23,6 +23,8 @@
 # This should be called from the repo root directory, the same as in OSS.
 #
 # Override GOTOOLCHAIN
-export GOTOOLCHAIN=$(shell $(CURDIR)/gke/build/gotoolchain.sh)
+GOTOOLCHAIN:=$(shell $(CURDIR)/gke/build/gotoolchain.sh)
+export GOTOOLCHAIN
+$(info GOTOOLCHAIN=$(GOTOOLCHAIN))
 # include the upstream Makefile
 include $(CURDIR)/build/root/Makefile
