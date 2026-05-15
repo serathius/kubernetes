@@ -43,8 +43,6 @@ source "${SCRIPT_DIR}"/lib_assert.sh
 # shellcheck source=./lib_log.sh
 source "${SCRIPT_DIR}"/lib_log.sh
 
-# shellcheck source=./lib_yaml.sh
-source "${SCRIPT_DIR}"/lib_yaml.sh # for _yq()
 
 gke_build_entrypoint()
 {
@@ -172,7 +170,6 @@ EOF
 
   # Run self-test to ensure that some invariants are observed.
   self_test
-  bootstrap_tooling
 
   process_args "$@"
   set_global_vars
@@ -847,55 +844,6 @@ set_compiler_image_tag()
   fi
 }
 
-# Install dependencies that this script itself depends on.
-bootstrap_tooling()
-{
-  # Currently we just need to install the `yq' binary. It is not fatal if the
-  # installation fails, because we can fall back to a Docker container of it. We
-  # first try to see if there's already a `yq' binary in our PATH, and if so,
-  # check the version. If neither condition holds, we install our own version
-  # into "${tools_dir}"/bin and modify PATH to use it downstream.
-
-  # Set installation path.
-  local tools_dir="${SCRIPT_DIR}/tools/bin"
-  local yq_version="3.4.1"
-
-  # If there's already a version of yq available *somewhere* in the PATH, and it
-  # is at the correct version, don't install it.
-  if 2>/dev/null >&2 command -v yq; then
-    if [[ "$(yq --version)" == "yq version ${yq_version}" ]]; then
-      log.info "yq ${yq_version} already exists at $(type -p yq)"
-      return
-    fi
-  fi
-
-  # Check if there is already a version of yq in the "${tools_dir}"/yq path.
-  if [[ -x "${tools_dir}"/yq ]]; then
-    if [[ "$("${tools_dir}"/yq --version)" == "yq version ${yq_version}" ]]; then
-      log.info "yq ${yq_version} already exists at ${tools_dir}/yq"
-      # Export this path so that we can just refer to it as `yq' from now on.
-      export PATH="${tools_dir}:${PATH}"
-      return
-    fi
-
-    # Because we have the wrong version of yq, delete it.
-    rm -f "${tools_dir}"/yq
-  fi
-
-  # Install yq into ${SCRIPT_DIR}/bin.
-  if GOBIN="${tools_dir}" \
-    go install github.com/mikefarah/yq/v3@"${yq_version}"; then
-
-    # Modify $PATH to prefer our explicit version of yq over all others. This way
-    # we don't have to check whether there is already a yq version (installed by
-    # some other process) and what version it is.
-    export PATH="${tools_dir}:${PATH}"
-  else
-    # It's OK if the installation fails, because by default we already fall back
-    # to a containerized invocation of it.
-    log.warn "yq installation failed"
-  fi
-}
 
 # Prepare a build environment.
 #
@@ -1875,13 +1823,12 @@ clean()
 get_val()
 {
   # If the __GKE_BUILD_CONFIGS array exists, merge the values inside
-  # the YAMLs together (later YAML files gaining prececedence over the
+  # the YAMLs together (later YAML files gaining precedence over the
   # previous ones).
   if [[ -v __GKE_BUILD_CONFIGS ]]; then
-    _yq merge --arrays=overwrite --overwrite "${__GKE_BUILD_CONFIGS[@]}" \
-      | _yq read --stripComments - "$@"
+    go run "${SCRIPT_DIR}/get_yaml_val" "$@" "${__GKE_BUILD_CONFIGS[@]}"
   else
-    _yq read --stripComments "${__GKE_BUILD_CONFIG}" "$@"
+    go run "${SCRIPT_DIR}/get_yaml_val" "$@" "${__GKE_BUILD_CONFIG}"
   fi
 }
 
