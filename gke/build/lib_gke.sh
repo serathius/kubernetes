@@ -1822,13 +1822,38 @@ clean()
 
 get_val()
 {
+  local source_file="${SCRIPT_DIR}/get_yaml_val/main.go"
+  local bin_path="${SCRIPT_DIR}/tools/bin/get_yaml_val"
+  # build binary if not built yet
+  if [[ ! -f "${bin_path}" || "${source_file}" -nt "${bin_path}" ]]; then
+    mkdir -p "${SCRIPT_DIR}/tools/bin"
+    # prefer host go, otherwise use docker image
+    if command -v go >/dev/null 2>&1; then
+      go build -o "${bin_path}" "${source_file}"
+    else
+      local host_os
+      case "$(uname -s)" in
+        Darwin) host_os=darwin ;;
+        Linux) host_os=linux ;;
+        *) host_os=linux ;;
+      esac
+      docker run --rm \
+        --env GOTOOLCHAIN=auto \
+        --env GOOS="${host_os}" \
+        -v "${KUBE_ROOT}":"${KUBE_ROOT}" \
+        -w "${SCRIPT_DIR}/get_yaml_val" \
+        google-go.pkg.dev/golang:1.26.3@sha256:3e25fdade56f35be3bca41f8a141a66ca834f1c01fdf55414d4a1e1c987a985c \
+        go build -o "../tools/bin/get_yaml_val" main.go
+    fi
+  fi
+
   # If the __GKE_BUILD_CONFIGS array exists, merge the values inside
   # the YAMLs together (later YAML files gaining precedence over the
   # previous ones).
   if [[ -v __GKE_BUILD_CONFIGS ]]; then
-    go run "${SCRIPT_DIR}/get_yaml_val" "$@" "${__GKE_BUILD_CONFIGS[@]}"
+    "${bin_path}" "$@" "${__GKE_BUILD_CONFIGS[@]}"
   else
-    go run "${SCRIPT_DIR}/get_yaml_val" "$@" "${__GKE_BUILD_CONFIG}"
+    "${bin_path}" "$@" "${__GKE_BUILD_CONFIG}"
   fi
 }
 
