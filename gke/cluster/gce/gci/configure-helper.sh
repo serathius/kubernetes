@@ -3349,6 +3349,12 @@ function main() {
     fi
     log-wrap 'ConfigureAuthProviderGcp' configure-auth-provider-gcp
   fi
+
+  if [[ -n "${NODE_CERTIFICATE_PROVISIONER_ADC_CONFIG:-}" ]]; then
+    mkdir -p /run/gke-ncp/
+    echo "$NODE_CERTIFICATE_PROVISIONER_ADC_CONFIG" > /run/gke-ncp/application_default_credentials.json
+  fi
+
   log-wrap 'ProcessInstallables' process-installables
 
   # Note prepare-mounter-rootfs must be called before the kubelet starts, as
