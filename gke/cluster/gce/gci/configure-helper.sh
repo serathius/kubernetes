@@ -2168,6 +2168,62 @@ function prepare-mounter-rootfs {
   cp /etc/resolv.conf "${CONTAINERIZED_MOUNTER_ROOTFS}/etc/"
 }
 
+# A helper function that sets up host-level NFS mounter wrapper with private DNS namespace
+function setup-nfs-mounter-wrapper {
+  echo "Setting up host-level NFS mounter wrapper"
+  local -r bin_dir="${KUBE_BIN}"
+  mkdir -p "$bin_dir"
+
+  local -r original_nfs_mounter="/sbin/mount.nfs"
+  if [[ ! -f "$original_nfs_mounter" ]]; then
+    echo "NFS mounter utility not found at $original_nfs_mounter, skipping wrapper setup"
+    return 0
+  fi
+
+  local -r wrapper_script="${bin_dir}/mount.nfs"
+  local -r real_binary="${bin_dir}/mount.nfs.real"
+
+  # 1. Unmount any existing wrapper bind-mounts from a previous run to avoid infinite loop recursion.
+  # Note: If umount fails (e.g. due to a busy mount point in a running cluster), it is safe to proceed
+  # anyway because Linux supports nested/stacked bind mounts. The subsequent mount --bind will stack
+  # directly on top of the old mount, ensuring the new wrapper script takes effect immediately.
+  if mountpoint -q "$original_nfs_mounter"; then
+    echo "Unmounting existing wrapper from $original_nfs_mounter"
+    umount "$original_nfs_mounter" || true
+  fi
+
+  local resolved_target
+  resolved_target=$(readlink -f "$original_nfs_mounter")
+  if mountpoint -q "$resolved_target"; then
+    echo "Unmounting existing wrapper from resolved target $resolved_target"
+    umount "$resolved_target" || true
+  fi
+
+  # 2. Copy the original compiled binary to the real_binary path.
+  rm -f "$real_binary"
+  echo "Copying original binary from $resolved_target to $real_binary"
+  cp "$resolved_target" "$real_binary"
+  chmod a+x "$real_binary"
+
+  # 3. Copy the static wrapper script to its active path.
+  # Note: If the static wrapper is missing or copying fails, we log it as an error directly
+  # to syslog using the unified 'mount.nfs-wrapper' tag, but we intentionally do NOT exit
+  # or return 1. This keeps node bootstrap non-fatal for standard workloads, while exposing
+  # a discoverable node condition via GKE's Node Problem Detector (NPD) log monitor.
+  local -r static_wrapper="${bin_dir}/mount-nfs-wrapper.sh"
+  if [[ -f "$static_wrapper" ]]; then
+    echo "Copying static NFS wrapper script to active path $wrapper_script"
+    cp "$static_wrapper" "$wrapper_script"
+    chmod a+x "$wrapper_script"
+
+    # 4. Bind-mount the wrapper over /sbin/mount.nfs
+    mount --bind "$wrapper_script" "$resolved_target"
+  else
+    echo "ERROR: Static NFS wrapper script not found at $static_wrapper"
+    logger -p daemon.err -t mount.nfs-wrapper "[ERROR] Static NFS wrapper script not found at $static_wrapper (NFS mounts will fail resolver checks)"
+  fi
+}
+
 # Applies lease permissions for KCM-to-CCM migration until successful
 function retry-reconcile-kcm-ccm-migration-lease-permission() {
   retry-forever 2 reconcile-kcm-ccm-migration-lease-permission
@@ -3357,9 +3413,16 @@ function main() {
 
   log-wrap 'ProcessInstallables' process-installables
 
-  # Note prepare-mounter-rootfs must be called before the kubelet starts, as
-  # kubelet startup updates its nameserver.
-  log-wrap 'PrepareMounterRootfs' prepare-mounter-rootfs
+  # Note prepare-mounter-rootfs (or setup-nfs-mounter-wrapper) must be called before
+  # the kubelet starts, as kubelet startup updates its nameserver.
+  #
+  # If --experimental-mounter-path is passed to kubelet, we prepare the containerized mounter rootfs.
+  # Otherwise, we set up our host-level NFS mounter wrapper script.
+  if [[ "${KUBELET_ARGS:-}" == *"--experimental-mounter-path"* ]]; then
+    log-wrap 'PrepareMounterRootfs' prepare-mounter-rootfs
+  else
+    log-wrap 'SetupNfsMounterWrapper' setup-nfs-mounter-wrapper
+  fi
 
   log-wrap 'StartKubelet' start-kubelet
 

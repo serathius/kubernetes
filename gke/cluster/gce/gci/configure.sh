@@ -780,6 +780,9 @@ function install-kube-manifests {
   fi
   cp "${dst_dir}/kubernetes/gci-trusty/node-registration-checker.sh" "${KUBE_BIN}/"
   cp "${dst_dir}/kubernetes/gci-trusty/networkd-monitor.sh" "${KUBE_BIN}/networkd-monitor.sh"
+  if [[ -e "${dst_dir}/kubernetes/gci-trusty/mount-nfs-wrapper.sh" ]]; then
+    cp "${dst_dir}/kubernetes/gci-trusty/mount-nfs-wrapper.sh" "${KUBE_BIN}/"
+  fi
 
   # Add the installable script to KUBE_BIN so installables can be processed.
   cp "${KUBE_HOME}/kube-manifests/kubernetes/gci-trusty/installable.py" "${KUBE_BIN}/installable.py"
