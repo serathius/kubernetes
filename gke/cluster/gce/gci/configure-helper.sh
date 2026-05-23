@@ -1820,6 +1820,19 @@ function start-kubelet {
     kubelet_image_service_endpoint="--image-service-endpoint=unix:///run/containerd-gcfs-grpc/containerd-gcfs-grpc.sock"
   fi
 
+  if [[ "${NCP_ENABLED:-}" == "true" && -n "${NCP_KUBELET_CONFIG_PATH}" ]]; then
+    echo "Creating kubelet config file at '${NCP_KUBELET_CONFIG_PATH}'"
+    cat <<EOF >"${NCP_KUBELET_CONFIG_PATH}"
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+authentication:
+  x509:
+    clientCAFile: /run/gke-ncp/artifacts/kubelet-client-ca-bundle.crt
+tlsCertFile: /run/gke-ncp/artifacts/kubelet-server.crt
+tlsPrivateKeyFile: /run/gke-ncp/artifacts/kubelet-cert-key.pem
+EOF
+  fi
+
   # For clusters before 1.35, POD_SYSCTLS is set in function configure-node-sysctls.
   # For clusters after 1.35, POD_SYSCTLS is written to /tmp/pod-sysctls inside gke-node-internal-config installable container
   local kubelet_opts="${KUBELET_ARGS} ${KUBELET_CONFIG_FILE_ARG:-} --pod-sysctls='${POD_SYSCTLS:-}' ${kubelet_image_service_endpoint:-}"
