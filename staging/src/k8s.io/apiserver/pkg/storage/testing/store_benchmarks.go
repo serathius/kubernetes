@@ -18,21 +18,29 @@ package testing
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"sigs.k8s.io/yaml"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/apiserver/pkg/apis/example"
 	"k8s.io/apiserver/pkg/endpoints/request"
 	"k8s.io/apiserver/pkg/storage"
 )
+
+//go:embed testdata/exemplar_pod.yaml
+var exemplarPodYAML []byte
+
 
 type scope string
 
@@ -43,10 +51,12 @@ var (
 )
 
 func RunBenchmarkStoreCreateDelete(ctx context.Context, b *testing.B, store storage.Interface) {
+	exemplar := loadExemplarPod(b)
 	pods := make([]*example.Pod, 0, b.N)
 	for i := 0; i < b.N; i++ {
-		name := rand.String(100)
-		pods = append(pods, &example.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: name}})
+		p := exemplar.DeepCopy()
+		randomizePod(p, "ns")
+		pods = append(pods, p)
 	}
 	b.ResetTimer()
 	rv := ""
@@ -80,6 +90,22 @@ func RunBenchmarkStoreCreateDelete(ctx context.Context, b *testing.B, store stor
 	}
 	delaySeconds := float64(time.Since(start).Nanoseconds()) / float64(time.Second.Nanoseconds())
 	b.ReportMetric(delaySeconds, "s-delay")
+}
+
+func loadExemplarPod(b *testing.B) *example.Pod {
+	var pod example.Pod
+	if err := yaml.Unmarshal(exemplarPodYAML, &pod); err != nil {
+		b.Fatalf("decode exemplar pod: %v", err)
+	}
+	return &pod
+}
+
+func randomizePod(pod *example.Pod, ns string) {
+	pod.Namespace = ns
+	pod.Name = pod.GenerateName + rand.String(10)
+	pod.UID = types.UID(rand.String(36))
+	pod.ResourceVersion = ""
+	pod.Spec.NodeName = "some-node-prefix-" + rand.String(6)
 }
 
 func RunBenchmarkStoreList(ctx context.Context, b *testing.B, store storage.Interface, data BenchmarkData, useIndex bool) {
