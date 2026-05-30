@@ -725,7 +725,7 @@ func (c *createWrapper) Create(ctx context.Context, key string, obj, out runtime
 	})
 }
 
-func BenchmarkStoreListCreate(b *testing.B) {
+func BenchmarkStoreCreateDelete(b *testing.B) {
 	klog.SetLogger(logr.Discard())
 	for _, useIndex := range []bool{true, false} {
 		b.Run(fmt.Sprintf("Indexed=%v", useIndex), func(b *testing.B) {
@@ -735,7 +735,7 @@ func BenchmarkStoreListCreate(b *testing.B) {
 			}
 			ctx, cacher, _, terminate := testSetupWithEtcdServer(b, opts...)
 			b.Cleanup(terminate)
-			storagetesting.RunBenchmarkStoreCreateDelete(ctx, b, cacher, rvm)
+			storagetesting.RunBenchmarkStoreCreateDelete(ctx, b, cacher, 1000)
 		})
 	}
 }
@@ -766,7 +766,7 @@ func BenchmarkStoreList(b *testing.B) {
 	}
 	for _, dims := range dimensions {
 		b.Run(fmt.Sprintf("Namespaces=%d/Pods=%d/Nodes=%d", dims.namespaceCount, dims.namespaceCount*dims.podPerNamespaceCount, dims.nodeCount), func(b *testing.B) {
-			data := storagetesting.PrepareBenchchmarkData(dims.namespaceCount, dims.podPerNamespaceCount, dims.nodeCount)
+			data := storagetesting.PrepareBenchmarkData(dims.namespaceCount, dims.podPerNamespaceCount, dims.nodeCount)
 			ctx, cacher, _, terminate := testSetupWithEtcdServer(b, withNodeNameAndNamespaceIndex)
 			b.Cleanup(terminate)
 			var out example.Pod
@@ -787,7 +787,7 @@ func BenchmarkStoreList(b *testing.B) {
 
 func BenchmarkStoreStats(b *testing.B) {
 	klog.SetLogger(logr.Discard())
-	data := storagetesting.PrepareBenchchmarkData(50, 3_000, 5_000)
+	data := storagetesting.PrepareBenchmarkData(50, 3_000, 5_000)
 	ctx, cacher, _, terminate := testSetupWithEtcdServer(b)
 	b.Cleanup(terminate)
 	var out example.Pod

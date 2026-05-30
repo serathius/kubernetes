@@ -50,14 +50,9 @@ var (
 	namespace scope = "Namespace"
 )
 
-func RunBenchmarkStoreCreateDelete(ctx context.Context, b *testing.B, store storage.Interface) {
-	exemplar := loadExemplarPod(b)
-	pods := make([]*example.Pod, 0, b.N)
-	for i := 0; i < b.N; i++ {
-		p := exemplar.DeepCopy()
-		randomizePod(p, "ns")
-		pods = append(pods, p)
-	}
+func RunBenchmarkStoreCreateDelete(ctx context.Context, b *testing.B, store storage.Interface, podCount int) {
+	data := PrepareBenchmarkData(1, podCount, 1)
+	pods := data.Pods
 	b.ResetTimer()
 	rv := ""
 	for i := 0; i < b.N; i++ {
@@ -68,10 +63,10 @@ func RunBenchmarkStoreCreateDelete(ctx context.Context, b *testing.B, store stor
 			panic(fmt.Sprintf("Unexpected error %s", err))
 		}
 		rv = podOut.ResourceVersion
-		// err = store.Delete(ctx, computePodKey(pod), podOut, &metav1.DeleteOptions{Preconditions: &metav1.Preconditions{ResourceVersion: &rv}})
-		// if err != nil {
-		// 	panic(fmt.Sprintf("Unexpected error %s", err))
-		// }
+		err = store.Delete(ctx, computePodKey(pod), podOut, &storage.Preconditions{ResourceVersion: &rv}, storage.ValidateAllObjectFunc, nil, storage.DeleteOptions{})
+		if err != nil {
+			panic(fmt.Sprintf("Unexpected error %s", err))
+		}
 	}
 	start := time.Now()
 	listOut := &example.PodList{}
@@ -231,7 +226,15 @@ func podAttr(obj runtime.Object) (labels.Set, fields.Set, error) {
 	}, nil
 }
 
-func PrepareBenchchmarkData(namespaceCount, podPerNamespaceCount, nodeCount int) (data BenchmarkData) {
+func PrepareBenchmarkData(namespaceCount, podPerNamespaceCount, nodeCount int) (data BenchmarkData) {
+	exemplar := &example.Pod{}
+	if len(exemplarPodYAML) == 0 {
+		panic("exemplar pod empty")
+	}
+	if err := yaml.Unmarshal(exemplarPodYAML, exemplar); err != nil {
+		panic(fmt.Sprintf("decode exemplar pod: %v", err))
+	}
+
 	data.NodeNames = make([]string, nodeCount)
 	for i := 0; i < nodeCount; i++ {
 		data.NodeNames[i] = rand.String(10)
@@ -241,8 +244,13 @@ func PrepareBenchchmarkData(namespaceCount, podPerNamespaceCount, nodeCount int)
 		namespace := rand.String(10)
 		data.NamespaceNames[i] = namespace
 		for j := 0; j < podPerNamespaceCount; j++ {
-			name := rand.String(10)
-			data.Pods = append(data.Pods, &example.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name}, Spec: example.PodSpec{NodeName: data.NodeNames[rand.Intn(nodeCount)]}})
+			p := exemplar.DeepCopy()
+			p.Namespace = namespace
+			p.Name = p.GenerateName + rand.String(10)
+			p.UID = types.UID(rand.String(36))
+			p.ResourceVersion = ""
+			p.Spec.NodeName = data.NodeNames[rand.Intn(nodeCount)]
+			data.Pods = append(data.Pods, p)
 		}
 	}
 	return data
