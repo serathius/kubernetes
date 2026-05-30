@@ -29,6 +29,7 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/kubernetes"
 	"go.etcd.io/etcd/server/v3/embed"
+	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest"
 	"google.golang.org/grpc"
@@ -75,7 +76,7 @@ func NewTestConfig(t testing.TB) *embed.Config {
 	cfg.AdvertiseClientUrls = []url.URL{clientURL}
 	cfg.InitialCluster = cfg.InitialClusterFromName(cfg.Name)
 
-	cfg.ZapLoggerBuilder = embed.NewZapLoggerBuilder(zaptest.NewLogger(t, zaptest.Level(zapcore.ErrorLevel)).Named("etcd-server"))
+	cfg.ZapLoggerBuilder = embed.NewZapLoggerBuilder(zaptest.NewLogger(t, zaptest.Level(zapcore.FatalLevel)).Named("etcd-server"))
 	cfg.Dir = t.TempDir()
 	os.Chmod(cfg.Dir, 0700)
 	return cfg
@@ -125,7 +126,7 @@ func RunEtcd(t testing.TB, cfg *embed.Config) *kubernetes.Client {
 		Endpoints:   e.Server.Cluster().ClientURLs(),
 		DialTimeout: 10 * time.Second,
 		DialOptions: []grpc.DialOption{grpc.WithBlock()},
-		Logger:      zaptest.NewLogger(t, zaptest.Level(zapcore.ErrorLevel)).Named("etcd-client"),
+		Logger:      zap.NewNop(),
 	})
 	if err != nil {
 		t.Fatal(err)

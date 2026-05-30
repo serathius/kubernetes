@@ -725,21 +725,17 @@ func (c *createWrapper) Create(ctx context.Context, key string, obj, out runtime
 	})
 }
 
-func BenchmarkStoreCreateList(b *testing.B) {
+func BenchmarkStoreListCreate(b *testing.B) {
 	klog.SetLogger(logr.Discard())
-	for _, rvm := range []metav1.ResourceVersionMatch{metav1.ResourceVersionMatchNotOlderThan, metav1.ResourceVersionMatchExact} {
-		b.Run(fmt.Sprintf("RV=%s", rvm), func(b *testing.B) {
-			for _, useIndex := range []bool{true, false} {
-				b.Run(fmt.Sprintf("Indexed=%v", useIndex), func(b *testing.B) {
-					opts := []setupOption{}
-					if useIndex {
-						opts = append(opts, withNodeNameAndNamespaceIndex)
-					}
-					ctx, cacher, _, terminate := testSetupWithEtcdServer(b, opts...)
-					b.Cleanup(terminate)
-					storagetesting.RunBenchmarkStoreListCreate(ctx, b, cacher, rvm)
-				})
+	for _, useIndex := range []bool{true, false} {
+		b.Run(fmt.Sprintf("Indexed=%v", useIndex), func(b *testing.B) {
+			opts := []setupOption{}
+			if useIndex {
+				opts = append(opts, withNodeNameAndNamespaceIndex)
 			}
+			ctx, cacher, _, terminate := testSetupWithEtcdServer(b, opts...)
+			b.Cleanup(terminate)
+			storagetesting.RunBenchmarkStoreCreateDelete(ctx, b, cacher, rvm)
 		})
 	}
 }

@@ -22,6 +22,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
@@ -41,41 +42,44 @@ var (
 	namespace scope = "Namespace"
 )
 
-func RunBenchmarkStoreListCreate(ctx context.Context, b *testing.B, store storage.Interface, match metav1.ResourceVersionMatch) {
-	objectCount := atomic.Uint64{}
+func RunBenchmarkStoreCreateDelete(ctx context.Context, b *testing.B, store storage.Interface) {
 	pods := make([]*example.Pod, 0, b.N)
 	for i := 0; i < b.N; i++ {
 		name := rand.String(100)
 		pods = append(pods, &example.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: name}})
 	}
 	b.ResetTimer()
+	rv := ""
 	for i := 0; i < b.N; i++ {
-		pod := pods[i]
+		pod := pods[i%len(pods)]
 		podOut := &example.Pod{}
 		err := store.Create(ctx, computePodKey(pod), pod, podOut, 0)
 		if err != nil {
 			panic(fmt.Sprintf("Unexpected error %s", err))
 		}
-		listOut := &example.PodList{}
-		err = store.GetList(ctx, "/pods/", storage.ListOptions{
-			Recursive:            true,
-			ResourceVersion:      podOut.ResourceVersion,
-			ResourceVersionMatch: match,
-			Predicate: storage.SelectionPredicate{
-				Label: labels.Everything(),
-				Field: fields.Everything(),
-				Limit: 1,
-			},
-		}, listOut)
-		if err != nil {
-			panic(fmt.Sprintf("Unexpected error %s", err))
-		}
-		if len(listOut.Items) != 1 {
-			b.Errorf("Expected to get 1 element, got %d", len(listOut.Items))
-		}
-		objectCount.Add(uint64(len(listOut.Items)))
+		rv = podOut.ResourceVersion
+		// err = store.Delete(ctx, computePodKey(pod), podOut, &metav1.DeleteOptions{Preconditions: &metav1.Preconditions{ResourceVersion: &rv}})
+		// if err != nil {
+		// 	panic(fmt.Sprintf("Unexpected error %s", err))
+		// }
 	}
-	b.ReportMetric(float64(objectCount.Load())/float64(b.N), "objects/op")
+	start := time.Now()
+	listOut := &example.PodList{}
+	err := store.GetList(ctx, "/pods/", storage.ListOptions{
+		Recursive:            true,
+		ResourceVersion:      rv,
+		ResourceVersionMatch: metav1.ResourceVersionMatchNotOlderThan,
+		Predicate: storage.SelectionPredicate{
+			Label: labels.Everything(),
+			Field: fields.Everything(),
+			Limit: 1,
+		},
+	}, listOut)
+	if err != nil {
+		panic(fmt.Sprintf("Unexpected error %s", err))
+	}
+	delaySeconds := float64(time.Since(start).Nanoseconds()) / float64(time.Second.Nanoseconds())
+	b.ReportMetric(delaySeconds, "s-delay")
 }
 
 func RunBenchmarkStoreList(ctx context.Context, b *testing.B, store storage.Interface, data BenchmarkData, useIndex bool) {

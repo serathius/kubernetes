@@ -1026,13 +1026,9 @@ func BenchmarkStore_GetList(b *testing.B) {
 
 func BenchmarkStoreListCreate(b *testing.B) {
 	klog.SetLogger(logr.Discard())
-	b.Run("RV=NotOlderThan", func(b *testing.B) {
+	b.Run("Indexed=false", func(b *testing.B) {
 		ctx, store, _ := testSetup(b)
-		storagetesting.RunBenchmarkStoreListCreate(ctx, b, store, metav1.ResourceVersionMatchNotOlderThan)
-	})
-	b.Run("RV=ExactMatch", func(b *testing.B) {
-		ctx, store, _ := testSetup(b)
-		storagetesting.RunBenchmarkStoreListCreate(ctx, b, store, metav1.ResourceVersionMatchExact)
+		storagetesting.RunBenchmarkStoreCreateDelete(ctx, b, store)
 	})
 }
 
