@@ -87,23 +87,23 @@ func RunBenchmarkStoreCreateDelete(ctx context.Context, b *testing.B, store stor
 	b.ReportMetric(delaySeconds, "s-delay")
 }
 
-func loadExemplarPod(b *testing.B) *example.Pod {
+func loadExemplarPod() *example.Pod {
 	var pod example.Pod
 	if len(exemplarPodYAML) == 0 {
-		b.Fatal("exemplar pod empty")
+		panic("exemplar pod empty")
 	}
 	if err := yaml.Unmarshal(exemplarPodYAML, &pod); err != nil {
-		b.Fatalf("decode exemplar pod: %v", err)
+		panic(fmt.Sprintf("decode exemplar pod: %v", err))
 	}
 	return &pod
 }
 
-func randomizePod(pod *example.Pod, ns string) {
+func randomizePod(pod *example.Pod, ns string, nodeName string) {
 	pod.Namespace = ns
 	pod.Name = pod.GenerateName + rand.String(10)
 	pod.UID = types.UID(rand.String(36))
 	pod.ResourceVersion = ""
-	pod.Spec.NodeName = "some-node-prefix-" + rand.String(6)
+	pod.Spec.NodeName = nodeName
 }
 
 func RunBenchmarkStoreList(ctx context.Context, b *testing.B, store storage.Interface, data BenchmarkData, useIndex bool) {
@@ -227,13 +227,7 @@ func podAttr(obj runtime.Object) (labels.Set, fields.Set, error) {
 }
 
 func PrepareBenchmarkData(namespaceCount, podPerNamespaceCount, nodeCount int) (data BenchmarkData) {
-	exemplar := &example.Pod{}
-	if len(exemplarPodYAML) == 0 {
-		panic("exemplar pod empty")
-	}
-	if err := yaml.Unmarshal(exemplarPodYAML, exemplar); err != nil {
-		panic(fmt.Sprintf("decode exemplar pod: %v", err))
-	}
+	exemplar := loadExemplarPod()
 
 	data.NodeNames = make([]string, nodeCount)
 	for i := 0; i < nodeCount; i++ {
@@ -245,11 +239,7 @@ func PrepareBenchmarkData(namespaceCount, podPerNamespaceCount, nodeCount int) (
 		data.NamespaceNames[i] = namespace
 		for j := 0; j < podPerNamespaceCount; j++ {
 			p := exemplar.DeepCopy()
-			p.Namespace = namespace
-			p.Name = p.GenerateName + rand.String(10)
-			p.UID = types.UID(rand.String(36))
-			p.ResourceVersion = ""
-			p.Spec.NodeName = data.NodeNames[rand.Intn(nodeCount)]
+			randomizePod(p, namespace, data.NodeNames[rand.Intn(nodeCount)])
 			data.Pods = append(data.Pods, p)
 		}
 	}
