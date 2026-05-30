@@ -724,18 +724,40 @@ func (c *createWrapper) Create(ctx context.Context, key string, obj, out runtime
 		return true, nil
 	})
 }
-
 func BenchmarkStoreCreateDelete(b *testing.B) {
 	klog.SetLogger(logr.Discard())
+	dimensions := []struct {
+		namespaceCount       int
+		podPerNamespaceCount int
+	}{
+		{
+			namespaceCount:       10_000,
+			podPerNamespaceCount: 15,
+		},
+		{
+			namespaceCount:       50,
+			podPerNamespaceCount: 3_000,
+		},
+		{
+			namespaceCount:       100,
+			podPerNamespaceCount: 1_100,
+		},
+	}
 	for _, useIndex := range []bool{true, false} {
 		b.Run(fmt.Sprintf("Indexed=%v", useIndex), func(b *testing.B) {
-			opts := []setupOption{}
-			if useIndex {
-				opts = append(opts, withNodeNameAndNamespaceIndex)
+			for _, dims := range dimensions {
+			b.Run(fmt.Sprintf("Namespaces=%d/Pods=%d", dims.namespaceCount, dims.namespaceCount*dims.podPerNamespaceCount), func(b *testing.B) {
+					opts := []setupOption{}
+					if useIndex {
+						opts = append(opts, withNodeNameAndNamespaceIndex)
+					}
+					ctx, cacher, _, terminate := testSetupWithEtcdServer(b, opts...)
+					b.Cleanup(terminate)
+					data := storagetesting.PrepareBenchmarkData(dims.namespaceCount, dims.podPerNamespaceCount, 1)
+					b.ResetTimer()
+					storagetesting.RunBenchmarkStoreCreateDelete(ctx, b, cacher, data)
+				})
 			}
-			ctx, cacher, _, terminate := testSetupWithEtcdServer(b, opts...)
-			b.Cleanup(terminate)
-			storagetesting.RunBenchmarkStoreCreateDelete(ctx, b, cacher, 1000)
 		})
 	}
 }

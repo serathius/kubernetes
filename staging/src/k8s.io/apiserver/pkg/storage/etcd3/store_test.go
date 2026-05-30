@@ -1026,10 +1026,32 @@ func BenchmarkStore_GetList(b *testing.B) {
 
 func BenchmarkStoreCreateDelete(b *testing.B) {
 	klog.SetLogger(logr.Discard())
-	
 	b.Run("Indexed=false", func(b *testing.B) {
-		ctx, store, _ := testSetup(b)
-		storagetesting.RunBenchmarkStoreCreateDelete(ctx, b, store, 1000)
+		dimensions := []struct {
+			namespaceCount       int
+			podPerNamespaceCount int
+		}{
+			{
+				namespaceCount:       10_000,
+				podPerNamespaceCount: 15,
+			},
+			{
+				namespaceCount:       50,
+				podPerNamespaceCount: 3_000,
+			},
+			{
+				namespaceCount:       100,
+				podPerNamespaceCount: 1_100,
+			},
+		}
+		for _, dims := range dimensions {
+			b.Run(fmt.Sprintf("Namespaces=%d/Pods=%d", dims.namespaceCount, dims.namespaceCount*dims.podPerNamespaceCount), func(b *testing.B) {
+			ctx, store, _ := testSetup(b)
+				data := storagetesting.PrepareBenchmarkData(dims.namespaceCount, dims.podPerNamespaceCount, 1)
+				b.ResetTimer()
+				storagetesting.RunBenchmarkStoreCreateDelete(ctx, b, store, data)
+			})
+		}
 	})
 }
 

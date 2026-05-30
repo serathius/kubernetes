@@ -50,8 +50,7 @@ var (
 	namespace scope = "Namespace"
 )
 
-func RunBenchmarkStoreCreateDelete(ctx context.Context, b *testing.B, store storage.Interface, podCount int) {
-	data := PrepareBenchmarkData(1, podCount, 1)
+func RunBenchmarkStoreCreateDelete(ctx context.Context, b *testing.B, store storage.Interface, data BenchmarkData) {
 	pods := data.Pods
 	b.ResetTimer()
 	rv := ""
