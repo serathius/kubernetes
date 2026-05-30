@@ -20,6 +20,7 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -53,25 +54,49 @@ var (
 func RunBenchmarkStoreCreateDelete(ctx context.Context, b *testing.B, store storage.Interface, data BenchmarkData) {
 	pods := data.Pods
 	b.ResetTimer()
-	rv := ""
-	for i := 0; i < b.N; i++ {
-		pod := pods[i%len(pods)]
+	var maxRV atomic.Uint64
+	var index atomic.Uint64
+
+	b.RunParallel(func(pb *testing.PB) {
 		podOut := &example.Pod{}
-		err := store.Create(ctx, computePodKey(pod), pod, podOut, 0)
-		if err != nil {
-			panic(fmt.Sprintf("Unexpected error %s", err))
+		for pb.Next() {
+			i := index.Add(1)
+			pod := pods[i%uint64(len(pods))].DeepCopy()
+			pod.Name = fmt.Sprintf("%s-%d", pod.Name, i)
+			key := computePodKey(pod)
+
+			err := store.Create(ctx, key, pod, podOut, 0)
+			if err != nil {
+				panic(fmt.Sprintf("Unexpected error %s", err))
+			}
+			if rv, err := strconv.ParseUint(podOut.ResourceVersion, 10, 64); err == nil {
+				for {
+					curr := maxRV.Load()
+					if rv <= curr {
+						break
+					}
+					if maxRV.CompareAndSwap(curr, rv) {
+						break
+					}
+				}
+			}
+			rv := podOut.ResourceVersion
+			err = store.Delete(ctx, key, podOut, &storage.Preconditions{ResourceVersion: &rv}, storage.ValidateAllObjectFunc, nil, storage.DeleteOptions{})
+			if err != nil {
+				panic(fmt.Sprintf("Unexpected error %s", err))
+			}
 		}
-		rv = podOut.ResourceVersion
-		err = store.Delete(ctx, computePodKey(pod), podOut, &storage.Preconditions{ResourceVersion: &rv}, storage.ValidateAllObjectFunc, nil, storage.DeleteOptions{})
-		if err != nil {
-			panic(fmt.Sprintf("Unexpected error %s", err))
-		}
-	}
+	})
+
 	start := time.Now()
 	listOut := &example.PodList{}
+	rvStr := ""
+	if rv := maxRV.Load(); rv > 0 {
+		rvStr = strconv.FormatUint(rv, 10)
+	}
 	err := store.GetList(ctx, "/pods/", storage.ListOptions{
 		Recursive:            true,
-		ResourceVersion:      rv,
+		ResourceVersion:      rvStr,
 		ResourceVersionMatch: metav1.ResourceVersionMatchNotOlderThan,
 		Predicate: storage.SelectionPredicate{
 			Label: labels.Everything(),
