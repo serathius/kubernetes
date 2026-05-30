@@ -94,6 +94,9 @@ func RunBenchmarkStoreCreateDelete(ctx context.Context, b *testing.B, store stor
 
 func loadExemplarPod(b *testing.B) *example.Pod {
 	var pod example.Pod
+	if len(exemplarPodYAML) == 0 {
+		b.Fatal("exemplar pod empty")
+	}
 	if err := yaml.Unmarshal(exemplarPodYAML, &pod); err != nil {
 		b.Fatalf("decode exemplar pod: %v", err)
 	}
