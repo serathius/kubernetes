@@ -88,6 +88,9 @@ function start-kube-apiserver {
     if [[ -n "${OLD_PRIVATE_VIP:-}" ]]; then
       old_ips+=",${OLD_PRIVATE_VIP}"
     fi
+    if [[ -n "${OLD_PSC_PRIVATE_NODE_NETWORK_ADDRESS_IP}" ]]; then
+      old_ips+=",${OLD_PSC_PRIVATE_NODE_NETWORK_ADDRESS_IP}"
+    fi
     params+=" --tls-sni-cert-key=${OLD_MASTER_CERT_PATH},${OLD_MASTER_KEY_PATH}:${old_ips}"
   fi
   if [[ -n "${TLS_CIPHER_SUITES:-}" ]]; then
