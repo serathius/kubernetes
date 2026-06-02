@@ -624,18 +624,27 @@ func (c *Cacher) Watch(ctx context.Context, key string, opts storage.ListOptions
 	// Note that we cannot do it under Cacher lock, to avoid a deadlock, since the
 	// underlying watchCache is calling processEvent under its lock.
 	c.watchCache.RLock()
-	defer c.watchCache.RUnlock()
-
-	var cacheInterval *watchCacheInterval
-	cacheInterval, err = c.watchCache.getAllEventsSinceLocked(requiredResourceVersion, key, opts)
+	bookmarkAfterResourceVersion := bookmarkAfterResourceVersionFn()
+	cacheInterval, clonedStore, capturedRV, matchesSingle, err := c.watchCache.getAllEventsSinceLocked(requiredResourceVersion, key, opts)
 	if err != nil {
+		c.watchCache.RUnlock()
 		// To match the uncached watch implementation, once we have passed authn/authz/admission,
 		// and successfully parsed a resource version, other errors must fail with a watch event of type ERROR,
 		// rather than a directly returned error.
 		return newErrWatcher(err), nil
 	}
 
-	c.setInitialEventsEndBookmarkIfRequested(cacheInterval, opts, c.watchCache.resourceVersion)
+	if clonedStore != nil {
+		c.watchCache.RUnlock()
+		cacheInterval, err = newCacheIntervalFromStore(capturedRV, clonedStore, key, matchesSingle)
+		if err != nil {
+			return newErrWatcher(err), nil
+		}
+		c.setInitialEventsEndBookmarkIfRequested(cacheInterval, opts, capturedRV)
+	} else {
+		c.setInitialEventsEndBookmarkIfRequested(cacheInterval, opts, c.watchCache.resourceVersion)
+		c.watchCache.RUnlock()
+	}
 
 	addedWatcher := false
 	func() {
@@ -652,7 +661,7 @@ func (c *Cacher) Watch(ctx context.Context, key string, opts storage.ListOptions
 		// Update watcher.forget function once we can compute it.
 		watcher.forget = forgetWatcher(c, watcher, c.watcherIdx, scope, triggerValue, triggerSupported)
 		// Update the bookMarkAfterResourceVersion
-		watcher.setBookmarkAfterResourceVersion(bookmarkAfterResourceVersionFn())
+		watcher.setBookmarkAfterResourceVersion(bookmarkAfterResourceVersion)
 		c.watchers.addWatcher(watcher, c.watcherIdx, scope, triggerValue, triggerSupported)
 		addedWatcher = true
 

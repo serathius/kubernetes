@@ -108,9 +108,17 @@ func (w *testWatchCache) getAllEventsSince(resourceVersion uint64, opts storage.
 
 func (w *testWatchCache) getCacheIntervalForEvents(resourceVersion uint64, opts storage.ListOptions) (*watchCacheInterval, error) {
 	w.RLock()
-	defer w.RUnlock()
-
-	return w.getAllEventsSinceLocked(resourceVersion, "", opts)
+	cacheInterval, clonedStore, capturedRV, matchesSingle, err := w.getAllEventsSinceLocked(resourceVersion, "", opts)
+	if err != nil {
+		w.RUnlock()
+		return nil, err
+	}
+	if clonedStore == nil {
+		w.RUnlock()
+		return cacheInterval, nil
+	}
+	w.RUnlock()
+	return newCacheIntervalFromStore(capturedRV, clonedStore, "", matchesSingle)
 }
 
 // newTestWatchCache just adds a fake clock.

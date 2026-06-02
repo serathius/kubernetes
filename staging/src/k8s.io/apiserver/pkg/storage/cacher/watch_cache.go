@@ -910,11 +910,24 @@ func (w *watchCache) isIndexValidLocked(index int) bool {
 // getAllEventsSinceLocked returns a watchCacheInterval that can be used to
 // retrieve events since a certain resourceVersion. This function assumes to
 // be called under the watchCache lock.
-func (w *watchCache) getAllEventsSinceLocked(resourceVersion uint64, key string, opts storage.ListOptions) (*watchCacheInterval, error) {
+// If a cloned store is returned (clonedStore != nil), it indicates that the
+// caller should call newCacheIntervalFromStore outside of the lock using the
+// returned captured resource version and matchesSingle.
+func (w *watchCache) getAllEventsSinceLocked(resourceVersion uint64, key string, opts storage.ListOptions) (
+	*watchCacheInterval,
+	storeIndexReader,
+	uint64,
+	bool,
+	error,
+) {
 	_, matchesSingle := opts.Predicate.MatchesSingle()
 	matchesSingle = matchesSingle && !opts.Recursive
 	if opts.SendInitialEvents != nil && *opts.SendInitialEvents {
-		return w.getIntervalFromStoreLocked(key, matchesSingle)
+		if orderedLister, ok := w.store.(store.OrderedLister); ok {
+			return nil, orderedLister.Clone().(storeIndexReader), w.resourceVersion, matchesSingle, nil
+		}
+		ci, err := w.getIntervalFromStoreLocked(key, matchesSingle)
+		return ci, nil, 0, matchesSingle, err
 	}
 
 	size := w.endIndex - w.startIndex
@@ -932,7 +945,7 @@ func (w *watchCache) getAllEventsSinceLocked(resourceVersion uint64, key string,
 		// one in the buffer.
 		oldest = w.cache[w.startIndex%w.capacity].ResourceVersion
 	default:
-		return nil, fmt.Errorf("watch cache isn't correctly initialized")
+		return nil, nil, 0, false, fmt.Errorf("watch cache isn't correctly initialized")
 	}
 
 	if resourceVersion == 0 {
@@ -943,7 +956,11 @@ func (w *watchCache) getAllEventsSinceLocked(resourceVersion uint64, key string,
 			// current state and only then start watching from that point.
 			//
 			// TODO: In v2 api, we should stop returning the current state - #13969.
-			return w.getIntervalFromStoreLocked(key, matchesSingle)
+			if orderedLister, ok := w.store.(store.OrderedLister); ok {
+				return nil, orderedLister.Clone().(storeIndexReader), w.resourceVersion, matchesSingle, nil
+			}
+			ci, err := w.getIntervalFromStoreLocked(key, matchesSingle)
+			return ci, nil, 0, matchesSingle, err
 		}
 		// SendInitialEvents = false and resourceVersion = 0
 		// means that the request would like to start watching
@@ -951,7 +968,7 @@ func (w *watchCache) getAllEventsSinceLocked(resourceVersion uint64, key string,
 		resourceVersion = w.resourceVersion
 	}
 	if resourceVersion < oldest-1 {
-		return nil, errors.NewResourceExpired(fmt.Sprintf("too old resource version: %d (%d)", resourceVersion, oldest-1))
+		return nil, nil, 0, false, errors.NewResourceExpired(fmt.Sprintf("too old resource version: %d (%d)", resourceVersion, oldest-1))
 	}
 
 	// Binary search the smallest index at which resourceVersion is greater than the given one.
@@ -963,7 +980,7 @@ func (w *watchCache) getAllEventsSinceLocked(resourceVersion uint64, key string,
 		return w.cache[i%w.capacity]
 	}
 	ci := newCacheInterval(w.startIndex+first, w.endIndex, indexerFunc, w.indexValidator, resourceVersion, w.RWMutex.RLocker())
-	return ci, nil
+	return ci, nil, 0, false, nil
 }
 
 // getIntervalFromStoreLocked returns a watchCacheInterval

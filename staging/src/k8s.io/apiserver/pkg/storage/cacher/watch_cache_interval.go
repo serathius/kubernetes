@@ -133,11 +133,17 @@ func (s sortableWatchCacheEvents) Swap(i, j int) {
 	s[i], s[j] = s[j], s[i]
 }
 
+// storeIndexReader is a minimal reader interface for the underlying store indexer.
+type storeIndexReader interface {
+	List() []interface{}
+	GetByKey(key string) (item interface{}, exists bool, err error)
+}
+
 // newCacheIntervalFromStore is meant to handle the case of rv=0, such that the events
 // returned by Next() need to be events from a List() done on the underlying store of
 // the watch cache.
 // The items returned in the interval will be sorted by Key.
-func newCacheIntervalFromStore(resourceVersion uint64, indexer store.Indexer, key string, matchesSingle bool) (*watchCacheInterval, error) {
+func newCacheIntervalFromStore(resourceVersion uint64, indexer storeIndexReader, key string, matchesSingle bool) (*watchCacheInterval, error) {
 	buffer := &watchCacheIntervalBuffer{}
 	var allItems []interface{}
 	if matchesSingle {
