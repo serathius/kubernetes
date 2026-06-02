@@ -535,6 +535,10 @@ func (c *watchCache) waitUntilFreshAndGetList(ctx context.Context, key string, o
 	return listResp{ResourceVersion: readResourceVersion}, "", nil
 }
 
+type storeKeysReader interface {
+	ListKeys() []string
+}
+
 // WaitUntilFreshAndList returns list of pointers to `storeElement` objects along
 // with their ResourceVersion and the name of the index, if any, that was used.
 func (w *watchCache) WaitUntilFreshAndGetKeys(ctx context.Context, resourceVersion uint64) (keys []string, err error) {
@@ -546,10 +550,17 @@ func (w *watchCache) WaitUntilFreshAndGetKeys(ctx context.Context, resourceVersi
 		err = w.waitUntilFreshAndBlock(ctx, resourceVersion)
 	}
 
-	defer w.RUnlock()
 	if err != nil {
+		w.RUnlock()
 		return nil, err
 	}
+	if orderedLister, ok := w.store.(store.OrderedLister); ok {
+		clonedStore := orderedLister.Clone()
+		w.RUnlock()
+		return clonedStore.(storeKeysReader).ListKeys(), nil
+	}
+
+	defer w.RUnlock()
 	return w.store.ListKeys(), nil
 }
 
