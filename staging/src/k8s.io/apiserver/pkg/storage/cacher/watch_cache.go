@@ -597,15 +597,17 @@ func (w *watchCache) waitAndListExactRV(ctx context.Context, key, continueKey st
 	} else {
 		err = w.waitUntilFreshAndBlock(ctx, resourceVersion)
 	}
-	defer w.RUnlock()
 	if err != nil {
+		w.RUnlock()
 		return listResp{}, "", err
 	}
 
 	if w.snapshots == nil {
+		w.RUnlock()
 		return listResp{}, "", errors.NewResourceExpired(fmt.Sprintf("too old resource version: %d", resourceVersion))
 	}
 	store, ok := w.snapshots.GetLessOrEqual(resourceVersion)
+	w.RUnlock()
 	if !ok {
 		return listResp{}, "", errors.NewResourceExpired(fmt.Sprintf("too old resource version: %d", resourceVersion))
 	}
@@ -632,11 +634,46 @@ func (w *watchCache) waitAndListLatestRV(ctx context.Context, resourceVersion ui
 	} else {
 		err = w.waitUntilFreshAndBlock(ctx, resourceVersion)
 	}
-	defer w.RUnlock()
 	if err != nil {
+		w.RUnlock()
 		return listResp{}, "", err
 	}
-	return w.listLatestRV(key, continueKey, matchValues)
+
+	if len(matchValues) > 0 {
+		var rawResult []interface{}
+		var matchedIndex string
+		var matched bool
+		for _, matchValue := range matchValues {
+			if res, err := w.store.ByIndex(matchValue.IndexName, matchValue.Value); err == nil {
+				rawResult = res
+				matchedIndex = matchValue.IndexName
+				matched = true
+				break
+			}
+		}
+		if matched {
+			currentRV := w.resourceVersion
+			w.RUnlock()
+			result, err := filterPrefixAndOrder(key, rawResult)
+			if err != nil {
+				return listResp{}, "", err
+			}
+			return listResp{
+				Items:           result,
+				ResourceVersion: currentRV,
+			}, matchedIndex, nil
+		}
+	}
+
+	storeClone := w.store.(store.OrderedLister).Clone()
+	currentRV := w.resourceVersion
+	w.RUnlock()
+
+	result := storeClone.ListPrefix(key, continueKey)
+	return listResp{
+		Items:           result,
+		ResourceVersion: currentRV,
+	}, "", nil
 }
 
 func (w *watchCache) listLatestRV(key, continueKey string, matchValues []storage.MatchValue) (resp listResp, index string, err error) {

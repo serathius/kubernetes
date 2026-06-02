@@ -52,8 +52,10 @@ func (si *threadedStoreIndexer) Count(prefix, continueKey string) (count int) {
 }
 
 func (si *threadedStoreIndexer) Clone() OrderedLister {
-	si.lock.RLock()
-	defer si.lock.RUnlock()
+	// BTree.Clone() is not read-only; it mutates the tree's internal copy-on-write context in-place,
+	// requiring a write lock to prevent concurrent data races during cloning.
+	si.lock.Lock()
+	defer si.lock.Unlock()
 	return si.store.Clone()
 }
 

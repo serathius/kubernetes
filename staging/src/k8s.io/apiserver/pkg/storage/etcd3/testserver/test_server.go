@@ -29,6 +29,7 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/kubernetes"
 	"go.etcd.io/etcd/server/v3/embed"
+	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest"
 	storagetesting "k8s.io/apiserver/pkg/storage/testing"
@@ -74,7 +75,7 @@ func NewTestConfig(t testing.TB) *embed.Config {
 	cfg.AdvertiseClientUrls = []url.URL{clientURL}
 	cfg.InitialCluster = cfg.InitialClusterFromName(cfg.Name)
 
-	cfg.ZapLoggerBuilder = embed.NewZapLoggerBuilder(zaptest.NewLogger(t, zaptest.Level(zapcore.ErrorLevel)).Named("etcd-server"))
+	cfg.ZapLoggerBuilder = embed.NewZapLoggerBuilder(zaptest.NewLogger(t, zaptest.Level(zapcore.FatalLevel)).Named("etcd-server"))
 	cfg.Dir = t.TempDir()
 	os.Chmod(cfg.Dir, 0700)
 	return cfg
@@ -94,6 +95,7 @@ func RunEtcd(t testing.TB, cfg *embed.Config) *kubernetes.Client {
 		defer autoPortLock.Unlock()
 		cfg = NewTestConfig(t)
 	}
+	cfg.QuotaBackendBytes = 20 << 30 // 20GB
 
 	e, err := embed.StartEtcd(cfg)
 	if err != nil {
@@ -123,7 +125,7 @@ func RunEtcd(t testing.TB, cfg *embed.Config) *kubernetes.Client {
 		TLS:         tlsConfig,
 		Endpoints:   e.Server.Cluster().ClientURLs(),
 		DialTimeout: 10 * time.Second,
-		Logger:      zaptest.NewLogger(t, zaptest.Level(zapcore.ErrorLevel)).Named("etcd-client"),
+		Logger:      zap.NewNop(),
 	})
 	if err != nil {
 		t.Fatal(err)
