@@ -100,7 +100,7 @@ func (si *threadedStoreIndexer) List() []interface{} {
 	return si.store.List()
 }
 
-func (si *threadedStoreIndexer) OrderedListPrefix(prefix, continueKey string) []interface{} {
+func (si *threadedStoreIndexer) OrderedListPrefix(prefix, continueKey string) ([]interface{}, error) {
 	si.lock.RLock()
 	defer si.lock.RUnlock()
 	return si.store.OrderedListPrefix(prefix, continueKey)
@@ -254,7 +254,7 @@ func (s *btreeStore) getByKey(key string) (item interface{}, exists bool, err er
 	return item, exists, nil
 }
 
-func (s *btreeStore) OrderedListPrefix(prefix, continueKey string) []interface{} {
+func (s *btreeStore) OrderedListPrefix(prefix, continueKey string) ([]interface{}, error) {
 	if continueKey == "" {
 		continueKey = prefix
 	}
@@ -266,7 +266,7 @@ func (s *btreeStore) OrderedListPrefix(prefix, continueKey string) []interface{}
 		result = append(result, item)
 		return true
 	})
-	return result
+	return result, nil
 }
 
 func (s *btreeStore) Count(prefix, continueKey string) (count int) {

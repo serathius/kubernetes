@@ -77,7 +77,7 @@ type Indexer interface {
 }
 
 type Snapshot interface {
-	OrderedListPrefix(prefix, continueKey string) []interface{}
+	OrderedListPrefix(prefix, continueKey string) ([]interface{}, error)
 	Clone() Snapshot
 }
 

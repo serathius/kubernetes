@@ -607,11 +607,11 @@ func (w *watchCache) waitAndListExactRV(ctx context.Context, key, continueKey st
 	if !ok {
 		return listResp{}, "", errors.NewResourceExpired(fmt.Sprintf("too old resource version: %d", resourceVersion))
 	}
-	items := store.OrderedListPrefix(key, continueKey)
+	items, err := store.OrderedListPrefix(key, continueKey)
 	return listResp{
 		Items:           items,
 		ResourceVersion: resourceVersion,
-	}, "", nil
+	}, "", err
 }
 
 func (w *watchCache) waitAndListConsistent(ctx context.Context, key, continueKey string, matchValues []storage.MatchValue) (resp listResp, index string, err error) {
@@ -651,11 +651,11 @@ func (w *watchCache) listLatestRV(key, continueKey string, matchValues []storage
 			}, matchValue.IndexName, err
 		}
 	}
-	result := w.store.OrderedListPrefix(key, continueKey)
+	result, err := w.store.OrderedListPrefix(key, continueKey)
 	return listResp{
 		Items:           result,
 		ResourceVersion: w.resourceVersion,
-	}, "", nil
+	}, "", err
 }
 
 func filterPrefixAndOrder(prefix string, items []interface{}) ([]interface{}, error) {
