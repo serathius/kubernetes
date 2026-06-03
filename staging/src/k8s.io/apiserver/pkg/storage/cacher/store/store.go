@@ -58,9 +58,9 @@ const (
 	btreeDegree = 16
 )
 
-type OrderedIndexer interface {
+type SnapshottableIndexer interface {
 	Indexer
-	OrderedLister
+	Snapshot
 }
 
 type Indexer interface {
@@ -75,10 +75,10 @@ type Indexer interface {
 	ByIndex(indexName, indexedValue string) ([]interface{}, error)
 }
 
-type OrderedLister interface {
-	ListPrefix(prefix, continueKey string) []interface{}
+type Snapshot interface {
+	OrderedListPrefix(prefix, continueKey string) []interface{}
 	Count(prefix, continueKey string) (count int)
-	Clone() OrderedLister
+	Clone() Snapshot
 }
 
 func NewIndexer(indexers *cache.Indexers) *threadedStoreIndexer {

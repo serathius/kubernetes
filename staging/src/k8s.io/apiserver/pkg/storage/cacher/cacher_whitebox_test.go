@@ -571,7 +571,7 @@ func TestMatchExactResourceVersionFallback(t *testing.T) {
 			snapshotRequestCount := 0
 			cacher.watchCache.RWMutex.Lock()
 			cacher.watchCache.snapshots = &fakeSnapshotter{
-				getLessOrEqual: func(rv uint64) (store.OrderedLister, bool) {
+				getLessOrEqual: func(rv uint64) (store.Snapshot, bool) {
 					snapshotAvailable := tc.snapshotsAvailable[snapshotRequestCount]
 					snapshotRequestCount++
 					if snapshotAvailable {
@@ -3154,26 +3154,26 @@ type fakeOrderedLister struct {
 func (f fakeOrderedLister) Add(obj interface{}) error    { return nil }
 func (f fakeOrderedLister) Update(obj interface{}) error { return nil }
 func (f fakeOrderedLister) Delete(obj interface{}) error { return nil }
-func (f fakeOrderedLister) Clone() store.OrderedLister   { return f }
-func (f fakeOrderedLister) ListPrefix(prefixKey, continueKey string) []interface{} {
+func (f fakeOrderedLister) Clone() store.Snapshot   { return f }
+func (f fakeOrderedLister) OrderedListPrefix(prefixKey, continueKey string) []interface{} {
 	return nil
 }
 func (f fakeOrderedLister) Count(prefixKey, continueKey string) int { return 0 }
 
 type fakeSnapshotter struct {
-	getLessOrEqual func(rv uint64) (store.OrderedLister, bool)
+	getLessOrEqual func(rv uint64) (store.Snapshot, bool)
 }
 
 var _ store.Snapshotter = (*fakeSnapshotter)(nil)
 
 func (f *fakeSnapshotter) Reset() {}
-func (f *fakeSnapshotter) GetLessOrEqual(rv uint64) (store.OrderedLister, bool) {
+func (f *fakeSnapshotter) GetLessOrEqual(rv uint64) (store.Snapshot, bool) {
 	if f.getLessOrEqual == nil {
 		return nil, false
 	}
 	return f.getLessOrEqual(rv)
 }
-func (f *fakeSnapshotter) Add(rv uint64, indexer store.OrderedLister) {}
+func (f *fakeSnapshotter) Add(rv uint64, indexer store.Snapshot) {}
 func (f *fakeSnapshotter) RemoveLess(rv uint64)                       {}
 func (f *fakeSnapshotter) Len() int {
 	return 0

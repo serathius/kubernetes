@@ -122,7 +122,7 @@ type watchCache struct {
 	// history" i.e. from the moment just after the newest cached watched event.
 	// It is necessary to effectively allow clients to start watching at now.
 	// NOTE: We assume that <store> is thread-safe.
-	store store.OrderedIndexer
+	store store.SnapshottableIndexer
 
 	// ResourceVersion up to which the watchCache is propagated.
 	resourceVersion uint64
@@ -607,7 +607,7 @@ func (w *watchCache) waitAndListExactRV(ctx context.Context, key, continueKey st
 	if !ok {
 		return listResp{}, "", errors.NewResourceExpired(fmt.Sprintf("too old resource version: %d", resourceVersion))
 	}
-	items := store.ListPrefix(key, continueKey)
+	items := store.OrderedListPrefix(key, continueKey)
 	return listResp{
 		Items:           items,
 		ResourceVersion: resourceVersion,
@@ -651,7 +651,7 @@ func (w *watchCache) listLatestRV(key, continueKey string, matchValues []storage
 			}, matchValue.IndexName, err
 		}
 	}
-	result := w.store.ListPrefix(key, continueKey)
+	result := w.store.OrderedListPrefix(key, continueKey)
 	result, err = filterPrefixAndOrder(key, result)
 	return listResp{
 		Items:           result,
