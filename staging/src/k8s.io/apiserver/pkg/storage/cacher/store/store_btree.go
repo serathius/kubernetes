@@ -44,6 +44,7 @@ type threadedStoreIndexer struct {
 }
 
 var _ OrderedLister = (*threadedStoreIndexer)(nil)
+var _ Indexer = (*threadedStoreIndexer)(nil)
 
 func (si *threadedStoreIndexer) Count(prefix, continueKey string) (count int) {
 	si.lock.RLock()

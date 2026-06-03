@@ -18,7 +18,6 @@ package cacher
 
 import (
 	"fmt"
-	"sort"
 	"sync"
 
 	"k8s.io/apimachinery/pkg/watch"
@@ -167,9 +166,6 @@ func newCacheIntervalFromStore(resourceVersion uint64, indexer store.Indexer, ke
 			ResourceVersion: resourceVersion,
 		}
 		buffer.endIndex++
-	}
-	if _, ordered := indexer.(store.OrderedLister); !ordered {
-		sort.Sort(sortableWatchCacheEvents(buffer.buffer))
 	}
 	ci := &watchCacheInterval{
 		startIndex: 0,
