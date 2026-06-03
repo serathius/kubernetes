@@ -652,11 +652,10 @@ func (w *watchCache) listLatestRV(key, continueKey string, matchValues []storage
 		}
 	}
 	result := w.store.OrderedListPrefix(key, continueKey)
-	result, err = filterPrefixAndOrder(key, result)
 	return listResp{
 		Items:           result,
 		ResourceVersion: w.resourceVersion,
-	}, "", err
+	}, "", nil
 }
 
 func filterPrefixAndOrder(prefix string, items []interface{}) ([]interface{}, error) {
