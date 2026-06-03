@@ -374,7 +374,7 @@ func TestCacheIntervalNextFromStore(t *testing.T) {
 		return labels.Set(pod.Labels), fields.Set{"spec.nodeName": pod.Spec.NodeName}, nil
 	}
 	const numEvents = 50
-	store := cache.NewIndexer(store.ElementKey, store.ElementIndexers(nil))
+	store := store.NewIndexer(nil)
 	events := make(map[string]*watchCacheEvent)
 	var rv uint64 = 1 // arbitrary number; rv till which the watch cache has progressed.
 
@@ -437,7 +437,6 @@ func TestCacheIntervalFromStoreSorted(t *testing.T) {
 		name    string
 		indexer store.Indexer
 	}{
-		{"legacy", cache.NewIndexer(store.ElementKey, store.ElementIndexers(nil))},
 		{"btree", store.NewIndexer(nil)},
 	}
 	for _, tc := range cases {

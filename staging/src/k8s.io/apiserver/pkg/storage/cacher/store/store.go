@@ -73,11 +73,11 @@ type Indexer interface {
 	GetByKey(key string) (item interface{}, exists bool, err error)
 	Replace([]interface{}, string) error
 	ByIndex(indexName, indexedValue string) ([]interface{}, error)
+	Count(prefix, continueKey string) (count int)
 }
 
 type Snapshot interface {
 	OrderedListPrefix(prefix, continueKey string) []interface{}
-	Count(prefix, continueKey string) (count int)
 	Clone() Snapshot
 }
 
