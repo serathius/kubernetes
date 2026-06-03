@@ -3154,7 +3154,7 @@ type fakeOrderedLister struct {
 func (f fakeOrderedLister) Add(obj interface{}) error    { return nil }
 func (f fakeOrderedLister) Update(obj interface{}) error { return nil }
 func (f fakeOrderedLister) Delete(obj interface{}) error { return nil }
-func (f fakeOrderedLister) Clone() store.Snapshot   { return f }
+func (f fakeOrderedLister) Clone() store.Snapshot        { return f }
 func (f fakeOrderedLister) OrderedListPrefix(prefixKey, continueKey string) ([]interface{}, error) {
 	return nil, nil
 }
@@ -3174,7 +3174,7 @@ func (f *fakeSnapshotter) GetLessOrEqual(rv uint64) (store.Snapshot, bool) {
 	return f.getLessOrEqual(rv)
 }
 func (f *fakeSnapshotter) Add(rv uint64, indexer store.Snapshot) {}
-func (f *fakeSnapshotter) RemoveLess(rv uint64)                       {}
+func (f *fakeSnapshotter) RemoveLess(rv uint64)                  {}
 func (f *fakeSnapshotter) Len() int {
 	return 0
 }

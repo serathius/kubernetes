@@ -560,7 +560,12 @@ func (w *watchCache) waitUntilFreshAndList(ctx context.Context, key string, opts
 	}
 	switch opts.ResourceVersionMatch {
 	case metav1.ResourceVersionMatchExact:
-		return w.waitAndListExactRV(ctx, key, "", listRV)
+		snapshot, err := w.waitAndListExactRV(ctx, key, listRV)
+		if err != nil {
+			return listResp{}, "", err
+		}
+		items, err := snapshot.OrderedListPrefix(key, "")
+		return listResp{Items: items, ResourceVersion: listRV}, "", err
 	case metav1.ResourceVersionMatchNotOlderThan:
 	case "":
 		// Continue
@@ -570,24 +575,50 @@ func (w *watchCache) waitUntilFreshAndList(ctx context.Context, key string, opts
 				return listResp{}, "", errors.NewBadRequest(fmt.Sprintf("invalid continue token: %v", err))
 			}
 			if continueRV > 0 {
-				return w.waitAndListExactRV(ctx, key, continueKey, uint64(continueRV))
+				snapshot, err := w.waitAndListExactRV(ctx, key, uint64(continueRV))
+				if err != nil {
+					return listResp{}, "", err
+				}
+				items, err := snapshot.OrderedListPrefix(key, continueKey)
+				return listResp{Items: items, ResourceVersion: uint64(continueRV)}, "", err
 			} else {
 				// Don't pass matchValues as they don't support continueKey
-				return w.waitAndListConsistent(ctx, key, continueKey, nil)
+				snap, rv, index, err := w.waitAndListConsistent(ctx, key, continueKey, nil)
+				if err != nil {
+					return listResp{}, "", err
+				}
+				items, err := snap.OrderedListPrefix(key, continueKey)
+				return listResp{Items: items, ResourceVersion: rv}, index, err
 			}
 		}
 		// Legacy exact match
 		if opts.Predicate.Limit > 0 && len(opts.ResourceVersion) > 0 && opts.ResourceVersion != "0" {
-			return w.waitAndListExactRV(ctx, key, "", listRV)
+			snapshot, err := w.waitAndListExactRV(ctx, key, listRV)
+			if err != nil {
+				return listResp{}, "", err
+			}
+			items, err := snapshot.OrderedListPrefix(key, "")
+			return listResp{Items: items, ResourceVersion: listRV}, "", err
 		}
 		if opts.ResourceVersion == "" {
-			return w.waitAndListConsistent(ctx, key, "", opts.Predicate.MatcherIndex(ctx))
+			snap, rv, index, err := w.waitAndListConsistent(ctx, key, "", opts.Predicate.MatcherIndex(ctx))
+			if err != nil {
+				return listResp{}, "", err
+			}
+			items, err := snap.OrderedListPrefix(key, "")
+			return listResp{Items: items, ResourceVersion: rv}, index, err
 		}
 	}
-	return w.waitAndListLatestRV(ctx, listRV, key, "", opts.Predicate.MatcherIndex(ctx))
+	snap, rv, index, err := w.waitAndListLatestRV(ctx, listRV, key, "", opts.Predicate.MatcherIndex(ctx))
+	if err != nil {
+		return listResp{}, "", err
+	}
+	items, err := snap.OrderedListPrefix(key, "")
+	return listResp{Items: items, ResourceVersion: rv}, index, err
 }
 
-func (w *watchCache) waitAndListExactRV(ctx context.Context, key, continueKey string, resourceVersion uint64) (resp listResp, index string, err error) {
+func (w *watchCache) waitAndListExactRV(ctx context.Context, key string, resourceVersion uint64) (store.Snapshot, error) {
+	var err error
 	if delegator.ConsistentReadSupported() && w.notFresh(resourceVersion) {
 		w.waitingUntilFresh.Add()
 		err = w.waitUntilFreshAndBlock(ctx, resourceVersion)
@@ -597,32 +628,28 @@ func (w *watchCache) waitAndListExactRV(ctx context.Context, key, continueKey st
 	}
 	defer w.RUnlock()
 	if err != nil {
-		return listResp{}, "", err
+		return nil, err
 	}
 
 	if w.snapshots == nil {
-		return listResp{}, "", errors.NewResourceExpired(fmt.Sprintf("too old resource version: %d", resourceVersion))
+		return nil, errors.NewResourceExpired(fmt.Sprintf("too old resource version: %d", resourceVersion))
 	}
 	store, ok := w.snapshots.GetLessOrEqual(resourceVersion)
 	if !ok {
-		return listResp{}, "", errors.NewResourceExpired(fmt.Sprintf("too old resource version: %d", resourceVersion))
+		return nil, errors.NewResourceExpired(fmt.Sprintf("too old resource version: %d", resourceVersion))
 	}
-	items, err := store.OrderedListPrefix(key, continueKey)
-	return listResp{
-		Items:           items,
-		ResourceVersion: resourceVersion,
-	}, "", err
+	return store, nil
 }
 
-func (w *watchCache) waitAndListConsistent(ctx context.Context, key, continueKey string, matchValues []storage.MatchValue) (resp listResp, index string, err error) {
+func (w *watchCache) waitAndListConsistent(ctx context.Context, key, continueKey string, matchValues []storage.MatchValue) (snap store.Snapshot, rv uint64, index string, err error) {
 	resourceVersion, err := w.getCurrentRV(ctx)
 	if err != nil {
-		return listResp{}, "", err
+		return nil, 0, "", err
 	}
 	return w.waitAndListLatestRV(ctx, resourceVersion, key, continueKey, matchValues)
 }
 
-func (w *watchCache) waitAndListLatestRV(ctx context.Context, resourceVersion uint64, key, continueKey string, matchValues []storage.MatchValue) (resp listResp, index string, err error) {
+func (w *watchCache) waitAndListLatestRV(ctx context.Context, resourceVersion uint64, key, continueKey string, matchValues []storage.MatchValue) (snap store.Snapshot, rv uint64, index string, err error) {
 	if delegator.ConsistentReadSupported() && w.notFresh(resourceVersion) {
 		w.waitingUntilFresh.Add()
 		err = w.waitUntilFreshAndBlock(ctx, resourceVersion)
@@ -630,31 +657,25 @@ func (w *watchCache) waitAndListLatestRV(ctx context.Context, resourceVersion ui
 	} else {
 		err = w.waitUntilFreshAndBlock(ctx, resourceVersion)
 	}
-	defer w.RUnlock()
 	if err != nil {
-		return listResp{}, "", err
+		return nil, 0, "", err
 	}
 	return w.listLatestRV(key, continueKey, matchValues)
 }
 
-func (w *watchCache) listLatestRV(key, continueKey string, matchValues []storage.MatchValue) (resp listResp, index string, err error) {
+func (w *watchCache) listLatestRV(key, continueKey string, matchValues []storage.MatchValue) (snap store.Snapshot, resourceVersion uint64, index string, err error) {
+	resourceVersion = w.resourceVersion
+	defer w.RUnlock()
 	// This isn't the place where we do "final filtering" - only some "prefiltering" is happening here. So the only
 	// requirement here is to NOT miss anything that should be returned. We can return as many non-matching items as we
 	// want - they will be filtered out later. The fact that we return less things is only further performance improvement.
 	// TODO: if multiple indexes match, return the one with the fewest items, so as to do as much filtering as possible.
-	var snap store.Snapshot = w.store
 	for _, matchValue := range matchValues {
 		if result, err := w.store.ByIndex(matchValue.IndexName, matchValue.Value); err == nil {
-			snap = &resultSnapshot{result: result}
-			index = matchValue.IndexName
-			break
+			return &resultSnapshot{result: result}, resourceVersion, matchValue.IndexName, nil
 		}
 	}
-	result, err := snap.OrderedListPrefix(key, continueKey)
-	return listResp{
-		Items:           result,
-		ResourceVersion: w.resourceVersion,
-	}, index, err
+	return w.store.Clone(), resourceVersion, "", nil
 }
 
 func filterAndOrder(prefix, continueKey string, items []interface{}) ([]interface{}, error) {
