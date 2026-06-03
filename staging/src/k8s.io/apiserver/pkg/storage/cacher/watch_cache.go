@@ -642,23 +642,22 @@ func (w *watchCache) listLatestRV(key, continueKey string, matchValues []storage
 	// requirement here is to NOT miss anything that should be returned. We can return as many non-matching items as we
 	// want - they will be filtered out later. The fact that we return less things is only further performance improvement.
 	// TODO: if multiple indexes match, return the one with the fewest items, so as to do as much filtering as possible.
+	var snap store.Snapshot = w.store
 	for _, matchValue := range matchValues {
 		if result, err := w.store.ByIndex(matchValue.IndexName, matchValue.Value); err == nil {
-			result, err = filterPrefixAndOrder(key, result)
-			return listResp{
-				Items:           result,
-				ResourceVersion: w.resourceVersion,
-			}, matchValue.IndexName, err
+			snap = &resultSnapshot{result: result}
+			index = matchValue.IndexName
+			break
 		}
 	}
-	result, err := w.store.OrderedListPrefix(key, continueKey)
+	result, err := snap.OrderedListPrefix(key, continueKey)
 	return listResp{
 		Items:           result,
 		ResourceVersion: w.resourceVersion,
-	}, "", err
+	}, index, err
 }
 
-func filterPrefixAndOrder(prefix string, items []interface{}) ([]interface{}, error) {
+func filterAndOrder(prefix, continueKey string, items []interface{}) ([]interface{}, error) {
 	var result []interface{}
 	for _, item := range items {
 		elem, ok := item.(*store.Element)
@@ -666,6 +665,9 @@ func filterPrefixAndOrder(prefix string, items []interface{}) ([]interface{}, er
 			return nil, fmt.Errorf("non *store.Element returned from storage: %v", item)
 		}
 		if !hasPathPrefix(elem.Key, prefix) {
+			continue
+		}
+		if continueKey != "" && elem.Key <= continueKey {
 			continue
 		}
 		result = append(result, item)
@@ -942,4 +944,24 @@ func (w *watchCache) MarkConsistent(consistent bool) {
 			w.snapshots.Reset()
 		}
 	}
+}
+
+type resultSnapshot struct {
+	result []interface{}
+}
+
+var _ store.Snapshot = (*resultSnapshot)(nil)
+
+func (s *resultSnapshot) OrderedListPrefix(prefix, continueKey string) ([]interface{}, error) {
+	result, err := filterAndOrder(prefix, continueKey, s.result)
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (s *resultSnapshot) Clone() store.Snapshot {
+	result := make([]interface{}, len(s.result))
+	copy(result, s.result)
+	return &resultSnapshot{result: result}
 }
