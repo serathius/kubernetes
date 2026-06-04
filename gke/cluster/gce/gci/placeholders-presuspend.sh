@@ -194,9 +194,11 @@ EOF
   # Restart the services in parallel to speed up the process.
   systemctl restart resize-stateful-partition.service \
     systemd-networkd-wait-online.service \
-    gcr-wait-online.service \
+    gcr-wait-online.service
+
+  systemctl restart --no-block \
     google-guest-agent.service \
-    google-osconfig-agent.service
+    google-osconfig-agent.service || true
 
   # Ensure this is a node with GPUs before querying GPU version from node label &
   # conducting mount binding to /bin/nvidia
