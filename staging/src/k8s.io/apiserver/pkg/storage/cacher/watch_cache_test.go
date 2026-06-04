@@ -107,8 +107,8 @@ func (w *testWatchCache) getAllEventsSince(resourceVersion uint64, opts storage.
 }
 
 func (w *testWatchCache) getCacheIntervalForEvents(resourceVersion uint64, opts storage.ListOptions) (*watchCacheInterval, error) {
-	w.RLock()
-	defer w.RUnlock()
+	w.watchMux.RLock()
+	defer w.watchMux.RUnlock()
 
 	return w.getAllEventsSinceLocked(resourceVersion, "", opts)
 }
@@ -133,7 +133,7 @@ func newTestWatchCache(capacity int, eventFreshDuration time.Duration, indexers 
 	pr := progress.NewConditionalProgressRequester(wc.RequestWatchProgress, &immediateTickerFactory{}, nil)
 	go pr.Run(wc.stopCh)
 	getCurrentRV := func(context.Context) (uint64, error) {
-		return wc.resourceVersion, nil
+		return wc.watchResourceVersion, nil
 	}
 	wc.watchCache = newWatchCache(keyFunc, mockHandler, getAttrsFunc, versioner, indexers, testingclock.NewFakeClock(time.Now()), eventFreshDuration, schema.GroupResource{Resource: "pods"}, pr, getCurrentRV)
 	// To preserve behavior of tests that assume a given capacity,
@@ -974,7 +974,7 @@ func TestCacheIncreaseDoesNotBreakWatch(t *testing.T) {
 			ResourceVersion: rv,
 			RecordTime:      t,
 		}
-		store.updateCache(event)
+		store.updateWatch(event)
 	}
 
 	// Initial LIST comes from the moment of RV=10.
@@ -1218,7 +1218,7 @@ func BenchmarkWatchCache_updateCache(b *testing.B) {
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		store.updateCache(add)
+		store.updateWatch(add)
 	}
 }
 

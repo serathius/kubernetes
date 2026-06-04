@@ -164,14 +164,13 @@ func compactWatch(c *CacheDelegator, client *clientv3.Client) storagetesting.Com
 		if err != nil {
 			t.Fatalf("WatchCache didn't caught up to RV: %v", rv)
 		}
-		c.cacher.watchCache.RUnlock()
 
-		c.cacher.watchCache.Lock()
-		defer c.cacher.watchCache.Unlock()
+		c.cacher.watchCache.watchMux.Lock()
+		defer c.cacher.watchCache.watchMux.Unlock()
 		c.cacher.Lock()
 		defer c.cacher.Unlock()
 
-		if c.cacher.watchCache.resourceVersion < rv {
+		if c.cacher.watchCache.watchResourceVersion < rv {
 			t.Fatalf("Can't compact into a future version: %v", resourceVersion)
 		}
 
@@ -190,7 +189,7 @@ func compactWatch(c *CacheDelegator, client *clientv3.Client) storagetesting.Com
 
 			c.cacher.watchCache.startIndex++
 		}
-		c.cacher.watchCache.listResourceVersion = rv
+		c.cacher.watchCache.storageResourceVersion = rv
 		if _, err := client.Compact(ctx, int64(rv)); err != nil {
 			t.Fatalf("Could not compact: %v", err)
 		}

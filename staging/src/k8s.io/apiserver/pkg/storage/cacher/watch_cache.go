@@ -87,12 +87,6 @@ type watchCacheEvent struct {
 // watchCache is a "sliding window" (with a limited capacity) of objects
 // observed from a watch.
 type watchCache struct {
-	sync.RWMutex
-
-	// Condition on which lists are waiting for the fresh enough
-	// resource version.
-	cond *sync.Cond
-
 	// Maximum size of history window.
 	capacity int
 
@@ -111,9 +105,12 @@ type watchCache struct {
 	// cache is used a cyclic buffer - the "current" contents of it are
 	// stored in [start_index%capacity, end_index%capacity) - so the
 	// "current" contents have exactly end_index-start_index items.
+	watchMux   sync.RWMutex
+	watchCond *sync.Cond
 	cache      []*watchCacheEvent
 	startIndex int
 	endIndex   int
+	watchResourceVersion        uint64
 	// removedEventSinceRelist holds the information whether any of the events
 	// were already removed from the `cache` cyclic buffer since the last relist
 	removedEventSinceRelist bool
@@ -122,13 +119,11 @@ type watchCache struct {
 	// history" i.e. from the moment just after the newest cached watched event.
 	// It is necessary to effectively allow clients to start watching at now.
 	// NOTE: We assume that <store> is thread-safe.
+	storageMux sync.RWMutex
+	storageCond *sync.Cond
 	store store.OrderedIndexer
-
-	// ResourceVersion up to which the watchCache is propagated.
-	resourceVersion uint64
-
-	// ResourceVersion of the last list result (populated via Replace() method).
-	listResourceVersion uint64
+	storageResourceVersion uint64
+	snapshots           store.Snapshotter
 
 	// This handler is run at the end of every successful Replace() method.
 	onReplace func()
@@ -157,7 +152,6 @@ type watchCache struct {
 	waitingUntilFresh *progress.ConditionalProgressRequester
 
 	// Stores previous snapshots of orderedLister to allow serving requests from previous revisions.
-	snapshots           store.Snapshotter
 	snapshottingEnabled atomic.Bool
 
 	getCurrentRV func(context.Context) (uint64, error)
@@ -185,8 +179,7 @@ func newWatchCache(
 		startIndex:          0,
 		endIndex:            0,
 		store:               store.NewIndexer(indexers),
-		resourceVersion:     0,
-		listResourceVersion: 0,
+		watchResourceVersion:     0,
 		eventHandler:        eventHandler,
 		clock:               clock,
 		eventFreshDuration:  eventFreshDuration,
@@ -200,7 +193,8 @@ func newWatchCache(
 		wc.snapshots = store.NewSnapshotter()
 	}
 	metrics.WatchCacheCapacity.WithLabelValues(groupResource.Group, groupResource.Resource).Set(float64(wc.capacity))
-	wc.cond = sync.NewCond(wc.RLocker())
+	wc.watchCond = sync.NewCond(wc.watchMux.RLocker())
+	wc.storageCond = sync.NewCond(wc.storageMux.RLocker())
 	wc.indexValidator = wc.isIndexValidLocked
 
 	return wc
@@ -320,24 +314,29 @@ func (w *watchCache) processEvent(event watch.Event, resourceVersion uint64, upd
 	}
 
 	if err := func() error {
-		w.Lock()
-		defer w.Unlock()
+		w.watchMux.Lock()
+		w.updateWatch(wcEvent)
+		w.watchResourceVersion = resourceVersion
+		w.storageCond.Broadcast()
+		var removeLess uint64
+		if w.isCacheFullLocked() {
+			removeLess = w.cache[w.startIndex%w.capacity].ResourceVersion
+		}
+		w.watchMux.Unlock()
 
-		w.updateCache(wcEvent)
-		w.resourceVersion = resourceVersion
-		defer w.cond.Broadcast()
-
+		w.storageMux.Lock()
 		err := updateFunc(elem)
 		if err != nil {
 			return err
 		}
 		if w.snapshots != nil && w.snapshottingEnabled.Load() {
-			if w.isCacheFullLocked() {
-				oldestRV := w.cache[w.startIndex%w.capacity].ResourceVersion
-				w.snapshots.RemoveLess(oldestRV)
+			w.snapshots.Add(w.storageResourceVersion, w.store)
+			if removeLess != 0 {
+				w.snapshots.RemoveLess(uint64(removeLess))
 			}
-			w.snapshots.Add(w.resourceVersion, w.store)
 		}
+		w.storageCond.Broadcast()
+		w.storageMux.Unlock()
 		return err
 	}(); err != nil {
 		return err
@@ -419,28 +418,41 @@ func (w *watchCache) BatchProcess(events []watch.Event) error {
 	}
 
 	err := func() error {
-		w.Lock()
-		defer w.Unlock()
-
+		w.watchMux.Lock()
+		removeLessList := make([]uint64, 0, len(prepared))
 		for _, p := range prepared {
+			w.updateWatch(p.wcEvent)
+			w.watchResourceVersion = p.wcEvent.ResourceVersion
+
+			if w.isCacheFullLocked() {
+				removeLessList = append(removeLessList, w.cache[w.startIndex%w.capacity].ResourceVersion)
+			} else {
+				removeLessList = append(removeLessList, 0)
+			}
+		}
+		w.storageCond.Broadcast()
+		w.watchMux.Unlock()
+
+		w.storageMux.Lock()
+		defer w.storageMux.Unlock()
+
+		for i, p := range prepared {
 			metrics.EventsReceivedCounter.WithLabelValues(w.groupResource.Group, w.groupResource.Resource).Inc()
-			w.updateCache(p.wcEvent)
-			w.resourceVersion = p.wcEvent.ResourceVersion
+			w.storageResourceVersion = p.wcEvent.ResourceVersion
 
 			err := p.action(p.elem)
 			if err != nil {
 				return err
 			}
 			if w.snapshots != nil && w.snapshottingEnabled.Load() {
-				if w.isCacheFullLocked() {
-					oldestRV := w.cache[w.startIndex%w.capacity].ResourceVersion
-					w.snapshots.RemoveLess(oldestRV)
+				w.snapshots.Add(w.storageResourceVersion, w.store)
+				removeLess := removeLessList[i]
+				if removeLess != 0 {
+					w.snapshots.RemoveLess(removeLess)
 				}
-				w.snapshots.Add(w.resourceVersion, w.store)
 			}
 		}
-
-		w.cond.Broadcast()
+		w.storageCond.Broadcast()
 		return nil
 	}()
 	if err != nil {
@@ -458,7 +470,7 @@ func (w *watchCache) BatchProcess(events []watch.Event) error {
 }
 
 // Assumes that lock is already held for write.
-func (w *watchCache) updateCache(event *watchCacheEvent) {
+func (w *watchCache) updateWatch(event *watchCacheEvent) {
 	w.resizeCacheLocked(event.RecordTime)
 	if w.isCacheFullLocked() {
 		// Cache is full - remove the oldest element.
@@ -519,10 +531,15 @@ func (w *watchCache) UpdateResourceVersion(resourceVersion string) {
 	}
 
 	func() {
-		w.Lock()
-		defer w.Unlock()
-		w.resourceVersion = rv
-		w.cond.Broadcast()
+		w.storageMux.Lock()
+		w.storageResourceVersion = rv
+		w.storageCond.Broadcast()
+		w.storageMux.Unlock()
+
+		w.watchMux.Lock()
+		w.watchResourceVersion = rv
+		w.watchCond.Broadcast()
+		w.watchMux.Unlock()
 	}()
 
 	// Avoid calling event handler under lock.
@@ -572,19 +589,19 @@ func (w *watchCache) waitUntilFreshAndBlock(ctx context.Context, resourceVersion
 			// we don't need to worry about waking it up before the time
 			// has expired accidentally.
 			<-w.clock.After(blockTimeout)
-			w.cond.Broadcast()
+			w.storageCond.Broadcast()
 		}()
 	}
 
-	w.RLock()
+	w.storageMux.RLock()
 	span := tracing.SpanFromContext(ctx)
 	span.AddEvent("watchCache locked acquired")
-	for w.resourceVersion < resourceVersion {
+	for w.storageResourceVersion < resourceVersion {
 		if w.clock.Since(startTime) >= blockTimeout {
 			// Request that the client retry after 'resourceVersionTooHighRetrySeconds' seconds.
-			return storage.NewTooLargeResourceVersionError(resourceVersion, w.resourceVersion, resourceVersionTooHighRetrySeconds)
+			return storage.NewTooLargeResourceVersionError(resourceVersion, w.storageResourceVersion, resourceVersionTooHighRetrySeconds)
 		}
-		w.cond.Wait()
+		w.storageCond.Wait()
 	}
 	span.AddEvent("watchCache fresh enough")
 	return nil
@@ -639,7 +656,7 @@ func (c *watchCache) waitUntilFreshAndGetList(ctx context.Context, key string, o
 // WaitUntilFreshAndList returns list of pointers to `storeElement` objects along
 // with their ResourceVersion and the name of the index, if any, that was used.
 func (w *watchCache) WaitUntilFreshAndGetKeys(ctx context.Context, resourceVersion uint64) (keys []string, err error) {
-	if delegator.ConsistentReadSupported() && w.notFresh(resourceVersion) {
+	if delegator.ConsistentReadSupported() && w.storageNotFresh(resourceVersion) {
 		w.waitingUntilFresh.Add()
 		err = w.waitUntilFreshAndBlock(ctx, resourceVersion)
 		w.waitingUntilFresh.Remove()
@@ -647,7 +664,7 @@ func (w *watchCache) WaitUntilFreshAndGetKeys(ctx context.Context, resourceVersi
 		err = w.waitUntilFreshAndBlock(ctx, resourceVersion)
 	}
 
-	defer w.RUnlock()
+	defer w.storageMux.RUnlock()
 	if err != nil {
 		return nil, err
 	}
@@ -691,14 +708,14 @@ func (w *watchCache) waitUntilFreshAndList(ctx context.Context, key string, opts
 }
 
 func (w *watchCache) waitAndListExactRV(ctx context.Context, key, continueKey string, resourceVersion uint64) (resp listResp, index string, err error) {
-	if delegator.ConsistentReadSupported() && w.notFresh(resourceVersion) {
+	if delegator.ConsistentReadSupported() && w.storageNotFresh(resourceVersion) {
 		w.waitingUntilFresh.Add()
 		err = w.waitUntilFreshAndBlock(ctx, resourceVersion)
 		w.waitingUntilFresh.Remove()
 	} else {
 		err = w.waitUntilFreshAndBlock(ctx, resourceVersion)
 	}
-	defer w.RUnlock()
+	defer w.storageMux.RUnlock()
 	if err != nil {
 		return listResp{}, "", err
 	}
@@ -726,14 +743,14 @@ func (w *watchCache) waitAndListConsistent(ctx context.Context, key, continueKey
 }
 
 func (w *watchCache) waitAndListLatestRV(ctx context.Context, resourceVersion uint64, key, continueKey string, matchValues []storage.MatchValue) (resp listResp, index string, err error) {
-	if delegator.ConsistentReadSupported() && w.notFresh(resourceVersion) {
+	if delegator.ConsistentReadSupported() && w.storageNotFresh(resourceVersion) {
 		w.waitingUntilFresh.Add()
 		err = w.waitUntilFreshAndBlock(ctx, resourceVersion)
 		w.waitingUntilFresh.Remove()
 	} else {
 		err = w.waitUntilFreshAndBlock(ctx, resourceVersion)
 	}
-	defer w.RUnlock()
+	defer w.storageMux.RUnlock()
 	if err != nil {
 		return listResp{}, "", err
 	}
@@ -750,14 +767,14 @@ func (w *watchCache) listLatestRV(key, continueKey string, matchValues []storage
 			result, err = filterPrefixAndOrder(key, result)
 			return listResp{
 				Items:           result,
-				ResourceVersion: w.resourceVersion,
+				ResourceVersion: w.storageResourceVersion,
 			}, matchValue.IndexName, err
 		}
 	}
 	result := w.store.OrderedListPrefix(key, continueKey)
 	return listResp{
 		Items:           result,
-		ResourceVersion: w.resourceVersion,
+		ResourceVersion: w.storageResourceVersion,
 	}, "", nil
 }
 
@@ -777,28 +794,28 @@ func filterPrefixAndOrder(prefix string, items []interface{}) ([]interface{}, er
 	return result, nil
 }
 
-func (w *watchCache) notFresh(resourceVersion uint64) bool {
-	w.RLock()
-	defer w.RUnlock()
-	return resourceVersion > w.resourceVersion
+func (w *watchCache) storageNotFresh(resourceVersion uint64) bool {
+	w.storageMux.RLock()
+	defer w.storageMux.RUnlock()
+	return resourceVersion > w.storageResourceVersion
 }
 
 // WaitUntilFreshAndGet returns a pointers to <storeElement> object.
 func (w *watchCache) WaitUntilFreshAndGet(ctx context.Context, resourceVersion uint64, key string) (interface{}, bool, uint64, error) {
 	var err error
-	if delegator.ConsistentReadSupported() && w.notFresh(resourceVersion) {
+	if delegator.ConsistentReadSupported() && w.storageNotFresh(resourceVersion) {
 		w.waitingUntilFresh.Add()
 		err = w.waitUntilFreshAndBlock(ctx, resourceVersion)
 		w.waitingUntilFresh.Remove()
 	} else {
 		err = w.waitUntilFreshAndBlock(ctx, resourceVersion)
 	}
-	defer w.RUnlock()
+	defer w.storageMux.RUnlock()
 	if err != nil {
 		return nil, false, 0, err
 	}
 	value, exists, err := w.store.GetByKey(key)
-	return value, exists, w.resourceVersion, err
+	return value, exists, w.storageResourceVersion, err
 }
 
 func (w *watchCache) ListKeys() []string {
@@ -854,33 +871,35 @@ func (w *watchCache) Replace(objs []interface{}, resourceVersion string) error {
 		})
 	}
 
-	w.Lock()
-	defer w.Unlock()
+	err = func() error {
+		w.storageMux.Lock()
+		defer w.storageMux.Unlock()
 
-	// Ensure startIndex never decreases, so that existing watchCacheInterval
-	// instances get "invalid" errors if the try to download from the buffer
-	// using their own start/end indexes calculated from previous buffer
-	// content.
-
-	// Empty the cyclic buffer, ensuring startIndex doesn't decrease.
-	w.startIndex = w.endIndex
-	w.removedEventSinceRelist = false
-
-	if err := w.store.Replace(toReplace, resourceVersion); err != nil {
+		if err := w.store.Replace(toReplace, resourceVersion); err != nil {
+			return err
+		}
+		if w.snapshots != nil {
+			w.snapshots.Reset()
+			if w.snapshottingEnabled.Load() {
+				w.snapshots.Add(version, w.store)
+			}
+		}
+		w.storageResourceVersion = version
+		return nil
+	}()
+	if err != nil {
 		return err
 	}
-	if w.snapshots != nil {
-		w.snapshots.Reset()
-		if w.snapshottingEnabled.Load() {
-			w.snapshots.Add(version, w.store)
-		}
-	}
-	w.listResourceVersion = version
-	w.resourceVersion = version
+
+	w.watchMux.Lock()
+	w.startIndex = w.endIndex
+	w.removedEventSinceRelist = false
+	w.watchResourceVersion = version
 	if w.onReplace != nil {
 		w.onReplace()
 	}
-	w.cond.Broadcast()
+	w.watchCond.Broadcast()
+	w.watchMux.Unlock()
 
 	metrics.RecordResourceVersion(w.groupResource, version)
 	klog.V(3).Infof("Replaced watchCache (rev: %v) ", resourceVersion)
@@ -888,8 +907,10 @@ func (w *watchCache) Replace(objs []interface{}, resourceVersion string) error {
 }
 
 func (w *watchCache) SetOnReplace(onReplace func()) {
-	w.Lock()
-	defer w.Unlock()
+	w.watchMux.Lock()
+	w.storageMux.Lock()
+	defer w.storageMux.Unlock()
+	defer w.watchMux.Unlock()
 	w.onReplace = onReplace
 }
 
@@ -899,14 +920,18 @@ func (w *watchCache) Resync() error {
 }
 
 func (w *watchCache) getListResourceVersion() uint64 {
-	w.RLock()
-	defer w.RUnlock()
-	return w.listResourceVersion
+	w.watchMux.RLock()
+	w.storageMux.RLock()
+	defer w.storageMux.RUnlock()
+	defer w.watchMux.RUnlock()
+	return w.storageResourceVersion
 }
 
 func (w *watchCache) currentCapacity() int {
-	w.RLock()
-	defer w.RUnlock()
+	w.watchMux.RLock()
+	w.storageMux.RLock()
+	defer w.storageMux.RUnlock()
+	defer w.watchMux.RUnlock()
 	return w.capacity
 }
 
@@ -976,10 +1001,10 @@ func (w *watchCache) getAllEventsSinceLocked(resourceVersion uint64, key string,
 	size := w.endIndex - w.startIndex
 	var oldest uint64
 	switch {
-	case w.listResourceVersion > 0 && !w.removedEventSinceRelist:
+	case w.watchResourceVersion > 0 && !w.removedEventSinceRelist:
 		// If no event was removed from the buffer since last relist, the oldest watch
 		// event we can deliver is one greater than the resource version of the list.
-		oldest = w.listResourceVersion + 1
+		oldest = w.watchResourceVersion + 1
 	case size > 0:
 		// If the previous condition is not satisfied: either some event was already
 		// removed from the buffer or we've never completed a list (the latter can
@@ -1004,7 +1029,7 @@ func (w *watchCache) getAllEventsSinceLocked(resourceVersion uint64, key string,
 		// SendInitialEvents = false and resourceVersion = 0
 		// means that the request would like to start watching
 		// from Any resourceVersion
-		resourceVersion = w.resourceVersion
+		resourceVersion = w.watchResourceVersion
 	}
 	if resourceVersion < oldest-1 {
 		return nil, errors.NewResourceExpired(fmt.Sprintf("too old resource version: %d (%d)", resourceVersion, oldest-1))
@@ -1018,7 +1043,7 @@ func (w *watchCache) getAllEventsSinceLocked(resourceVersion uint64, key string,
 	indexerFunc := func(i int) *watchCacheEvent {
 		return w.cache[i%w.capacity]
 	}
-	ci := newCacheInterval(w.startIndex+first, w.endIndex, indexerFunc, w.indexValidator, resourceVersion, w.RWMutex.RLocker())
+	ci := newCacheInterval(w.startIndex+first, w.endIndex, indexerFunc, w.indexValidator, resourceVersion, w.watchMux.RLocker())
 	return ci, nil
 }
 
@@ -1026,7 +1051,7 @@ func (w *watchCache) getAllEventsSinceLocked(resourceVersion uint64, key string,
 // that covers the entire storage state.
 // This function assumes to be called under the watchCache lock.
 func (w *watchCache) getIntervalFromStoreLocked(key string, matchesSingle bool) (*watchCacheInterval, error) {
-	ci, err := newCacheIntervalFromStore(w.resourceVersion, w.store, key, matchesSingle)
+	ci, err := newCacheIntervalFromStore(w.watchResourceVersion, w.store, key, matchesSingle)
 	if err != nil {
 		return nil, err
 	}

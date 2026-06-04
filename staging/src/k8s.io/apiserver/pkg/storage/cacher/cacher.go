@@ -623,8 +623,8 @@ func (c *Cacher) Watch(ctx context.Context, key string, opts storage.ListOptions
 	// on return from this function.
 	// Note that we cannot do it under Cacher lock, to avoid a deadlock, since the
 	// underlying watchCache is calling processEvent under its lock.
-	c.watchCache.RLock()
-	defer c.watchCache.RUnlock()
+	c.watchCache.watchMux.RLock()
+	defer c.watchCache.watchMux.RUnlock()
 
 	var cacheInterval *watchCacheInterval
 	cacheInterval, err = c.watchCache.getAllEventsSinceLocked(requiredResourceVersion, key, opts)
@@ -635,7 +635,7 @@ func (c *Cacher) Watch(ctx context.Context, key string, opts storage.ListOptions
 		return newErrWatcher(err), nil
 	}
 
-	c.setInitialEventsEndBookmarkIfRequested(cacheInterval, opts, c.watchCache.resourceVersion)
+	c.setInitialEventsEndBookmarkIfRequested(cacheInterval, opts, c.watchCache.watchResourceVersion)
 
 	addedWatcher := false
 	func() {
@@ -1258,7 +1258,7 @@ func (c *Cacher) getBookmarkAfterResourceVersionLockedFunc(parsedResourceVersion
 		return func() uint64 { return requiredResourceVersion }, nil
 	case parsedResourceVersion == 0:
 		// here we assume that watchCache locked is already held
-		return func() uint64 { return c.watchCache.resourceVersion }, nil
+		return func() uint64 { return c.watchCache.watchResourceVersion }, nil
 	default:
 		return func() uint64 { return parsedResourceVersion }, nil
 	}
@@ -1305,12 +1305,12 @@ func (c *Cacher) waitUntilWatchCacheFreshAndForceAllEvents(ctx context.Context, 
 		//
 		// In this very rare scenario, the worst case will be that this
 		// request will wait for 3 seconds before it fails.
-		if etcdfeature.DefaultFeatureSupportChecker.Supports(storage.RequestWatchProgress) && c.watchCache.notFresh(requestedWatchRV) {
+		if etcdfeature.DefaultFeatureSupportChecker.Supports(storage.RequestWatchProgress) && c.watchCache.storageNotFresh(requestedWatchRV) {
 			c.watchCache.waitingUntilFresh.Add()
 			defer c.watchCache.waitingUntilFresh.Remove()
 		}
 		err := c.watchCache.waitUntilFreshAndBlock(ctx, requestedWatchRV)
-		defer c.watchCache.RUnlock()
+		defer c.watchCache.storageMux.RUnlock()
 		return err
 	}
 	return nil
@@ -1415,7 +1415,7 @@ func (c *Cacher) ShouldDelegateContinue(continueToken string, recursive bool) (d
 
 func (c *Cacher) shouldDelegateExactRV(rv uint64) (delegator.Result, error) {
 	// Exact requests on future revision require support for consistent read, but are not a consistent read by themselves.
-	if c.watchCache.notFresh(rv) {
+	if c.watchCache.storageNotFresh(rv) {
 		return delegator.Result{
 			ShouldDelegate: !delegator.ConsistentReadSupported(),
 		}, nil

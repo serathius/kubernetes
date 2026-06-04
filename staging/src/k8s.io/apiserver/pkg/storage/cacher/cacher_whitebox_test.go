@@ -447,8 +447,8 @@ apiserver_watch_cache_consistent_read_total{fallback="skipped", group="", resour
 				t.Fatalf("unexpected error waiting for the cache to be ready")
 			}
 
-			if fmt.Sprintf("%d", cacher.watchCache.resourceVersion) != tc.watchCacheRV {
-				t.Fatalf("Expected watch cache RV to equal watchCacheRV, got: %d, want: %s", cacher.watchCache.resourceVersion, tc.watchCacheRV)
+			if fmt.Sprintf("%d", cacher.watchCache.watchResourceVersion) != tc.watchCacheRV {
+				t.Fatalf("Expected watch cache RV to equal watchCacheRV, got: %d, want: %s", cacher.watchCache.watchResourceVersion, tc.watchCacheRV)
 			}
 			requestToStorageCount := 0
 			backingStorage.GetListFn = func(_ context.Context, key string, opts storage.ListOptions, listObj runtime.Object) error {
@@ -569,7 +569,7 @@ func TestMatchExactResourceVersionFallback(t *testing.T) {
 			}
 			defer cacher.Stop()
 			snapshotRequestCount := 0
-			cacher.watchCache.RWMutex.Lock()
+			cacher.watchCache.storageMux.Lock()
 			cacher.watchCache.snapshots = &fakeSnapshotter{
 				getLessOrEqual: func(rv uint64) (store.OrderedLister, bool) {
 					snapshotAvailable := tc.snapshotsAvailable[snapshotRequestCount]
@@ -581,7 +581,7 @@ func TestMatchExactResourceVersionFallback(t *testing.T) {
 					}
 				},
 			}
-			cacher.watchCache.RWMutex.Unlock()
+			cacher.watchCache.storageMux.Unlock()
 			if err := cacher.ready.wait(context.Background()); err != nil {
 				t.Fatalf("unexpected error waiting for the cache to be ready")
 			}
@@ -2859,8 +2859,8 @@ func TestGetBookmarkAfterResourceVersionLockedFunc(t *testing.T) {
 
 			getBookMarkFn, err := cacher.getBookmarkAfterResourceVersionLockedFunc(uint64(parsedResourceVersion), uint64(scenario.requiredResourceVersion), scenario.opts)
 			require.NoError(t, err)
-			cacher.watchCache.RLock()
-			defer cacher.watchCache.RUnlock()
+			cacher.watchCache.watchMux.RLock()
+			defer cacher.watchCache.watchMux.RUnlock()
 			getBookMarkResourceVersion := getBookMarkFn()
 			require.Equal(t, uint64(scenario.expectedBookmarkResourceVersion), getBookMarkResourceVersion, "received unexpected ResourceVersion")
 		})
