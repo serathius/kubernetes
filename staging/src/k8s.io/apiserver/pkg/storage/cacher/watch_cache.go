@@ -318,22 +318,12 @@ func (w *watchCache) processEvent(event watch.Event, resourceVersion uint64, upd
 		w.updateWatch(wcEvent)
 		w.watchResourceVersion = resourceVersion
 		w.storageCond.Broadcast()
-		var removeLess uint64
-		if w.isCacheFullLocked() {
-			removeLess = w.cache[w.startIndex%w.capacity].ResourceVersion
-		}
 		w.watchMux.Unlock()
 
 		w.storageMux.Lock()
 		err := updateFunc(elem)
 		if err != nil {
 			return err
-		}
-		if w.snapshots != nil && w.snapshottingEnabled.Load() {
-			w.snapshots.Add(w.storageResourceVersion, w.store)
-			if removeLess != 0 {
-				w.snapshots.RemoveLess(uint64(removeLess))
-			}
 		}
 		w.storageCond.Broadcast()
 		w.storageMux.Unlock()

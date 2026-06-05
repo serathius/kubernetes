@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/utils/third_party/forked/golang/btree"
@@ -31,14 +32,28 @@ import (
 // This separation is used to allow independent snapshotting those two storages in the future.
 // Intention is to utilize btree for its cheap snapshots that don't require locking if don't mutate data.
 func newThreadedBtreeStoreIndexer(indexers cache.Indexers, degree int) *threadedStoreIndexer {
-	return &threadedStoreIndexer{
+	si := &threadedStoreIndexer{
 		store:   newBtreeStore(degree),
 		indexer: newIndexer(indexers),
 	}
+	si.Sync()
+	go func() {
+		timer := time.NewTimer(100 * time.Millisecond)
+		defer timer.Stop()
+		for range timer.C {
+			timer.Reset(100 * time.Millisecond)
+			si.Sync()
+		}
+	}()
+
+	return si
 }
 
 type threadedStoreIndexer struct {
-	lock    sync.RWMutex
+	snapshotLock sync.RWMutex
+	readSnapshot btreeStore
+
+	storeIndexerLock sync.RWMutex
 	store   btreeStore
 	indexer indexer
 }
@@ -46,15 +61,29 @@ type threadedStoreIndexer struct {
 var _ OrderedLister = (*threadedStoreIndexer)(nil)
 
 func (si *threadedStoreIndexer) Count(prefix, continueKey string) (count int) {
-	si.lock.RLock()
-	defer si.lock.RUnlock()
+	si.snapshotLock.RLock()
+	defer si.snapshotLock.RUnlock()
 	return si.store.Count(prefix, continueKey)
 }
 
+func (si *threadedStoreIndexer) Sync() {
+	// Clone modifies the btree so we need to clone.
+	si.storeIndexerLock.Lock()
+	clone := si.store.tree.Clone()
+	si.storeIndexerLock.Unlock()
+
+	si.snapshotLock.Lock()
+	si.readSnapshot.tree = clone
+	si.snapshotLock.Unlock()
+}
+
 func (si *threadedStoreIndexer) Clone() OrderedLister {
-	si.lock.RLock()
-	defer si.lock.RUnlock()
-	return si.store.Clone()
+	// Clone modifies btree so we need to lock.
+	si.snapshotLock.RLock()
+	defer si.snapshotLock.RUnlock()
+	// Currently serves snapshot that is 100ms old.
+	// TODO: Move resourceVersion to snapshot.
+	return &si.readSnapshot
 }
 
 func (si *threadedStoreIndexer) Add(obj interface{}) error {
@@ -73,8 +102,8 @@ func (si *threadedStoreIndexer) addOrUpdate(obj interface{}) error {
 	if !ok {
 		return fmt.Errorf("obj not a storeElement: %#v", obj)
 	}
-	si.lock.Lock()
-	defer si.lock.Unlock()
+	si.storeIndexerLock.Lock()
+	defer si.storeIndexerLock.Unlock()
 	oldElem := si.store.addOrUpdateElem(newElem)
 	return si.indexer.updateElem(newElem.Key, oldElem, newElem)
 }
@@ -84,8 +113,8 @@ func (si *threadedStoreIndexer) Delete(obj interface{}) error {
 	if !ok {
 		return fmt.Errorf("obj not a storeElement: %#v", obj)
 	}
-	si.lock.Lock()
-	defer si.lock.Unlock()
+	si.storeIndexerLock.Lock()
+	defer si.storeIndexerLock.Unlock()
 	oldObj, existed := si.store.deleteElem(storeElem)
 	if !existed {
 		return nil
@@ -94,38 +123,38 @@ func (si *threadedStoreIndexer) Delete(obj interface{}) error {
 }
 
 func (si *threadedStoreIndexer) List() []interface{} {
-	si.lock.RLock()
-	defer si.lock.RUnlock()
-	return si.store.List()
+	si.snapshotLock.RLock()
+	defer si.snapshotLock.RUnlock()
+	return si.readSnapshot.List()
 }
 
 func (si *threadedStoreIndexer) OrderedListPrefix(prefix, continueKey string) []interface{} {
-	si.lock.RLock()
-	defer si.lock.RUnlock()
-	return si.store.OrderedListPrefix(prefix, continueKey)
+	si.snapshotLock.RLock()
+	defer si.snapshotLock.RUnlock()
+	return si.readSnapshot.OrderedListPrefix(prefix, continueKey)
 }
 
 func (si *threadedStoreIndexer) ListKeys() []string {
-	si.lock.RLock()
-	defer si.lock.RUnlock()
-	return si.store.ListKeys()
+	si.snapshotLock.RLock()
+	defer si.snapshotLock.RUnlock()
+	return si.readSnapshot.ListKeys()
 }
 
 func (si *threadedStoreIndexer) Get(obj interface{}) (item interface{}, exists bool, err error) {
-	si.lock.RLock()
-	defer si.lock.RUnlock()
-	return si.store.Get(obj)
+	si.snapshotLock.RLock()
+	defer si.snapshotLock.RUnlock()
+	return si.readSnapshot.Get(obj)
 }
 
 func (si *threadedStoreIndexer) GetByKey(key string) (item interface{}, exists bool, err error) {
-	si.lock.RLock()
-	defer si.lock.RUnlock()
-	return si.store.GetByKey(key)
+	si.snapshotLock.RLock()
+	defer si.snapshotLock.RUnlock()
+	return si.readSnapshot.GetByKey(key)
 }
 
 func (si *threadedStoreIndexer) Replace(objs []interface{}, resourceVersion string) error {
-	si.lock.Lock()
-	defer si.lock.Unlock()
+	si.storeIndexerLock.Lock()
+	defer si.storeIndexerLock.Unlock()
 	err := si.store.Replace(objs, resourceVersion)
 	if err != nil {
 		return err
@@ -134,8 +163,8 @@ func (si *threadedStoreIndexer) Replace(objs []interface{}, resourceVersion stri
 }
 
 func (si *threadedStoreIndexer) ByIndex(indexName, indexValue string) ([]interface{}, error) {
-	si.lock.RLock()
-	defer si.lock.RUnlock()
+	si.storeIndexerLock.RLock()
+	defer si.storeIndexerLock.RUnlock()
 	return si.indexer.ByIndex(indexName, indexValue)
 }
 
