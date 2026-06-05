@@ -461,17 +461,28 @@ func MatchPod(label labels.Selector, field fields.Selector) storage.SelectionPre
 
 // NodeNameTriggerFunc returns value spec.nodename of given object.
 func NodeNameTriggerFunc(obj runtime.Object) string {
+	if getter, ok := obj.(storage.PodAttrsGetter); ok {
+		if nodeName, _, _, _, _, _, _, _, ok := getter.GetPodAttrs(); ok {
+			return nodeName
+		}
+	}
 	return obj.(*api.Pod).Spec.NodeName
 }
 
 // NodeNameIndexFunc return value spec.nodename of given object.
 func NodeNameIndexFunc(obj interface{}) ([]string, error) {
+	if getter, ok := obj.(storage.PodAttrsGetter); ok {
+		if nodeName, _, _, _, _, _, _, _, ok := getter.GetPodAttrs(); ok {
+			return []string{nodeName}, nil
+		}
+	}
 	pod, ok := obj.(*api.Pod)
 	if !ok {
-		return nil, fmt.Errorf("not a pod")
+		return nil, fmt.Errorf("not a pod: %T", obj)
 	}
 	return []string{pod.Spec.NodeName}, nil
 }
+
 
 // Indexers returns the indexers for pod storage.
 func Indexers() *cache.Indexers {

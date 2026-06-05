@@ -61,13 +61,8 @@ func init() {
 }
 
 func GetPodAttrs(obj runtime.Object) (labels.Set, fields.Set, error) {
-	if storage.PanicOnLazyDecode {
-		if meta, ok := obj.(metav1.Object); ok {
-			return labels.Set(meta.GetLabels()), fields.Set{
-				"metadata.name":      meta.GetName(),
-				"metadata.namespace": meta.GetNamespace(),
-			}, nil
-		}
+	if ls, fs, ok := storage.GetPodAttrsFromLazyObject(obj); ok {
+		return ls, fs, nil
 	}
 	realObj, err := storage.DecodeLazyObject(obj)
 	if err != nil {
@@ -79,6 +74,7 @@ func GetPodAttrs(obj runtime.Object) (labels.Set, fields.Set, error) {
 	}
 	return labels.Set(pod.ObjectMeta.Labels), PodToSelectableFields(pod), nil
 }
+
 
 // PodToSelectableFields returns a field set that represents the object
 // TODO: fields are not labels, and the validation rules for them do not apply.
@@ -608,6 +604,11 @@ func withClusterScopedKeyFunc(options *setupOptions) {
 func withNodeNameAndNamespaceIndex(options *setupOptions) {
 	options.indexerFuncs = map[string]storage.IndexerFunc{
 		"spec.nodeName": func(obj runtime.Object) string {
+			if getter, ok := obj.(storage.PodAttrsGetter); ok {
+				if nodeName, _, _, _, _, _, _, _, ok := getter.GetPodAttrs(); ok {
+					return nodeName
+				}
+			}
 			realObj, err := storage.DecodeLazyObject(obj)
 			if err != nil {
 				return ""
@@ -621,6 +622,11 @@ func withNodeNameAndNamespaceIndex(options *setupOptions) {
 	}
 	options.indexers = map[string]cache.IndexFunc{
 		"f:spec.nodeName": func(obj interface{}) ([]string, error) {
+			if getter, ok := obj.(storage.PodAttrsGetter); ok {
+				if nodeName, _, _, _, _, _, _, _, ok := getter.GetPodAttrs(); ok {
+					return []string{nodeName}, nil
+				}
+			}
 			realObj, err := storage.DecodeLazyObject(obj.(runtime.Object))
 			if err != nil {
 				return nil, err
@@ -629,6 +635,9 @@ func withNodeNameAndNamespaceIndex(options *setupOptions) {
 			return []string{pod.Spec.NodeName}, nil
 		},
 		"f:metadata.namespace": func(obj interface{}) ([]string, error) {
+			if meta, ok := obj.(metav1.Object); ok {
+				return []string{meta.GetNamespace()}, nil
+			}
 			realObj, err := storage.DecodeLazyObject(obj.(runtime.Object))
 			if err != nil {
 				return nil, err
@@ -636,6 +645,7 @@ func withNodeNameAndNamespaceIndex(options *setupOptions) {
 			pod := realObj.(*example.Pod)
 			return []string{pod.ObjectMeta.Namespace}, nil
 		},
+
 	}
 }
 
@@ -833,7 +843,7 @@ func TestLazyDecoding(t *testing.T) {
 		storage.PanicOnLazyDecode = false
 	}()
 
-	ctx, cacher, _, terminate := testSetupWithEtcdServer(t)
+	ctx, cacher, _, terminate := testSetupWithEtcdServer(t, withNodeNameAndNamespaceIndex)
 	defer terminate()
 
 	pod := &example.Pod{
