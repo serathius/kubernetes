@@ -60,11 +60,22 @@ func init() {
 	utilruntime.Must(examplev1.AddToScheme(scheme))
 }
 
-// GetPodAttrs returns labels and fields of a given object for filtering purposes.
 func GetPodAttrs(obj runtime.Object) (labels.Set, fields.Set, error) {
-	pod, ok := obj.(*example.Pod)
+	if storage.PanicOnLazyDecode {
+		if meta, ok := obj.(metav1.Object); ok {
+			return labels.Set(meta.GetLabels()), fields.Set{
+				"metadata.name":      meta.GetName(),
+				"metadata.namespace": meta.GetNamespace(),
+			}, nil
+		}
+	}
+	realObj, err := storage.DecodeLazyObject(obj)
+	if err != nil {
+		return nil, nil, err
+	}
+	pod, ok := realObj.(*example.Pod)
 	if !ok {
-		return nil, nil, fmt.Errorf("not a pod")
+		return nil, nil, fmt.Errorf("not a pod: %T", realObj)
 	}
 	return labels.Set(pod.ObjectMeta.Labels), PodToSelectableFields(pod), nil
 }
@@ -597,7 +608,11 @@ func withClusterScopedKeyFunc(options *setupOptions) {
 func withNodeNameAndNamespaceIndex(options *setupOptions) {
 	options.indexerFuncs = map[string]storage.IndexerFunc{
 		"spec.nodeName": func(obj runtime.Object) string {
-			pod, ok := obj.(*example.Pod)
+			realObj, err := storage.DecodeLazyObject(obj)
+			if err != nil {
+				return ""
+			}
+			pod, ok := realObj.(*example.Pod)
 			if !ok {
 				return ""
 			}
@@ -606,11 +621,19 @@ func withNodeNameAndNamespaceIndex(options *setupOptions) {
 	}
 	options.indexers = map[string]cache.IndexFunc{
 		"f:spec.nodeName": func(obj interface{}) ([]string, error) {
-			pod := obj.(*example.Pod)
+			realObj, err := storage.DecodeLazyObject(obj.(runtime.Object))
+			if err != nil {
+				return nil, err
+			}
+			pod := realObj.(*example.Pod)
 			return []string{pod.Spec.NodeName}, nil
 		},
 		"f:metadata.namespace": func(obj interface{}) ([]string, error) {
-			pod := obj.(*example.Pod)
+			realObj, err := storage.DecodeLazyObject(obj.(runtime.Object))
+			if err != nil {
+				return nil, err
+			}
+			pod := realObj.(*example.Pod)
 			return []string{pod.ObjectMeta.Namespace}, nil
 		},
 	}
@@ -812,4 +835,42 @@ func BenchmarkStoreStats(b *testing.B) {
 		}
 	}
 	storagetesting.RunBenchmarkStoreStats(ctx, b, cacher)
+}
+
+func TestLazyDecoding(t *testing.T) {
+	storage.PanicOnLazyDecode = true
+	defer func() {
+		storage.PanicOnLazyDecode = false
+	}()
+
+	ctx, cacher, _, terminate := testSetupWithEtcdServer(t)
+	defer terminate()
+
+	pod := &example.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "foo", Namespace: "default"},
+	}
+	var out example.Pod
+	err := cacher.Create(ctx, computePodKey(pod), pod, &out, 0)
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+
+	// Wait a moment for cacher watch cache to catch up
+	time.Sleep(100 * time.Millisecond)
+
+	// Since cacher.Get is calling DecodeLazyObject on the cached object (which we expect to panic),
+	// it should panic here!
+	defer func() {
+		if r := recover(); r != nil {
+			if fmt.Sprintf("%v", r) == "lazy decoding triggered" {
+				t.Log("Successfully caught expected panic: lazy decoding triggered!")
+				return
+			}
+			t.Fatalf("Unexpected panic: %v", r)
+		}
+		t.Fatal("Expected panic did not occur!")
+	}()
+
+	var got example.Pod
+	_ = cacher.Get(ctx, computePodKey(pod), storage.GetOptions{ResourceVersion: "0"}, &got)
 }

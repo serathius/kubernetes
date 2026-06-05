@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -779,12 +780,17 @@ func (wc *watchChan) prepareObjs(e *event) (curObj runtime.Object, oldObj runtim
 		return nil, nil, nil
 	}
 
+	var underlyingType reflect.Type
+	if wc.watcher.newFunc != nil {
+		underlyingType = reflect.TypeOf(wc.watcher.newFunc())
+	}
+
 	if !e.isDeleted {
 		data, _, err := wc.watcher.transformer.TransformFromStorage(wc.ctx, e.value, authenticatedDataString(e.key))
 		if err != nil {
 			return nil, nil, err
 		}
-		curObj, err = decodeObj(wc.watcher.codec, wc.watcher.versioner, data, e.rev)
+		curObj, err = decodeObj(wc.watcher.codec, wc.watcher.versioner, data, e.rev, underlyingType)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -801,7 +807,7 @@ func (wc *watchChan) prepareObjs(e *event) (curObj runtime.Object, oldObj runtim
 		}
 		// Note that this sends the *old* object with the etcd revision for the time at
 		// which it gets deleted.
-		oldObj, err = decodeObj(wc.watcher.codec, wc.watcher.versioner, data, e.rev)
+		oldObj, err = decodeObj(wc.watcher.codec, wc.watcher.versioner, data, e.rev, underlyingType)
 		if err != nil {
 			return nil, nil, wc.watcher.transformIfCorruptObjectError(e, err)
 		}
@@ -831,7 +837,21 @@ func (w *watcher) transformIfCorruptObjectError(e *event, err error) error {
 	return &corruptObjectDeletedError{err: corruptObjErr}
 }
 
-func decodeObj(codec runtime.Codec, versioner storage.Versioner, data []byte, rev int64) (_ runtime.Object, err error) {
+func decodeObj(codec runtime.Codec, versioner storage.Versioner, data []byte, rev int64, underlyingType reflect.Type) (_ runtime.Object, err error) {
+	isPod := false
+	if underlyingType != nil {
+		t := underlyingType
+		if t.Kind() == reflect.Ptr {
+			t = t.Elem()
+		}
+		if t.Kind() == reflect.Struct && t.Name() == "Pod" {
+			isPod = true
+		}
+	}
+	if isPod {
+		return storage.NewLazyObjectWrapper(codec, versioner, data, rev, underlyingType)
+	}
+
 	obj, err := runtime.Decode(codec, []byte(data))
 	if err != nil {
 		if fatalOnDecodeError.Load() {

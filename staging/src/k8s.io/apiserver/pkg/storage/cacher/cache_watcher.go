@@ -361,7 +361,12 @@ func updateResourceVersion(object runtime.Object, versioner storage.Versioner, r
 
 func (c *cacheWatcher) convertToWatchEvent(event *watchCacheEvent) *watch.Event {
 	if event.Type == watch.Bookmark {
-		e := &watch.Event{Type: watch.Bookmark, Object: event.Object.DeepCopyObject()}
+		realObj, err := storage.DecodeLazyObject(event.Object)
+		if err != nil {
+			utilruntime.HandleError(fmt.Errorf("failed to decode lazy object: %v", err))
+			return nil
+		}
+		e := &watch.Event{Type: watch.Bookmark, Object: realObj.DeepCopyObject()}
 		if !c.wasBookmarkAfterRvSent() {
 			if err := storage.AnnotateInitialEventsEndBookmark(e.Object); err != nil {
 				utilruntime.HandleError(fmt.Errorf("error while accessing object's metadata gr: %v, identifier: %v, obj: %#v, err: %v", c.groupResource, c.identifier, e.Object, err))
@@ -383,12 +388,27 @@ func (c *cacheWatcher) convertToWatchEvent(event *watchCacheEvent) *watch.Event 
 
 	switch {
 	case curObjPasses && !oldObjPasses:
-		return &watch.Event{Type: watch.Added, Object: getMutableObject(event.Object)}
+		realObj, err := storage.DecodeLazyObject(event.Object)
+		if err != nil {
+			utilruntime.HandleError(fmt.Errorf("failed to decode lazy object: %v", err))
+			return nil
+		}
+		return &watch.Event{Type: watch.Added, Object: getMutableObject(realObj)}
 	case curObjPasses && oldObjPasses:
-		return &watch.Event{Type: watch.Modified, Object: getMutableObject(event.Object)}
+		realObj, err := storage.DecodeLazyObject(event.Object)
+		if err != nil {
+			utilruntime.HandleError(fmt.Errorf("failed to decode lazy object: %v", err))
+			return nil
+		}
+		return &watch.Event{Type: watch.Modified, Object: getMutableObject(realObj)}
 	case !curObjPasses && oldObjPasses:
 		// return a delete event with the previous object content, but with the event's resource version
-		oldObj := getMutableObject(event.PrevObject)
+		realObj, err := storage.DecodeLazyObject(event.PrevObject)
+		if err != nil {
+			utilruntime.HandleError(fmt.Errorf("failed to decode lazy object: %v", err))
+			return nil
+		}
+		oldObj := getMutableObject(realObj)
 		// We know that if oldObj is cachingObject (which can only be set via
 		// setCachingObjects), its resourceVersion is already set correctly and
 		// we don't need to update it. However, since cachingObject efficiently
