@@ -354,6 +354,109 @@ func (w *watchCache) processEvent(event watch.Event, resourceVersion uint64, upd
 	return nil
 }
 
+func (w *watchCache) BatchProcess(events []watch.Event) error {
+	type preparedEvent struct {
+		wcEvent *watchCacheEvent
+		elem    *store.Element
+		action  func(obj interface{}) error
+	}
+
+	prepared := make([]preparedEvent, 0, len(events))
+
+	for _, event := range events {
+		object, resourceVersion, err := w.objectToVersionedRuntimeObject(event.Object)
+		if err != nil {
+			return err
+		}
+		key, err := w.keyFunc(object)
+		if err != nil {
+			return fmt.Errorf("couldn't compute key: %v", err)
+		}
+		elem := &store.Element{Key: key, Object: object}
+		elem.Labels, elem.Fields, err = w.getAttrsFunc(object)
+		if err != nil {
+			return err
+		}
+
+		wcEvent := &watchCacheEvent{
+			Type:            event.Type,
+			Object:          elem.Object,
+			ObjLabels:       elem.Labels,
+			ObjFields:       elem.Fields,
+			Key:             key,
+			ResourceVersion: resourceVersion,
+			RecordTime:      w.clock.Now(),
+		}
+
+		previous, exists, err := w.store.Get(elem)
+		if err != nil {
+			return err
+		}
+		if exists {
+			previousElem := previous.(*store.Element)
+			wcEvent.PrevObject = previousElem.Object
+			wcEvent.PrevObjLabels = previousElem.Labels
+			wcEvent.PrevObjFields = previousElem.Fields
+		}
+
+		var action func(obj interface{}) error
+		switch event.Type {
+		case watch.Added:
+			action = w.store.Add
+		case watch.Modified:
+			action = w.store.Update
+		case watch.Deleted:
+			action = w.store.Delete
+		default:
+			return fmt.Errorf("unsupported event type in batch: %v", event.Type)
+		}
+
+		prepared = append(prepared, preparedEvent{
+			wcEvent: wcEvent,
+			elem:    elem,
+			action:  action,
+		})
+	}
+
+	err := func() error {
+		w.Lock()
+		defer w.Unlock()
+
+		for _, p := range prepared {
+			metrics.EventsReceivedCounter.WithLabelValues(w.groupResource.Group, w.groupResource.Resource).Inc()
+			w.updateCache(p.wcEvent)
+			w.resourceVersion = p.wcEvent.ResourceVersion
+
+			err := p.action(p.elem)
+			if err != nil {
+				return err
+			}
+			if w.snapshots != nil && w.snapshottingEnabled.Load() {
+				if w.isCacheFullLocked() {
+					oldestRV := w.cache[w.startIndex%w.capacity].ResourceVersion
+					w.snapshots.RemoveLess(oldestRV)
+				}
+				w.snapshots.Add(w.resourceVersion, w.store)
+			}
+		}
+
+		w.cond.Broadcast()
+		return nil
+	}()
+	if err != nil {
+		return err
+	}
+
+	if w.eventHandler != nil {
+		for _, p := range prepared {
+			w.eventHandler(p.wcEvent)
+			metrics.RecordResourceVersion(w.groupResource, p.wcEvent.ResourceVersion)
+		}
+	}
+
+	return nil
+}
+
 // Assumes that lock is already held for write.
 func (w *watchCache) updateCache(event *watchCacheEvent) {
 	w.resizeCacheLocked(event.RecordTime)
