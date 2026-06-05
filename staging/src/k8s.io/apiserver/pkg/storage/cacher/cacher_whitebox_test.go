@@ -80,11 +80,15 @@ func newTestCacherWithoutSyncing(s storage.Interface, c clock.WithTicker) (*Cach
 		ResourcePrefix:      prefix,
 		KeyFunc:             func(obj runtime.Object) (string, error) { return storage.NamespaceKeyFunc(prefix, obj) },
 		GetAttrsFunc: func(obj runtime.Object) (labels.Set, fields.Set, error) {
-			pod, ok := obj.(*example.Pod)
-			if !ok {
-				return storage.DefaultNamespaceScopedAttr(obj)
+			realObj, err := storage.DecodeLazyObject(obj)
+			if err != nil {
+				return nil, nil, err
 			}
-			labelsSet, fieldsSet, err := storage.DefaultNamespaceScopedAttr(obj)
+			pod, ok := realObj.(*example.Pod)
+			if !ok {
+				return storage.DefaultNamespaceScopedAttr(realObj)
+			}
+			labelsSet, fieldsSet, err := storage.DefaultNamespaceScopedAttr(realObj)
 			if err != nil {
 				return nil, nil, err
 			}

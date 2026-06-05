@@ -1030,7 +1030,11 @@ func handleAnyWatch(
 			return nil, false, apierrors.FromObject(event.Object)
 		}
 		if expectedType != nil {
-			if e, a := expectedType, reflect.TypeOf(event.Object); e != a {
+			a := reflect.TypeOf(event.Object)
+			if typed, ok := event.Object.(runtime.TypedObject); ok {
+				a = typed.GetUnderlyingType()
+			}
+			if e := expectedType; e != a {
 				utilruntime.HandleErrorWithContext(ctx, nil, "Unexpected watch event object type", "reflector", name, "expectedType", e, "actualType", a)
 				return nil, false, nil // skip
 			}
