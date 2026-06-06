@@ -109,6 +109,75 @@ func runBenchmarkWriteThroughput(ctx context.Context, b *testing.B, store storag
 	initialRV := "0"
 	latestRV.Store(&initialRV)
 
+	var totalLatencyNS atomic.Int64
+	var latencyEvents atomic.Uint64
+	var maxLatencyNS atomic.Int64
+
+	var initialList example.PodList
+	_ = store.GetList(ctx, "/pods/", storage.ListOptions{
+		Recursive: true,
+		Predicate: storage.SelectionPredicate{
+			GetAttrs: podAttr,
+			Label:    labels.Everything(),
+			Field:    fields.Everything(),
+			Limit:    1,
+		},
+	}, &initialList)
+
+	latencyWatcher, err := store.Watch(ctx, "/pods/", storage.ListOptions{
+		Recursive:       true,
+		ResourceVersion: initialList.ResourceVersion,
+		Predicate:       storage.Everything,
+	})
+
+	stopLatencyWatcherCh := make(chan struct{})
+	var latencyWatcherWg sync.WaitGroup
+	if err == nil {
+		latencyWatcherWg.Add(1)
+		go func() {
+			defer latencyWatcherWg.Done()
+			for {
+				select {
+				case <-stopLatencyWatcherCh:
+					return
+				case ev, ok := <-latencyWatcher.ResultChan():
+					if !ok {
+						return
+					}
+					metaObj, ok := ev.Object.(metav1.Object)
+					if !ok {
+						continue
+					}
+					annotations := metaObj.GetAnnotations()
+					if annotations == nil {
+						continue
+					}
+					tStr, ok := annotations["timestamp"]
+					if !ok {
+						continue
+					}
+					var tNano int64
+					_, err := fmt.Sscanf(tStr, "%d", &tNano)
+					if err != nil {
+						continue
+					}
+					delay := time.Since(time.Unix(0, tNano))
+					totalLatencyNS.Add(delay.Nanoseconds())
+					latencyEvents.Add(1)
+					for {
+						currMax := maxLatencyNS.Load()
+						if delay.Nanoseconds() <= currMax {
+							break
+						}
+						if maxLatencyNS.CompareAndSwap(currMax, delay.Nanoseconds()) {
+							break
+						}
+					}
+				}
+			}
+		}()
+	}
+
 	switch loadType {
 	case loadNone:
 	case loadWatcher:
@@ -141,6 +210,19 @@ func runBenchmarkWriteThroughput(ctx context.Context, b *testing.B, store storag
 	b.ReportMetric(float64(writes.Load())/elapsedSeconds, "writes/s")
 
 	stopBackgroundLoad()
+
+	if err == nil {
+		close(stopLatencyWatcherCh)
+		latencyWatcher.Stop()
+		latencyWatcherWg.Wait()
+
+		if latencyEvents.Load() > 0 {
+			avgLatMS := float64(totalLatencyNS.Load()) / float64(latencyEvents.Load()) / 1e6
+			maxLatMS := float64(maxLatencyNS.Load()) / 1e6
+			b.ReportMetric(avgLatMS, "avg-watch-latency-ms")
+			b.ReportMetric(maxLatMS, "max-watch-latency-ms")
+		}
+	}
 
 	switch loadType {
 	case loadWatcher:
@@ -179,6 +261,10 @@ func runTraffic(ctx context.Context, b *testing.B, store storage.Interface, data
 			panic(fmt.Sprintf("Unexpected error on Delete %q: %v", data.PodKeys[index], err))
 		}
 		pod := data.Pods[index]
+		if pod.Annotations == nil {
+			pod.Annotations = make(map[string]string)
+		}
+		pod.Annotations["timestamp"] = fmt.Sprintf("%d", time.Now().UnixNano())
 		podOut = &example.Pod{}
 		err = store.Create(ctx, data.PodKeys[index], pod, podOut, 0)
 		if err == nil {
@@ -209,6 +295,7 @@ func patchFunc(i int) func(input runtime.Object, res storage.ResponseMeta) (runt
 			curr.Annotations = make(map[string]string)
 		}
 		curr.Annotations["updated-by-benchmark"] = strconv.Itoa(i)
+		curr.Annotations["timestamp"] = fmt.Sprintf("%d", time.Now().UnixNano())
 		return curr, nil, nil
 	}
 }
