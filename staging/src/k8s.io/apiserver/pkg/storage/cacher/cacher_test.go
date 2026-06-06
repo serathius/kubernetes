@@ -734,7 +734,7 @@ func BenchmarkStoreWriteThroughput(b *testing.B) {
 	}{
 		{
 			namespaceCount:       50,
-			podPerNamespaceCount: 3_000,
+			podPerNamespaceCount: 300,
 			nodeCount:            5_000,
 		},
 	}
