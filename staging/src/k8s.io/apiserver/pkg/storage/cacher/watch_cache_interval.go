@@ -135,7 +135,11 @@ func newCacheIntervalFromStore(resourceVersion uint64, indexer store.Indexer, ke
 			allItems = append(allItems, item)
 		}
 	} else {
-		allItems = indexer.List()
+		var err error
+		allItems, err = indexer.OrderedListPrefix(key, "")
+		if err != nil {
+			return nil, err
+		}
 	}
 	buffer.buffer = make([]*watchCacheEvent, len(allItems))
 	for i, item := range allItems {
