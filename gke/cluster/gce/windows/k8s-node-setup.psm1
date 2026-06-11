@@ -465,7 +465,13 @@ function Start-GKEMetadataServer {
     }
   }
 
-  $mgmt_ip = (Get_MgmtNetAdapter | Get-NetIPAddress -AddressFamily IPv4).IPAddress
+
+  $mgmt_ips = @((Get_MgmtNetAdapter | Get-NetIPAddress -AddressFamily IPv4).IPAddress)
+  $mgmt_ip = $mgmt_ips | Select-Object -First 1
+  if ($mgmt_ips.Count -gt 1) {
+    Log-Output "WARNING: management network adapter has multiple IPs associated with it (${mgmt_ips}). Taking the first value (${mgmt_ip}) for MDS debug addr flag."
+  }
+
   if (Is-Antrea-Enabled $kube_env) {
     $listen_ip = $mgmt_ip
   }
