@@ -657,13 +657,7 @@ func (w *watchCache) waitAndGetLatestSnapshot(ctx context.Context, minResourceVe
 			return listSnapshot{Items: result}, w.resourceVersion, matchValue.IndexName, nil
 		}
 	}
-	if w.snapshots != nil {
-		snap, ok := w.snapshots.Latest()
-		if ok {
-			return snap, w.resourceVersion, "", nil
-		}
-	}
-	return w.store, w.resourceVersion, "", nil
+	return w.getSnapshotLocked(), w.resourceVersion, "", nil
 }
 
 type listSnapshot struct {
@@ -892,10 +886,7 @@ func (w *watchCache) getAllEventsSinceLocked(resourceVersion uint64, key string,
 	_, matchesSingle := opts.Predicate.MatchesSingle()
 	matchesSingle = matchesSingle && !opts.Recursive
 	if opts.SendInitialEvents != nil && *opts.SendInitialEvents {
-		if cloned := w.store.Clone(); cloned != nil {
-			return newCacheIntervalFromStore(w.resourceVersion, cloned, key, matchesSingle)
-		}
-		return w.getIntervalFromStoreLocked(key, matchesSingle)
+		return newCacheIntervalFromSnapshot(w.resourceVersion, w.getSnapshotLocked(), key, matchesSingle)
 	}
 
 	size := w.endIndex - w.startIndex
@@ -924,10 +915,7 @@ func (w *watchCache) getAllEventsSinceLocked(resourceVersion uint64, key string,
 			// current state and only then start watching from that point.
 			//
 			// TODO: In v2 api, we should stop returning the current state - #13969.
-			if cloned := w.store.Clone(); cloned != nil {
-				return newCacheIntervalFromStore(w.resourceVersion, cloned, key, matchesSingle)
-			}
-			return w.getIntervalFromStoreLocked(key, matchesSingle)
+			return newCacheIntervalFromSnapshot(w.resourceVersion, w.getSnapshotLocked(), key, matchesSingle)
 		}
 		// SendInitialEvents = false and resourceVersion = 0
 		// means that the request would like to start watching
@@ -950,11 +938,20 @@ func (w *watchCache) getAllEventsSinceLocked(resourceVersion uint64, key string,
 	return ci, nil
 }
 
+func (w *watchCache) getSnapshotLocked() store.Snapshot {
+	if w.snapshots != nil {
+		if snap, ok := w.snapshots.Latest(); ok {
+			return snap
+		}
+	}
+	return w.store.Clone()
+}
+
 // getIntervalFromStoreLocked returns a watchCacheInterval
 // that covers the entire storage state.
 // This function assumes to be called under the watchCache lock.
 func (w *watchCache) getIntervalFromStoreLocked(key string, matchesSingle bool) (*watchCacheInterval, error) {
-	ci, err := newCacheIntervalFromStore(w.resourceVersion, w.store, key, matchesSingle)
+	ci, err := newCacheIntervalFromSnapshot(w.resourceVersion, w.store, key, matchesSingle)
 	if err != nil {
 		return nil, err
 	}

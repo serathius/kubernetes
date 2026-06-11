@@ -298,7 +298,7 @@ func TestResourceVersionAfterInitEvents(t *testing.T) {
 		store.Add(elem)
 	}
 
-	wci, err := newCacheIntervalFromStore(numObjects, store, "", false)
+	wci, err := newCacheIntervalFromSnapshot(numObjects, store, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -395,7 +395,7 @@ func TestCacheIntervalNextFromStore(t *testing.T) {
 		store.Add(elem)
 	}
 
-	wci, err := newCacheIntervalFromStore(rv, store, "", false)
+	wci, err := newCacheIntervalFromSnapshot(rv, store, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -404,7 +404,7 @@ func TestCacheIntervalNextFromStore(t *testing.T) {
 		// The interval buffer can never be empty unless
 		// all elements obtained through List() have been
 		// returned.
-		if wci.buffer.isEmpty() && i != numEvents {
+		if i > 0 && wci.buffer.isEmpty() && i != numEvents {
 			t.Fatal("expected non-empty interval buffer")
 		}
 		event, err := wci.Next()
@@ -430,7 +430,7 @@ func TestCacheIntervalNextFromStore(t *testing.T) {
 	}
 }
 
-// TestCacheIntervalFromStoreSorted verifies newCacheIntervalFromStore returns
+// TestCacheIntervalFromStoreSorted verifies newCacheIntervalFromSnapshot returns
 // events sorted by Key for both indexer backends.
 func TestCacheIntervalFromStoreSorted(t *testing.T) {
 	cases := []struct {
@@ -453,7 +453,7 @@ func TestCacheIntervalFromStoreSorted(t *testing.T) {
 				}
 			}
 
-			wci, err := newCacheIntervalFromStore(n, tc.indexer, "", false)
+			wci, err := newCacheIntervalFromSnapshot(n, tc.indexer, "", false)
 			if err != nil {
 				t.Fatal(err)
 			}

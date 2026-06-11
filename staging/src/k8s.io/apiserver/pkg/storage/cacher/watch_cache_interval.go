@@ -101,6 +101,13 @@ type watchCacheInterval struct {
 
 	// initialEventsEndBookmark will be sent after sending all events in cacheInterval
 	initialEventsEndBookmark *watchCacheEvent
+
+	// For store-backed intervals
+	storeReader   store.Snapshot
+	key           string
+	matchesSingle bool
+	once          sync.Once
+	err           error
 }
 
 type indexerFunc func(int) *watchCacheEvent
@@ -118,60 +125,71 @@ func newCacheInterval(startIndex, endIndex int, indexer indexerFunc, indexValida
 	}
 }
 
-// newCacheIntervalFromStore is meant to handle the case of rv=0, such that the events
+// newCacheIntervalFromSnapshot is meant to handle the case of rv=0, such that the events
 // returned by Next() need to be events from a List() done on the underlying store of
 // the watch cache.
 // The items returned in the interval will be sorted by Key.
-func newCacheIntervalFromStore(resourceVersion uint64, indexer store.Snapshot, key string, matchesSingle bool) (*watchCacheInterval, error) {
-	buffer := &watchCacheIntervalBuffer{}
-	var allItems []interface{}
-	if matchesSingle {
-		item, exists, err := indexer.GetByKey(key)
-		if err != nil {
-			return nil, err
-		}
+func newCacheIntervalFromSnapshot(resourceVersion uint64, indexer store.Snapshot, key string, matchesSingle bool) (*watchCacheInterval, error) {
+	ci := &watchCacheInterval{
+		startIndex:      0,
+		endIndex:        0,
+		buffer:          &watchCacheIntervalBuffer{},
+		resourceVersion: resourceVersion,
+		storeReader:     indexer,
+		key:             key,
+		matchesSingle:   matchesSingle,
+	}
+	return ci, nil
+}
 
+func (wci *watchCacheInterval) lazyInitFromStore() error {
+	var allItems []interface{}
+	if wci.matchesSingle {
+		item, exists, err := wci.storeReader.GetByKey(wci.key)
+		if err != nil {
+			return err
+		}
 		if exists {
 			allItems = append(allItems, item)
 		}
 	} else {
 		var err error
-		allItems, err = indexer.OrderedListPrefix(key, "")
+		allItems, err = wci.storeReader.OrderedListPrefix(wci.key, "")
 		if err != nil {
-			return nil, err
+			return err
 		}
 	}
-	buffer.buffer = make([]*watchCacheEvent, len(allItems))
+	wci.buffer.buffer = make([]*watchCacheEvent, len(allItems))
 	for i, item := range allItems {
 		elem, ok := item.(*store.Element)
 		if !ok {
-			return nil, fmt.Errorf("not a storeElement: %v", elem)
+			return fmt.Errorf("not a storeElement: %v", elem)
 		}
-		buffer.buffer[i] = &watchCacheEvent{
+		wci.buffer.buffer[i] = &watchCacheEvent{
 			Type:            watch.Added,
 			Object:          elem.Object,
 			ObjLabels:       elem.Labels,
 			ObjFields:       elem.Fields,
 			Key:             elem.Key,
-			ResourceVersion: resourceVersion,
+			ResourceVersion: wci.resourceVersion,
 		}
-		buffer.endIndex++
+		wci.buffer.endIndex++
 	}
-	ci := &watchCacheInterval{
-		startIndex: 0,
-		// Simulate that we already have all the events we're looking for.
-		endIndex:        0,
-		buffer:          buffer,
-		resourceVersion: resourceVersion,
-	}
-
-	return ci, nil
+	return nil
 }
 
 // Next returns the next item in the cache interval provided the cache
 // interval is still valid. An error is returned if the interval is
 // invalidated.
 func (wci *watchCacheInterval) Next() (*watchCacheEvent, error) {
+	if wci.storeReader != nil {
+		wci.once.Do(func() {
+			wci.err = wci.lazyInitFromStore()
+		})
+		if wci.err != nil {
+			return nil, wci.err
+		}
+	}
 	// if there are items in the buffer to return, return from
 	// the buffer.
 	if event, exists := wci.buffer.next(); exists {
