@@ -691,6 +691,19 @@ func (l listSnapshot) OrderedListPrefix(prefix string, continueKey string) ([]in
 	return result, nil
 }
 
+func (l listSnapshot) GetByKey(key string) (interface{}, bool, error) {
+	for _, item := range l.Items {
+		elem, ok := item.(*store.Element)
+		if !ok {
+			continue
+		}
+		if elem.Key == key {
+			return item, true, nil
+		}
+	}
+	return nil, false, nil
+}
+
 func (w *watchCache) notFresh(resourceVersion uint64) bool {
 	w.RLock()
 	defer w.RUnlock()
@@ -879,6 +892,9 @@ func (w *watchCache) getAllEventsSinceLocked(resourceVersion uint64, key string,
 	_, matchesSingle := opts.Predicate.MatchesSingle()
 	matchesSingle = matchesSingle && !opts.Recursive
 	if opts.SendInitialEvents != nil && *opts.SendInitialEvents {
+		if cloned := w.store.Clone(); cloned != nil {
+			return newCacheIntervalFromStore(w.resourceVersion, cloned, key, matchesSingle)
+		}
 		return w.getIntervalFromStoreLocked(key, matchesSingle)
 	}
 
@@ -908,6 +924,9 @@ func (w *watchCache) getAllEventsSinceLocked(resourceVersion uint64, key string,
 			// current state and only then start watching from that point.
 			//
 			// TODO: In v2 api, we should stop returning the current state - #13969.
+			if cloned := w.store.Clone(); cloned != nil {
+				return newCacheIntervalFromStore(w.resourceVersion, cloned, key, matchesSingle)
+			}
 			return w.getIntervalFromStoreLocked(key, matchesSingle)
 		}
 		// SendInitialEvents = false and resourceVersion = 0
