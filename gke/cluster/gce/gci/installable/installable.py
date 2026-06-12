@@ -232,11 +232,42 @@ class GCS:
           raise
 
 class Ctr:
+  """Ctr is a wrapper around the container binary. It is used for faking in tests."""
 
   def __init__(self, container_run_output: bool=True):
     self.run_output = container_run_output
 
-  """Ctr is a wrapper around the container binary. It is used for faking in tests."""
+  def _get_super_options(self, mount_point: str) -> list[str]:
+    """Get superblock mount options for a given mount point from /proc/self/mountinfo."""
+    # Index of the mount point field in mountinfo line.
+    mount_point_idx = 4
+    # Offset of the superblock options field relative to the separator '-'
+    super_options_offset = 3
+
+    try:
+      with open('/proc/self/mountinfo', 'r') as f:
+        for line in f:
+          parts = line.strip().split()
+          if len(parts) > mount_point_idx and parts[mount_point_idx] == mount_point:
+            try:
+              sep_idx = parts.index('-')
+              super_options_idx = sep_idx + super_options_offset
+              if len(parts) > super_options_idx:
+                return parts[super_options_idx].split(',')
+            except ValueError:
+              pass
+    except Exception as e:
+      LOGGER.warning(f'Failed to read mount options for {mount_point} from mountinfo: {e}')
+    return []
+
+  def _get_cgroup_mount_spec(self) -> str:
+    """Get mount options for cgroupv2 from /proc/self/mountinfo to prevent stripping on host."""
+    super_opts = self._get_super_options('/sys/fs/cgroup')
+    opts_to_copy = [opt for opt in super_opts if opt in ('nsdelegate', 'memory_recursiveprot')]
+    if opts_to_copy:
+      return 'type=cgroup,dst=/sys/fs/cgroup,options=' + ':'.join(opts_to_copy)
+    return 'type=cgroup,dst=/sys/fs/cgroup'
+
   def download(self, url: str) -> subprocess.CompletedProcess:
     cmd = ['ctr', '-n', INSTALLABLE_NAMESPACE, 'image', 'pull', '--user', f'oauth2accesstoken:{get_gce_credentials()}', url]
     return subprocess.run(
@@ -279,7 +310,7 @@ class Ctr:
 
   def run(self, container_name: str, url: str, ctr_args: list, container_args: list) -> subprocess.CompletedProcess:
     self.remove_container_if_exist(container_name)
-    cmd = ['ctr', '-n', INSTALLABLE_NAMESPACE, 'run', '--rm', '--mount', 'type=cgroup,dst=/sys/fs/cgroup']
+    cmd = ['ctr', '-n', INSTALLABLE_NAMESPACE, 'run', '--rm', '--mount', self._get_cgroup_mount_spec()]
     cmd.extend(ctr_args)
     cmd.extend([url, container_name])
     cmd.extend(container_args)

@@ -584,6 +584,32 @@ class CtrTests(unittest.TestCase):
     )
     self.assertEqual(result.returncode, 0, msg=result)
 
+
+class CgroupMountSpecTests(unittest.TestCase):
+
+  def test_get_cgroup_mount_spec_with_nsdelegate(self):
+    mock_data = "34 25 0:28 / /sys/fs/cgroup rw,nosuid,nodev,noexec,relatime shared:9 - cgroup2 cgroup2 rw,nsdelegate,memory_recursiveprot,memory_hugetlb_accounting\n"
+    with patch("builtins.open", mock.mock_open(read_data=mock_data)):
+      got = installable.ctr._get_cgroup_mount_spec()
+      self.assertEqual(got, 'type=cgroup,dst=/sys/fs/cgroup,options=nsdelegate:memory_recursiveprot')
+
+  def test_get_cgroup_mount_spec_without_nsdelegate(self):
+    mock_data = "34 25 0:28 / /sys/fs/cgroup rw,nosuid,nodev,noexec,relatime shared:9 - cgroup2 cgroup2 rw,memory_hugetlb_accounting\n"
+    with patch("builtins.open", mock.mock_open(read_data=mock_data)):
+      got = installable.ctr._get_cgroup_mount_spec()
+      self.assertEqual(got, 'type=cgroup,dst=/sys/fs/cgroup')
+
+  def test_get_cgroup_mount_spec_missing_cgroup_mount(self):
+    mock_data = "34 25 0:28 / /sys/fs/other rw,nosuid,nodev,noexec,relatime shared:9 - cgroup2 cgroup2 rw,nsdelegate\n"
+    with patch("builtins.open", mock.mock_open(read_data=mock_data)):
+      got = installable.ctr._get_cgroup_mount_spec()
+      self.assertEqual(got, 'type=cgroup,dst=/sys/fs/cgroup')
+
+  def test_get_cgroup_mount_spec_io_error(self):
+    with patch("builtins.open", side_effect=IOError("Permission denied")):
+      got = installable.ctr._get_cgroup_mount_spec()
+      self.assertEqual(got, 'type=cgroup,dst=/sys/fs/cgroup')
+
 fake_creds = "fake_creds"
 
 def is_fake():
