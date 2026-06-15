@@ -303,8 +303,8 @@ func TestCacheIntervalNextFromWatchCache(t *testing.T) {
 				wc.history.endIndex,
 				indexerFunc,
 				wc.history.isIndexValidLocked,
-				wc.resourceVersion,
-				&wc.RWMutex,
+				wc.watchResourceVersion,
+				wc.watchMux.RLocker(),
 			)
 
 			numExpectedEvents := wc.history.endIndex - c.intervalStartIndex

@@ -160,18 +160,20 @@ func compactWatch(c *CacheDelegator, client *clientv3.Client) storagetesting.Com
 			t.Fatal(err)
 		}
 
-		c.cacher.watchCache.RLock()
+		c.cacher.watchCache.storageMux.RLock()
 		err = c.cacher.watchCache.waitUntilFreshLocked(context.TODO(), false, rv)
-		c.cacher.watchCache.RUnlock()
+		c.cacher.watchCache.storageMux.RUnlock()
 		if err != nil {
 			t.Fatalf("WatchCache didn't caught up to RV: %v", rv)
 		}
-		c.cacher.watchCache.Lock()
-		defer c.cacher.watchCache.Unlock()
+		c.cacher.watchCache.watchMux.Lock()
+		defer c.cacher.watchCache.watchMux.Unlock()
+		c.cacher.watchCache.storageMux.Lock()
+		defer c.cacher.watchCache.storageMux.Unlock()
 		c.cacher.Lock()
 		defer c.cacher.Unlock()
 
-		if c.cacher.watchCache.resourceVersion < rv {
+		if c.cacher.watchCache.storageResourceVersion < rv {
 			t.Fatalf("Can't compact into a future version: %v", resourceVersion)
 		}
 
