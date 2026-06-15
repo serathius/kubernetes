@@ -191,6 +191,101 @@ func (w *watchCache) Delete(obj interface{}) error {
 	return w.processEvent(event, resourceVersion)
 }
 
+func (w *watchCache) BatchProcess(events []watch.Event) error {
+	type preparedEvent struct {
+		wcEvent *watchCacheEvent
+		elem    *store.Element
+		action  watch.EventType
+	}
+
+	prepared := make([]preparedEvent, 0, len(events))
+
+	for _, event := range events {
+		object, resourceVersion, err := w.objectToVersionedRuntimeObject(event.Object)
+		if err != nil {
+			return err
+		}
+		key, err := w.config.keyFunc(object)
+		if err != nil {
+			return fmt.Errorf("couldn't compute key: %v", err)
+		}
+		elem := &store.Element{Key: key, Object: object}
+		elem.Labels, elem.Fields, err = w.config.getAttrsFunc(object)
+		if err != nil {
+			return err
+		}
+
+		wcEvent := &watchCacheEvent{
+			Type:            event.Type,
+			Object:          elem.Object,
+			ObjLabels:       elem.Labels,
+			ObjFields:       elem.Fields,
+			Key:             key,
+			ResourceVersion: resourceVersion,
+			RecordTime:      w.config.clock.Now(),
+		}
+
+		previous, exists, err := w.storage.Get(event.Object)
+		if err != nil {
+			return err
+		}
+		if exists {
+			previousElem := previous.(*store.Element)
+			wcEvent.PrevObject = previousElem.Object
+			wcEvent.PrevObjLabels = previousElem.Labels
+			wcEvent.PrevObjFields = previousElem.Fields
+		}
+
+		switch event.Type {
+		case watch.Added, watch.Modified, watch.Deleted:
+		default:
+			return fmt.Errorf("unsupported event type in batch: %v", event.Type)
+		}
+
+		prepared = append(prepared, preparedEvent{
+			wcEvent: wcEvent,
+			elem:    elem,
+			action:  event.Type,
+		})
+	}
+
+	err := func() error {
+		w.Lock()
+		defer w.Unlock()
+
+		for _, p := range prepared {
+			metrics.EventsReceivedCounter.WithLabelValues(w.config.groupResource.Group, w.config.groupResource.Resource).Inc()
+			w.history.updateCache(p.wcEvent)
+			w.resourceVersion = p.wcEvent.ResourceVersion
+
+			err := w.storage.UpdateStoreLocked(p.action, p.elem)
+			if err != nil {
+				return err
+			}
+			if w.history.isCacheFullLocked() {
+				oldestRV := w.history.cache[w.history.startIndex%w.history.capacity].ResourceVersion
+				w.storage.CompactSnapshotsLocked(oldestRV)
+			}
+			w.storage.AddSnapshotLocked(w.resourceVersion)
+		}
+
+		w.cond.Broadcast()
+		return nil
+	}()
+	if err != nil {
+		return err
+	}
+
+	if w.config.eventHandler != nil {
+		for _, p := range prepared {
+			w.config.eventHandler(p.wcEvent)
+			metrics.RecordResourceVersion(w.config.groupResource, p.wcEvent.ResourceVersion)
+		}
+	}
+
+	return nil
+}
+
 func (w *watchCache) objectToVersionedRuntimeObject(obj interface{}) (runtime.Object, uint64, error) {
 	object, ok := obj.(runtime.Object)
 	if !ok {
