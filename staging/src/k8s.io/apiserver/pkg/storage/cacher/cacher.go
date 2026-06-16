@@ -709,7 +709,11 @@ func (c *Cacher) Get(ctx context.Context, key string, opts storage.GetOptions, o
 		if !ok {
 			return fmt.Errorf("non *store.Element returned from storage: %v", obj)
 		}
-		objVal.Set(reflect.ValueOf(elem.Object).Elem())
+		realObj, err := storage.DecodeLazyObject(elem.Object)
+		if err != nil {
+			return err
+		}
+		objVal.Set(reflect.ValueOf(realObj).Elem())
 	} else {
 		objVal.Set(reflect.Zero(objVal.Type()))
 		if !opts.IgnoreNotFound {
@@ -801,7 +805,11 @@ func (c *Cacher) GetList(ctx context.Context, key string, opts storage.ListOptio
 			}
 		}
 		if shardMatch && opts.Predicate.MatchesObjectAttributes(elem.Labels, elem.Fields) {
-			selectedObjects = append(selectedObjects, elem.Object)
+			realObj, err := storage.DecodeLazyObject(elem.Object)
+			if err != nil {
+				return err
+			}
+			selectedObjects = append(selectedObjects, realObj)
 			lastSelectedObjectKey = elem.Key
 		}
 		if limit > 0 && int64(len(selectedObjects)) >= limit {

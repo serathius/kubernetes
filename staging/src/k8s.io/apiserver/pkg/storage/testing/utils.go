@@ -166,6 +166,13 @@ func testCheckResultFunc(t *testing.T, w watch.Interface, check func(actualEvent
 		if co, ok := obj.(runtime.CacheableObject); ok {
 			res.Object = co.GetObject()
 		}
+		if lazy, ok := res.Object.(storage.LazyObject); ok {
+			var err error
+			res.Object, err = lazy.Decode()
+			if err != nil {
+				t.Fatalf("failed to decode lazy object: %v", err)
+			}
+		}
 		check(res)
 	case <-time.After(wait.ForeverTestTimeout):
 		t.Errorf("time out after waiting %v on ResultChan", wait.ForeverTestTimeout)

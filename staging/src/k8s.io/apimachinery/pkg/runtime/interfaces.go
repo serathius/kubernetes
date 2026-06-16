@@ -19,6 +19,7 @@ package runtime
 import (
 	"io"
 	"net/url"
+	"reflect"
 
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
@@ -337,6 +338,12 @@ type Namer interface {
 type Object interface {
 	GetObjectKind() schema.ObjectKind
 	DeepCopyObject() Object
+}
+
+// TypedObject is implemented by wrappers that represent another Go type.
+type TypedObject interface {
+	Object
+	GetUnderlyingType() reflect.Type
 }
 
 // CacheableObject allows an object to cache its different serializations
