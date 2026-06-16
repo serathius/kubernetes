@@ -82,7 +82,9 @@ func newEtcdTestStorageWithCodec(t testing.TB, prefix string, codec runtime.Code
 }
 
 func newEtcdTestStorageWithOptions(t testing.TB, prefix string, codec runtime.Codec, transformer value.Transformer) (*etcd3testing.EtcdTestServer, storage.Interface) {
-	server, _ := etcd3testing.NewUnsecuredEtcd3TestClientServer(t)
+	cfg := testserver.NewTestConfig(t)
+	cfg.QuotaBackendBytes = 8 << 30 // 8 GiB
+	server := &etcd3testing.EtcdTestServer{V3Client: testserver.RunEtcd(t, cfg)}
 	versioner := storage.APIObjectVersioner{}
 	compactor := etcd3.NewCompactor(server.V3Client.Client, 0, clock.RealClock{}, nil)
 	t.Cleanup(compactor.Stop)

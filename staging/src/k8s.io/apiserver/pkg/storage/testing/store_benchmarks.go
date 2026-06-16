@@ -71,9 +71,9 @@ func RunBenchmarkWriteThroughput(ctx context.Context, b *testing.B, store storag
 
 	for _, trafficType := range []string{trafficDeleteCreate, trafficPatch} {
 		b.Run(fmt.Sprintf("Traffic=%s", trafficType), func(b *testing.B) {
-			for _, parallelism := range []int{25} {
+			for _, parallelism := range []int{10, 25} {
 				b.Run(fmt.Sprintf("Parallelism=%d", parallelism), func(b *testing.B) {
-					for _, loadType := range []string{loadNone, loadWatcher, loadLister, loadListerExactRV, loadListerNotOlderThan, loadWatchList} {
+					for _, loadType := range []string{loadNone, loadWatcher, loadLister} {
 						useIndexOptions := []bool{false}
 						if hasIndex && loadType != loadNone {
 							useIndexOptions = []bool{false, true}
