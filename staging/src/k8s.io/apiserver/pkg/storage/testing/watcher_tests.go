@@ -357,6 +357,13 @@ func RunTestDelayedWatchDelivery(ctx context.Context, t *testing.T, store storag
 		if co, ok := object.(runtime.CacheableObject); ok {
 			object = co.GetObject()
 		}
+		if lazy, ok := object.(storage.LazyObject); ok {
+			var err error
+			object, err = lazy.Decode()
+			if err != nil {
+				t.Fatalf("failed to decode lazy object: %v", err)
+			}
+		}
 		if a, e := object.(*example.Pod).Name, fmt.Sprintf("foo-%d", watched); e != a {
 			t.Errorf("Unexpected object watched: %s, expected %s", a, e)
 		}

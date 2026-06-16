@@ -102,7 +102,11 @@ func (s *SelectionPredicate) Matches(obj runtime.Object) (bool, error) {
 	if s.Empty() {
 		return true, nil
 	}
-	labels, fields, err := s.GetAttrs(obj)
+	decodedObj, err := DecodeLazyObject(obj)
+	if err != nil {
+		return false, err
+	}
+	labels, fields, err := s.GetAttrs(decodedObj)
 	if err != nil {
 		return false, err
 	}

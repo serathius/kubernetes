@@ -188,6 +188,13 @@ func testCheckResultWithIgnoreFunc(t *testing.T, w watch.Interface, expectedEven
 			if co, ok := obj.(runtime.CacheableObject); ok {
 				event.Object = co.GetObject()
 			}
+			if lazy, ok := event.Object.(storage.LazyObject); ok {
+				var err error
+				event.Object, err = lazy.Decode()
+				if err != nil {
+					t.Fatalf("failed to decode lazy object: %v", err)
+				}
+			}
 			if ignore != nil && ignore(event) {
 				continue
 			}
@@ -214,11 +221,19 @@ func testCheckStop(t *testing.T, w watch.Interface) {
 	case e, ok := <-w.ResultChan():
 		if ok {
 			var obj string
-			switch e.Object.(type) {
+			object := e.Object
+			if lazy, ok := object.(storage.LazyObject); ok {
+				var err error
+				object, err = lazy.Decode()
+				if err != nil {
+					t.Fatalf("failed to decode lazy object: %v", err)
+				}
+			}
+			switch o := object.(type) {
 			case *example.Pod:
-				obj = e.Object.(*example.Pod).Name
+				obj = o.Name
 			case *v1.Status:
-				obj = e.Object.(*v1.Status).Message
+				obj = o.Message
 			}
 			t.Errorf("ResultChan should have been closed. Event: %s. Object: %s", e.Type, obj)
 		}
