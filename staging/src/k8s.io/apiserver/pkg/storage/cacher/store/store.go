@@ -75,6 +75,7 @@ type Indexer interface {
 
 type Snapshot interface {
 	OrderedListPrefix(prefix, continueKey string) ([]interface{}, error)
+	GetByKey(key string) (item interface{}, exists bool, err error)
 }
 
 func NewIndexer(indexers *cache.Indexers) Indexer {
