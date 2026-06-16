@@ -30,6 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apiserver/pkg/storage"
 	"k8s.io/klog/v2"
 )
 
@@ -409,4 +410,14 @@ func (o *cachingObject) SetManagedFields(managedFields []metav1.ManagedFieldsEnt
 		func() bool { return reflect.DeepEqual(o.object.GetManagedFields(), managedFields) },
 		func() { o.object.SetManagedFields(managedFields) },
 	)
+}
+func (o *cachingObject) Decode() (runtime.Object, error) {
+	o.lock.Lock()
+	defer o.lock.Unlock()
+	realObj, err := storage.DecodeLazyObject(o.object)
+	if err != nil {
+		return nil, err
+	}
+	o.object = realObj.(metaRuntimeInterface)
+	return o, nil
 }

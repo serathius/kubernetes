@@ -442,9 +442,16 @@ func (p podResizeStrategy) GetResetFieldsFilter() map[fieldpath.APIVersion]field
 
 // GetAttrs returns labels and fields of a given object for filtering purposes.
 func GetAttrs(obj runtime.Object) (labels.Set, fields.Set, error) {
-	pod, ok := obj.(*api.Pod)
+	if ls, fs, ok := storage.GetPodAttrsFromLazyObject(obj); ok {
+		return ls, fs, nil
+	}
+	realObj, err := storage.DecodeLazyObject(obj)
+	if err != nil {
+		return nil, nil, err
+	}
+	pod, ok := realObj.(*api.Pod)
 	if !ok {
-		return nil, nil, fmt.Errorf("not a pod")
+		return nil, nil, fmt.Errorf("not a pod: %T", realObj)
 	}
 	return labels.Set(pod.ObjectMeta.Labels), ToSelectableFields(pod), nil
 }
@@ -461,17 +468,28 @@ func MatchPod(label labels.Selector, field fields.Selector) storage.SelectionPre
 
 // NodeNameTriggerFunc returns value spec.nodename of given object.
 func NodeNameTriggerFunc(obj runtime.Object) string {
+	if getter, ok := obj.(storage.PodAttrsGetter); ok {
+		if nodeName, ok := getter.GetPodAttrs(); ok {
+			return nodeName
+		}
+	}
 	return obj.(*api.Pod).Spec.NodeName
 }
 
 // NodeNameIndexFunc return value spec.nodename of given object.
 func NodeNameIndexFunc(obj interface{}) ([]string, error) {
+	if getter, ok := obj.(storage.PodAttrsGetter); ok {
+		if nodeName, ok := getter.GetPodAttrs(); ok {
+			return []string{nodeName}, nil
+		}
+	}
 	pod, ok := obj.(*api.Pod)
 	if !ok {
-		return nil, fmt.Errorf("not a pod")
+		return nil, fmt.Errorf("not a pod: %T", obj)
 	}
 	return []string{pod.Spec.NodeName}, nil
 }
+
 
 // Indexers returns the indexers for pod storage.
 func Indexers() *cache.Indexers {

@@ -958,7 +958,10 @@ func setCachingObjects(event *watchCacheEvent, versioner storage.Versioner) {
 	case watch.Deleted:
 		// Don't wrap Object for delete events - these are not to deliver any
 		// events. Only wrap PrevObject.
-		if object, err := newCachingObject(event.PrevObject); err == nil {
+		if _, err := storage.DecodeLazyObject(event.PrevObject); err != nil {
+			klog.Warningf("Failed to decode lazy PrevObject for delete event, skipping caching wrapper: %v", err)
+			// Malformed object. Do not wrap, do not update RV. Keep event.PrevObject as-is.
+		} else if object, err := newCachingObject(event.PrevObject); err == nil {
 			// Update resource version of the object.
 			// event.PrevObject is used to deliver DELETE watch events and
 			// for them, we set resourceVersion to <current> instead of

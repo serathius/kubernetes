@@ -1071,23 +1071,36 @@ func (s *store) getStateFromObject(obj runtime.Object) (*objState, error) {
 	state.rev = int64(rv)
 	state.meta.ResourceVersion = uint64(state.rev)
 
-	// Compute the serialized form - for that we need to temporarily clean
-	// its resource version field (those are not stored in etcd).
-	if err := s.versioner.PrepareObjectForStorage(obj); err != nil {
-		return nil, fmt.Errorf("PrepareObjectForStorage failed: %v", err)
-	}
-	state.data, err = runtime.Encode(s.codec, obj)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.versioner.UpdateObject(state.obj, uint64(rv)); err != nil {
-		klog.Errorf("failed to update object version: %v", err)
+	if serialized, ok := obj.(storage.SerializedObject); ok {
+		state.data = serialized.SerializedData()
+	} else {
+		// Compute the serialized form - for that we need to temporarily clean
+		// its resource version field (those are not stored in etcd).
+		if err := s.versioner.PrepareObjectForStorage(obj); err != nil {
+			return nil, fmt.Errorf("PrepareObjectForStorage failed: %v", err)
+		}
+		state.data, err = runtime.Encode(s.codec, obj)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.versioner.UpdateObject(state.obj, uint64(rv)); err != nil {
+			klog.Errorf("failed to update object version: %v", err)
+		}
 	}
 	return state, nil
 }
 
 func (s *store) updateState(st *objState, userUpdate storage.UpdateFunc) (runtime.Object, uint64, error) {
-	ret, ttlPtr, err := userUpdate(st.obj, *st.meta)
+	obj := st.obj
+	decoded, err := storage.DecodeLazyObject(obj)
+	if err != nil {
+		return nil, 0, err
+	}
+	if _, isLazy := obj.(storage.LazyObject); isLazy {
+		decoded = decoded.DeepCopyObject()
+	}
+
+	ret, ttlPtr, err := userUpdate(decoded, *st.meta)
 	if err != nil {
 		return nil, 0, err
 	}

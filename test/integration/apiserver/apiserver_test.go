@@ -3989,3 +3989,50 @@ func TestDefaultStorageEncoding(t *testing.T) {
 		}
 	}
 }
+
+func TestPodLazyDecodingTrigger(t *testing.T) {
+	ctx, clientSet, _, tearDownFn := setup(t)
+	defer tearDownFn()
+
+	ns := framework.CreateNamespaceOrDie(clientSet, "ns-lazy", t)
+	defer framework.DeleteNamespaceOrDie(clientSet, ns, t)
+
+	_, err := clientSet.CoreV1().ServiceAccounts(ns.Name).Create(ctx, &v1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: ns.Name},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("Failed to create serviceaccount: %v", err)
+	}
+
+	watcher, err := clientSet.CoreV1().Pods(ns.Name).Watch(ctx, metav1.ListOptions{
+		FieldSelector: "spec.nodeName=fake-node",
+	})
+	if err != nil {
+		t.Fatalf("Failed to start watch: %v", err)
+	}
+	defer watcher.Stop()
+
+	pod := &v1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-pod-lazy", Namespace: ns.Name},
+		Spec: v1.PodSpec{
+			Containers: []v1.Container{{Name: "bar", Image: "nginx"}},
+			NodeName:   "fake-node",
+		},
+	}
+
+	_, err = clientSet.CoreV1().Pods(ns.Name).Create(ctx, pod, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("Failed to create pod: %v", err)
+	}
+
+	select {
+	case event, ok := <-watcher.ResultChan():
+		if !ok {
+			t.Fatalf("Watch channel closed prematurely")
+		}
+		t.Logf("Received event: %v", event.Type)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Timeout waiting for watch event")
+	}
+}
+
