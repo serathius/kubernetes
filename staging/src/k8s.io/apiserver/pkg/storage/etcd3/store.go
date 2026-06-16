@@ -87,6 +87,7 @@ type store struct {
 	listErrAggrFactory func() ListErrorAggregator
 
 	resourcePrefix string
+	newFunc        func() runtime.Object
 	newListFunc    func() runtime.Object
 	compactor      Compactor
 
@@ -192,6 +193,7 @@ func New(c *kubernetes.Client, compactor Compactor, codec runtime.Codec, newFunc
 		listErrAggrFactory: listErrAggrFactory,
 
 		resourcePrefix: resourcePrefix,
+		newFunc:        newFunc,
 		newListFunc:    newListFunc,
 		compactor:      compactor,
 	}
@@ -1092,12 +1094,23 @@ func (s *store) getStateFromObject(obj runtime.Object) (*objState, error) {
 
 func (s *store) updateState(st *objState, userUpdate storage.UpdateFunc) (runtime.Object, uint64, error) {
 	obj := st.obj
-	decoded, err := storage.DecodeLazyObject(obj)
-	if err != nil {
-		return nil, 0, err
-	}
-	if _, isLazy := obj.(storage.LazyObject); isLazy {
-		decoded = decoded.DeepCopyObject()
+	var decoded runtime.Object
+	var err error
+	if lazy, ok := obj.(storage.LazyObject); ok {
+		if serialized, ok := obj.(storage.SerializedObject); ok {
+			decoded = s.newFunc()
+			if err = s.decoder.Decode(serialized.SerializedData(), decoded, int64(st.meta.ResourceVersion)); err != nil {
+				return nil, 0, err
+			}
+		} else {
+			decoded, err = lazy.Decode()
+			if err != nil {
+				return nil, 0, err
+			}
+			decoded = decoded.DeepCopyObject()
+		}
+	} else {
+		decoded = obj
 	}
 
 	ret, ttlPtr, err := userUpdate(decoded, *st.meta)
