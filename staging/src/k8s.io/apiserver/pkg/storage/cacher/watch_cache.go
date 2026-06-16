@@ -634,3 +634,52 @@ func (w *watchCache) getAllEventsSinceLocked(resourceVersion uint64, key string,
 func (w *watchCache) getIntervalFromStoreLocked(key string, matchesSingle bool) (*watchCacheInterval, error) {
 	return newCacheIntervalFromStore(w.resourceVersion, w.storage.SnapshotLocked(), key, matchesSingle)
 }
+
+func (w *watchCache) Compact(rev uint64) {
+	w.storage.Compact(rev)
+}
+
+func (w *watchCache) MarkConsistent(consistent bool) {
+	w.storage.MarkConsistent(consistent)
+}
+
+func (w *watchCache) SnapshottingEnabled() bool {
+	w.RLock()
+	defer w.RUnlock()
+	return w.storage != nil && w.storage.SnapshottingEnabledLocked()
+}
+
+func (w *watchCache) CanServeExactRV(rv uint64) bool {
+	w.RLock()
+	defer w.RUnlock()
+	if w.storage == nil {
+		return false
+	}
+	return w.storage.CanServeExactRVLocked(rv)
+}
+
+func (w *watchCache) GetByKey(key string) (interface{}, bool, error) {
+	w.RLock()
+	defer w.RUnlock()
+	return w.storage.GetByKey(key)
+}
+
+func (w *watchCache) Get(obj interface{}) (interface{}, bool, error) {
+	w.RLock()
+	defer w.RUnlock()
+	return w.storage.Get(obj)
+}
+
+func (w *watchCache) List() []interface{} {
+	w.RLock()
+	defer w.RUnlock()
+	return w.storage.List()
+}
+
+
+
+func (w *watchCache) UpdateListResourceVersion(rv uint64) {
+	w.Lock()
+	defer w.Unlock()
+	w.storage.UpdateListResourceVersion(rv)
+}

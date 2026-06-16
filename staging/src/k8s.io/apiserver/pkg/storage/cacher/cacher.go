@@ -1170,12 +1170,12 @@ func (c *Cacher) Compact(resourceVersion string) error {
 	if err != nil {
 		return err
 	}
-	c.watchCache.storage.Compact(rv)
+	c.watchCache.Compact(rv)
 	return nil
 }
 
 func (c *Cacher) MarkConsistent(consistent bool) {
-	c.watchCache.storage.MarkConsistent(consistent)
+	c.watchCache.MarkConsistent(consistent)
 }
 
 // Stop implements the graceful termination.
@@ -1383,7 +1383,7 @@ func newErrWatcher(err error) *errWatcher {
 
 func (c *Cacher) ShouldDelegateExactRV(resourceVersion string, recursive bool) (delegator.Result, error) {
 	// Not Recursive is not supported unitl exact RV is implemented for WaitUntilFreshAndGet.
-	if !recursive || c.watchCache.storage.snapshots == nil {
+	if !recursive || !c.watchCache.SnapshottingEnabled() {
 		return delegator.Result{ShouldDelegate: true}, nil
 	}
 	listRV, err := c.versioner.ParseResourceVersion(resourceVersion)
@@ -1395,7 +1395,7 @@ func (c *Cacher) ShouldDelegateExactRV(resourceVersion string, recursive bool) (
 
 func (c *Cacher) ShouldDelegateContinue(continueToken string, recursive bool) (delegator.Result, error) {
 	// Not Recursive is not supported unitl exact RV is implemented for WaitUntilFreshAndGet.
-	if !recursive || c.watchCache.storage.snapshots == nil {
+	if !recursive || !c.watchCache.SnapshottingEnabled() {
 		return delegator.Result{ShouldDelegate: true}, nil
 	}
 	_, continueRV, err := storage.DecodeContinue(continueToken, c.resourcePrefix)
@@ -1417,7 +1417,7 @@ func (c *Cacher) shouldDelegateExactRV(rv uint64) (delegator.Result, error) {
 			ShouldDelegate: !delegator.ConsistentReadSupported(),
 		}, nil
 	}
-	_, canServe := c.watchCache.storage.snapshots.GetLessOrEqual(rv)
+	canServe := c.watchCache.CanServeExactRV(rv)
 	return delegator.Result{
 		ShouldDelegate: !canServe,
 	}, nil

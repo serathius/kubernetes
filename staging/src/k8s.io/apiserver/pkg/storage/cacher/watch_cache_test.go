@@ -212,7 +212,7 @@ func TestWatchCacheBasic(t *testing.T) {
 	if err := s.Add(pod1); err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
-	if item, ok, _ := s.storage.Get(pod1); !ok {
+	if item, ok, _ := s.Get(pod1); !ok {
 		t.Errorf("didn't find pod")
 	} else {
 		expected := makeTestStoreElement(makeTestPod("pod", 1))
@@ -224,7 +224,7 @@ func TestWatchCacheBasic(t *testing.T) {
 	if err := s.Update(pod2); err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
-	if item, ok, _ := s.storage.Get(pod2); !ok {
+	if item, ok, _ := s.Get(pod2); !ok {
 		t.Errorf("didn't find pod")
 	} else {
 		expected := makeTestStoreElement(makeTestPod("pod", 2))
@@ -236,7 +236,7 @@ func TestWatchCacheBasic(t *testing.T) {
 	if err := s.Delete(pod3); err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
-	if _, ok, _ := s.storage.Get(pod3); ok {
+	if _, ok, _ := s.Get(pod3); ok {
 		t.Errorf("found pod")
 	}
 
@@ -251,7 +251,7 @@ func TestWatchCacheBasic(t *testing.T) {
 			"/prefix/ns/pod3": *makeTestStoreElement(makeTestPod("pod3", 6)),
 		}
 		items := make(map[string]store.Element)
-		for _, item := range s.storage.List() {
+		for _, item := range s.List() {
 			elem := item.(*store.Element)
 			items[elem.Key] = *elem
 		}
@@ -271,7 +271,7 @@ func TestWatchCacheBasic(t *testing.T) {
 			"/prefix/ns/pod5": *makeTestStoreElement(makeTestPod("pod5", 8)),
 		}
 		items := make(map[string]store.Element)
-		for _, item := range s.storage.List() {
+		for _, item := range s.List() {
 			elem := item.(*store.Element)
 			items[elem.Key] = *elem
 		}
@@ -1550,3 +1550,41 @@ func getMaxItemRV(t *testing.T, versioner storage.Versioner, items []interface{}
 	}
 	return maxRV
 }
+
+func TestWatchCacheStorageMarkConsistent(t *testing.T) {
+	keyFunc := func(obj runtime.Object) (string, error) {
+		return obj.(*mockObject).key, nil
+	}
+	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.ListFromCacheSnapshot, true)
+
+	indexers := &cache.Indexers{}
+	s := newWatchCacheStorage(keyFunc, indexers)
+
+	assert.True(t, s.snapshottingEnabled.Load())
+
+	// Initially consistent, snapshots should be collected
+	elem1 := &store.Element{Key: "foo", Object: &mockObject{key: "foo", val: "100"}}
+	require.NoError(t, s.UpdateStoreLocked(watch.Added, elem1))
+	s.AddSnapshotLocked(100)
+	assert.Equal(t, 1, s.snapshots.Len())
+
+	// Mark inconsistent: snapshots should be cleared and snapshotting disabled
+	s.MarkConsistent(false)
+	assert.Equal(t, 0, s.snapshots.Len())
+	assert.False(t, s.snapshottingEnabled.Load())
+
+	// Adding a snapshot while inconsistent should be a no-op
+	s.AddSnapshotLocked(200)
+	assert.Equal(t, 0, s.snapshots.Len())
+
+	// Mark consistent again: snapshotting enabled, but no snapshots yet
+	s.MarkConsistent(true)
+	assert.True(t, s.snapshottingEnabled.Load())
+	assert.NotNil(t, s.snapshots)
+	assert.Equal(t, 0, s.snapshots.Len())
+
+	// Now snapshots should be collected again
+	s.AddSnapshotLocked(300)
+	assert.Equal(t, 1, s.snapshots.Len())
+}
+
