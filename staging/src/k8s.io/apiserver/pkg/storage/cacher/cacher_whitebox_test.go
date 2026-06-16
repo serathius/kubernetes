@@ -544,94 +544,88 @@ apiserver_watch_cache_consistent_read_total{fallback="skipped", group="", resour
 }
 
 func TestMatchExactResourceVersionFallback(t *testing.T) {
-	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.ListFromCacheSnapshot, true)
-	backingStorage := &cachertesting.MockStorage{}
-	expectStoreRequests := 0
-	backingStorage.GetListFn = func(_ context.Context, key string, opts storage.ListOptions, listObj runtime.Object) error {
-		expectStoreRequests++
-		podList := listObj.(*example.PodList)
-		switch opts.ResourceVersionMatch {
-		case "":
-			podList.ResourceVersion = "42"
-		case metav1.ResourceVersionMatchExact:
-			podList.ResourceVersion = opts.ResourceVersion
-		}
-		return nil
-	}
+	tcs := []struct {
+		name               string
+		snapshotsAvailable []bool
 
-	cacher, _, err := newTestCacherWithoutSyncing(backingStorage, clock.RealClock{})
-	if err != nil {
-		t.Fatalf("Couldn't create cacher: %v", err)
-	}
-	defer cacher.Stop()
-
-	if err := cacher.ready.wait(context.Background()); err != nil {
-		t.Fatalf("unexpected error waiting for the cache to be ready")
-	}
-	delegator := NewCacheDelegator(cacher, backingStorage)
-
-	t.Log("Add object at RV 20 to create a snapshot")
-	pod20 := &example.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace:       "ns",
-			Name:            "pod1",
-			ResourceVersion: "20",
+		expectStoreRequests    int
+		expectSnapshotRequests int
+	}{
+		{
+			name:                   "Disabled",
+			snapshotsAvailable:     []bool{false, false},
+			expectStoreRequests:    2,
+			expectSnapshotRequests: 1,
+		},
+		{
+			name:                   "Enabled",
+			snapshotsAvailable:     []bool{true, true},
+			expectStoreRequests:    1,
+			expectSnapshotRequests: 2,
+		},
+		{
+			name:                   "Fallback",
+			snapshotsAvailable:     []bool{true, false},
+			expectSnapshotRequests: 2,
+			expectStoreRequests:    2,
 		},
 	}
-	err = cacher.watchCache.Add(pod20)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.ListFromCacheSnapshot, true)
+			backingStorage := &cachertesting.MockStorage{}
+			expectStoreRequests := 0
+			backingStorage.GetListFn = func(_ context.Context, key string, opts storage.ListOptions, listObj runtime.Object) error {
+				expectStoreRequests++
+				podList := listObj.(*example.PodList)
+				switch opts.ResourceVersionMatch {
+				case "":
+					podList.ResourceVersion = "42"
+				case metav1.ResourceVersionMatchExact:
+					podList.ResourceVersion = opts.ResourceVersion
+				}
+				return nil
+			}
+			cacher, _, err := newTestCacherWithoutSyncing(backingStorage, clock.RealClock{})
+			if err != nil {
+				t.Fatalf("Couldn't create cacher: %v", err)
+			}
+			defer cacher.Stop()
+			snapshotRequestCount := 0
+			cacher.watchCache.RWMutex.Lock()
+			cacher.watchCache.storage.SetSnapshotterForTest(&fakeSnapshotter{
+				getLessOrEqual: func(rv uint64) (store.Snapshot, bool) {
+					snapshotAvailable := tc.snapshotsAvailable[snapshotRequestCount]
+					snapshotRequestCount++
+					if snapshotAvailable {
+						return fakeIndexer{}, true
+					} else {
+						return nil, false
+					}
+				},
+			})
+			cacher.watchCache.RWMutex.Unlock()
+			if err := cacher.ready.wait(context.Background()); err != nil {
+				t.Fatalf("unexpected error waiting for the cache to be ready")
+			}
+			delegator := NewCacheDelegator(cacher, backingStorage)
 
-	t.Log("List at RV 20 is served from cache snapshot (no etcd store request)")
-	result := &example.PodList{}
-	err = delegator.GetList(context.TODO(), "/pods/ns", storage.ListOptions{
-		ResourceVersion:      "20",
-		ResourceVersionMatch: metav1.ResourceVersionMatchExact,
-		Recursive:            true,
-		Predicate: storage.SelectionPredicate{
-			Label: labels.Everything(),
-			Field: fields.Everything(),
-		},
-	}, result)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	if expectStoreRequests != 1 {
-		t.Fatalf("Unexpected number of requests to storage, got: %d, want: 1", expectStoreRequests)
-	}
+			result := &example.PodList{}
+			err = delegator.GetList(context.TODO(), "/pods/ns", storage.ListOptions{ResourceVersion: "20", ResourceVersionMatch: metav1.ResourceVersionMatchExact, Recursive: true}, result)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if result.ResourceVersion != "20" {
+				t.Fatalf("Unexpected List response RV, got: %q, want: %d", result.ResourceVersion, 20)
+			}
+			if expectStoreRequests != tc.expectStoreRequests {
+				t.Fatalf("Unexpected number of requests to storage, got: %d, want: %d", expectStoreRequests, tc.expectStoreRequests)
+			}
+			if snapshotRequestCount != tc.expectSnapshotRequests {
+				t.Fatalf("Unexpected number of requests to snapshots, got: %d, want: %d", snapshotRequestCount, tc.expectSnapshotRequests)
+			}
 
-	t.Log("Add object at RV 30 to advance cache version and record another snapshot")
-	pod30 := &example.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace:       "ns",
-			Name:            "pod1",
-			ResourceVersion: "30",
-		},
-	}
-	err = cacher.watchCache.Update(pod30)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	t.Log("Compact snapshots up to 30. This deletes snapshot at 20")
-	cacher.Compact("30")
-
-	t.Log("List at RV 20 now falls back to store since snapshot at 20 was compacted")
-	err = delegator.GetList(context.TODO(), "/pods/ns", storage.ListOptions{
-		ResourceVersion:      "20",
-		ResourceVersionMatch: metav1.ResourceVersionMatchExact,
-		Recursive:            true,
-		Predicate: storage.SelectionPredicate{
-			Label: labels.Everything(),
-			Field: fields.Everything(),
-		},
-	}, result)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	if expectStoreRequests != 2 {
-		t.Fatalf("Unexpected number of requests to storage, got: %d, want: 2", expectStoreRequests)
+		})
 	}
 }
 
@@ -3445,3 +3439,26 @@ func TestFilterWithAttrsAndPrefixFunction_NamespaceShardingMismatch(t *testing.T
 		t.Error("expected filter to reject: namespace hash doesn't fall in shard range")
 	}
 }
+
+type fakeSnapshotter struct {
+	getLessOrEqual func(rv uint64) (store.Snapshot, bool)
+}
+
+var _ store.Snapshotter = (*fakeSnapshotter)(nil)
+
+func (f *fakeSnapshotter) Reset() {}
+func (f *fakeSnapshotter) GetLessOrEqual(rv uint64) (store.Snapshot, bool) {
+	if f.getLessOrEqual == nil {
+		return nil, false
+	}
+	return f.getLessOrEqual(rv)
+}
+func (f *fakeSnapshotter) Add(rv uint64, indexer store.Indexer) {}
+func (f *fakeSnapshotter) RemoveLess(rv uint64)                 {}
+func (f *fakeSnapshotter) Len() int {
+	return 0
+}
+func (f *fakeSnapshotter) Latest() (store.Snapshot, bool) {
+	return nil, false
+}
+
