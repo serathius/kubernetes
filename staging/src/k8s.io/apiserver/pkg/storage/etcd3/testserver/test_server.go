@@ -130,6 +130,13 @@ func RunEtcd(t testing.TB, cfg *embed.Config) *kubernetes.Client {
 // RunExternalEtcd starts an external etcd subprocess and returns a client connected to the server.
 // The external etcd process is terminated when the test ends.
 func RunExternalEtcd(t testing.TB) *kubernetes.Client {
+	client, _ := RunExternalEtcdWithOptions(t)
+	return client
+}
+
+// RunExternalEtcdWithOptions starts an external etcd subprocess and returns a client and a stop function.
+// The external etcd process is terminated when the stop function is called or when the test ends.
+func RunExternalEtcdWithOptions(t testing.TB) (*kubernetes.Client, func()) {
 	t.Helper()
 	ports, err := getAvailablePorts(2)
 	if err != nil {
@@ -141,9 +148,16 @@ func RunExternalEtcd(t testing.TB) *kubernetes.Client {
 	clientURL := fmt.Sprintf("http://127.0.0.1:%d", clientPort)
 	peerURL := fmt.Sprintf("http://127.0.0.1:%d", peerPort)
 
-	dir := t.TempDir()
+	dir := os.Getenv("BENCHMARK_ETCD_DATA_DIR")
+	if dir == "" {
+		dir = t.TempDir()
+	} else {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatalf("failed to create etcd data dir %q: %v", dir, err)
+		}
+	}
 
-	cmd := exec.Command("etcd",
+	cmd := exec.Command("taskset", "-c", "0-7", "etcd",
 		"--data-dir", dir,
 		"--listen-client-urls", clientURL,
 		"--advertise-client-urls", clientURL,
@@ -154,8 +168,19 @@ func RunExternalEtcd(t testing.TB) *kubernetes.Client {
 		"--log-level", "warn",
 	)
 
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
+	logPath := os.Getenv("ETCD_LOG_FILE")
+	var logFile *os.File
+	if logPath != "" {
+		logFile, err = os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	}
+	if err == nil && logFile != nil {
+		cmd.Stdout = logFile
+		cmd.Stderr = logFile
+		t.Cleanup(func() { logFile.Close() })
+	} else {
+		cmd.Stdout = io.Discard
+		cmd.Stderr = io.Discard
+	}
 
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("failed to start external etcd: %v", err)
@@ -176,14 +201,19 @@ func RunExternalEtcd(t testing.TB) *kubernetes.Client {
 		t.Fatal("external etcd failed to start")
 	}
 
-	t.Cleanup(func() {
-		cmd.Process.Kill()
-		cmd.Wait()
-	})
+	var once sync.Once
+	stop := func() {
+		once.Do(func() {
+			cmd.Process.Kill()
+			cmd.Wait()
+		})
+	}
+	t.Cleanup(stop)
 
-	return newTestClient(t, clientv3.Config{
+	client := newTestClient(t, clientv3.Config{
 		Endpoints: []string{clientURL},
 	})
+	return client, stop
 }
 
 func newTestClient(t testing.TB, config clientv3.Config) *kubernetes.Client {
@@ -197,6 +227,9 @@ func newTestClient(t testing.TB, config clientv3.Config) *kubernetes.Client {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		_ = client.Close()
+	})
 	client.KV = storagetesting.NewKVRecorder(client.KV)
 	client.Kubernetes = storagetesting.NewKubernetesRecorder(client.Kubernetes)
 	return client

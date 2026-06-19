@@ -1,0 +1,10 @@
+goos: linux
+goarch: amd64
+pkg: k8s.io/apiserver/pkg/storage/cacher
+cpu: AMD Ryzen Threadripper PRO 3945WX 12-Cores
+BenchmarkStoreWriteThroughput/Namespaces=50/Pods=150000/Nodes=5000/Traffic=DeleteCreate/Parallelism=25/Background=None/UseIndex=false-16                    5300      205188 ns/op                 1.931 watch-latency-p99-s           26845 writes/s       355036 B/op       2375 allocs/op
+BenchmarkStoreWriteThroughput/Namespaces=50/Pods=150000/Nodes=5000/Traffic=DeleteCreate/Parallelism=25/Background=None/UseIndex=false-16                    5492      231522 ns/op                 5.453 watch-latency-p99-s           18596 writes/s       357726 B/op       2377 allocs/op
+BenchmarkStoreWriteThroughput/Namespaces=50/Pods=150000/Nodes=5000/Traffic=DeleteCreate/Parallelism=25/Background=None/UseIndex=false-16                    5732      196416 ns/op                 5.556 watch-latency-p99-s           18205 writes/s       353600 B/op       2381 allocs/op
+BenchmarkStoreWriteThroughput/Namespaces=50/Pods=150000/Nodes=5000/Traffic=Patch/Parallelism=25/Background=None/UseIndex=false-16                          10485       99807 ns/op                 0.1862 watch-latency-p99-s          11729 writes/s       207269 B/op       1182 allocs/op
+BenchmarkStoreWriteThroughput/Namespaces=50/Pods=150000/Nodes=5000/Traffic=Patch/Parallelism=25/Background=None/UseIndex=false-16                          11265      128720 ns/op                 0.6746 watch-latency-p99-s          13591 writes/s       214755 B/op       1176 allocs/op
+BenchmarkStoreWriteThroughput/Namespaces=50/Pods=150000/Nodes=5000/Traffic=Patch/Parallelism=25/Background=None/UseIndex=false-16                          11558      119397 ns/op                 0.5304 watch-latency-p99-s          12880 writes/s       220158 B/op       1178 allocs/op

@@ -27,11 +27,14 @@ import (
 
 // EtcdTestServer encapsulates the datastructures needed to start local instance for testing
 type EtcdTestServer struct {
-	V3Client *kubernetes.Client
+	V3Client      *kubernetes.Client
+	TerminateFunc func()
 }
 
 func (e *EtcdTestServer) Terminate(t testing.TB) {
-	// no-op, server termination moved to test cleanup
+	if e.TerminateFunc != nil {
+		e.TerminateFunc()
+	}
 }
 
 // NewUnsecuredEtcd3TestClientServer creates a new client and server for testing
@@ -43,7 +46,9 @@ func NewUnsecuredEtcd3TestClientServer(t testing.TB) (*EtcdTestServer, *storageb
 func NewUnsecuredEtcd3TestClientServerWithOptions(t testing.TB, useExternalEtcd bool) (*EtcdTestServer, *storagebackend.Config) {
 	server := &EtcdTestServer{}
 	if useExternalEtcd {
-		server.V3Client = testserver.RunExternalEtcd(t)
+		client, stop := testserver.RunExternalEtcdWithOptions(t)
+		server.V3Client = client
+		server.TerminateFunc = stop
 	} else {
 		server.V3Client = testserver.RunEtcd(t, nil)
 	}

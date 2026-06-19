@@ -24,6 +24,8 @@ import (
 	"io"
 	"os"
 	"reflect"
+	stdruntime "runtime"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -44,8 +46,10 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
+	"k8s.io/apimachinery/pkg/runtime/serializer/protobuf"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apiserver/pkg/apis/example"
+	corev1 "k8s.io/api/core/v1"
 	examplev1 "k8s.io/apiserver/pkg/apis/example/v1"
 	"k8s.io/apiserver/pkg/features"
 	"k8s.io/apiserver/pkg/storage"
@@ -53,6 +57,7 @@ import (
 	storagemetrics "k8s.io/apiserver/pkg/storage/metrics"
 	storagetesting "k8s.io/apiserver/pkg/storage/testing"
 	"k8s.io/apiserver/pkg/storage/value"
+	"k8s.io/apiserver/pkg/storage/value/encrypt/identity"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	featuregatetesting "k8s.io/component-base/featuregate/testing"
 	"k8s.io/component-base/metrics/legacyregistry"
@@ -63,15 +68,35 @@ import (
 
 var scheme = runtime.NewScheme()
 var codecs = serializer.NewCodecFactory(scheme)
+var (
+	examplev1ProtoCodec runtime.Codec
+	corev1ProtoCodec    runtime.Codec
+)
 
 const defaultTestPrefix = "test!"
+
+func getTestPathPrefix() string {
+	pref := os.Getenv("ETCD_PREFIX")
+	if pref == "" {
+		pref = "registry"
+	}
+	if !strings.HasPrefix(pref, "/") {
+		pref = "/" + pref
+	}
+	return pref
+}
 
 func init() {
 	metav1.AddToGroupVersion(scheme, metav1.SchemeGroupVersion)
 	utilruntime.Must(example.AddToScheme(scheme))
 	utilruntime.Must(examplev1.AddToScheme(scheme))
+	utilruntime.Must(corev1.AddToScheme(scheme))
 
 	grpclog.SetLoggerV2(grpclog.NewLoggerV2(io.Discard, io.Discard, os.Stderr))
+
+	pb := protobuf.NewSerializer(scheme, scheme)
+	examplev1ProtoCodec = codecs.CodecForVersions(pb, pb, schema.GroupVersions{examplev1.SchemeGroupVersion}, nil)
+	corev1ProtoCodec = codecs.CodecForVersions(pb, pb, schema.GroupVersions{corev1.SchemeGroupVersion}, schema.GroupVersions{corev1.SchemeGroupVersion})
 }
 
 func newPod() runtime.Object {
@@ -711,6 +736,8 @@ func withPrefix(prefix string) setupOption {
 	}
 }
 
+
+
 func withResourcePrefix(prefix string) setupOption {
 	return func(options *setupOptions) {
 		options.resourcePrefix = prefix
@@ -753,6 +780,12 @@ func withExternalEtcd(options *setupOptions) {
 	options.client = func(t testing.TB) *kubernetes.Client {
 		return testserver.RunExternalEtcd(t)
 	}
+}
+
+func withCorev1Pods(options *setupOptions) {
+	options.codec = corev1ProtoCodec
+	options.newFunc = func() runtime.Object { return &corev1.Pod{} }
+	options.newListFunc = func() runtime.Object { return &corev1.PodList{} }
 }
 
 var _ setupOption = withDefaults
@@ -1044,13 +1077,92 @@ func BenchmarkStoreWriteThroughput(b *testing.B) {
 			nodeCount:            5_000,
 		},
 	}
+
 	for _, dims := range dimensions {
-		b.Run(fmt.Sprintf("Namespaces=%d/Pods=%d/Nodes=%d", dims.namespaceCount, dims.namespaceCount*dims.podPerNamespaceCount, dims.nodeCount), func(b *testing.B) {
-			ctx, store, _ := testSetup(b, withExternalEtcd)
-			data := storagetesting.PrepareBenchmarkData(dims.namespaceCount, dims.podPerNamespaceCount, dims.nodeCount)
+		nsCount := dims.namespaceCount
+		podPerNs := dims.podPerNamespaceCount
+		nodeCount := dims.nodeCount
+		totalPods := nsCount * podPerNs
+
+		b.Run(fmt.Sprintf("Namespaces=%d/Pods=%d/Nodes=%d", nsCount, totalPods, nodeCount), func(b *testing.B) {
+			b.Cleanup(stdruntime.GC)
+			ctx := context.Background()
+
+			data := storagetesting.PrepareBenchmarkData(nsCount, podPerNs, nodeCount)
+
+			seedFn := func(ctx context.Context, store storage.Interface) error {
+				return storagetesting.PrecreateBenchmarkPods(ctx, store, data)
+			}
+
+			createStoreFn := func(b testing.TB, dataDir string) (storage.Interface, func()) {
+				client, stopServer := testserver.RunExternalEtcdWithOptions(b)
+				store, stopStore := newStoreOnClient(b, client)
+				return store, func() {
+					rv, err := store.GetCurrentResourceVersion(context.Background())
+					if err == nil && rv > 0 {
+						_, _ = client.Client.Compact(context.Background(), int64(rv), clientv3.WithCompactPhysical())
+					}
+					stopStore()
+					stopServer()
+				}
+			}
+
+			storagetesting.SetupPreseededDatabase(b, nsCount, totalPods, nodeCount, data, seedFn, createStoreFn)
+
+			ctx, store, client := testSetup(b, withExternalEtcd, withCorev1Pods, withPrefix(getTestPathPrefix()), withTransformer(identity.NewEncryptCheckTransformer()))
+
+			storagetesting.PopulateInitialResourceVersions(ctx, b, &data, getTestPathPrefix(), func(ctx context.Context, prefix string) (map[string]string, error) {
+				actualPrefix := prefix
+				if !strings.HasPrefix(actualPrefix, "/") {
+					actualPrefix = "/" + actualPrefix
+				}
+				resp, err := client.Client.Get(ctx, actualPrefix, clientv3.WithPrefix(), clientv3.WithKeysOnly())
+				if err != nil {
+					return nil, err
+				}
+				keyToRev := make(map[string]string)
+				for _, kv := range resp.Kvs {
+					keyToRev[string(kv.Key)] = strconv.FormatInt(kv.ModRevision, 10)
+				}
+				return keyToRev, nil
+			})
+
 			b.ResetTimer()
-			storagetesting.RunBenchmarkWriteThroughput(ctx, b, store, data, false, nil)
+			compactFn := func(ctx context.Context, rv uint64) error {
+				_, err := client.Client.Compact(ctx, int64(rv), clientv3.WithCompactPhysical())
+				if err != nil && strings.Contains(err.Error(), "required revision has been compacted") {
+					return nil
+				}
+				return err
+			}
+			storagetesting.RunBenchmarkWriteThroughput(ctx, b, store, data, false, nil, compactFn)
 		})
+	}
+}
+
+func newStoreOnClient(b testing.TB, client *kubernetes.Client) (*store, func()) {
+	versioner := storage.APIObjectVersioner{}
+	compactor := NewCompactor(client.Client, 0, clock.RealClock{}, nil)
+	store, err := New(
+		client,
+		compactor,
+		corev1ProtoCodec,
+		func() runtime.Object { return &corev1.Pod{} },
+		func() runtime.Object { return &corev1.PodList{} },
+		"",
+		"/pods/",
+		schema.GroupResource{Resource: "pods"},
+		newTestTransformer(),
+		newTestLeaseManagerConfig(),
+		NewDefaultDecoder(corev1ProtoCodec, versioner),
+		versioner,
+	)
+	if err != nil {
+		b.Fatalf("failed to create store: %v", err)
+	}
+	return store, func() {
+		store.Close()
+		compactor.Stop()
 	}
 }
 

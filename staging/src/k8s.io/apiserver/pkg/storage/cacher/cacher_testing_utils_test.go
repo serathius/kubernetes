@@ -86,12 +86,18 @@ func newEtcdTestStorageWithOptions(t testing.TB, prefix string, codec runtime.Co
 	versioner := storage.APIObjectVersioner{}
 	compactor := etcd3.NewCompactor(server.V3Client.Client, 0, clock.RealClock{}, nil)
 	t.Cleanup(compactor.Stop)
+	newFunc := newPod
+	newListFunc := newPodList
+	if codec == corev1ProtoCodec {
+		newFunc = func() runtime.Object { return &corev1.Pod{} }
+		newListFunc = func() runtime.Object { return &corev1.PodList{} }
+	}
 	storage, err := etcd3.New(
 		server.V3Client,
 		compactor,
 		codec,
-		newPod,
-		newPodList,
+		newFunc,
+		newListFunc,
 		prefix,
 		"/pods/",
 		schema.GroupResource{Resource: "pods"},

@@ -21,14 +21,18 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	stdruntime "runtime"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/require"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"google.golang.org/grpc/grpclog"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/apitesting"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -556,14 +560,16 @@ func TestWatch(t *testing.T) {
 type tearDownFunc func()
 
 type setupOptions struct {
-	resourcePrefix string
-	keyFunc        func(runtime.Object) (string, error)
-	indexerFuncs   map[string]storage.IndexerFunc
-	indexers       cache.Indexers
-	clock          clock.WithTicker
-	codec          runtime.Codec
-	transformer    value.Transformer
+	resourcePrefix  string
+	keyFunc         func(runtime.Object) (string, error)
+	indexerFuncs    map[string]storage.IndexerFunc
+	indexers        cache.Indexers
+	clock           clock.WithTicker
+	codec           runtime.Codec
+	transformer     value.Transformer
 	useExternalEtcd bool
+	newFunc         func() runtime.Object
+	newListFunc     func() runtime.Object
 }
 
 type setupOption func(*setupOptions)
@@ -580,6 +586,8 @@ func withDefaults(options *setupOptions) {
 	options.clock = clock.RealClock{}
 	options.codec = examplev1ProtoCodec
 	options.transformer = identity.NewEncryptCheckTransformer()
+	options.newFunc = newPod
+	options.newListFunc = newPodList
 }
 
 func withClusterScopedKeyFunc(options *setupOptions) {
@@ -609,6 +617,34 @@ func withNodeNameAndNamespaceIndex(options *setupOptions) {
 			return []string{pod.ObjectMeta.Namespace}, nil
 		},
 	}
+}
+
+func withCorev1NodeNameAndNamespaceIndex(options *setupOptions) {
+	options.indexerFuncs = map[string]storage.IndexerFunc{
+		"spec.nodeName": func(obj runtime.Object) string {
+			pod, ok := obj.(*corev1.Pod)
+			if !ok {
+				return ""
+			}
+			return pod.Spec.NodeName
+		},
+	}
+	options.indexers = map[string]cache.IndexFunc{
+		"f:spec.nodeName": func(obj interface{}) ([]string, error) {
+			pod := obj.(*corev1.Pod)
+			return []string{pod.Spec.NodeName}, nil
+		},
+		"f:metadata.namespace": func(obj interface{}) ([]string, error) {
+			pod := obj.(*corev1.Pod)
+			return []string{pod.ObjectMeta.Namespace}, nil
+		},
+	}
+}
+
+func withCorev1Pods(options *setupOptions) {
+	options.codec = corev1ProtoCodec
+	options.newFunc = func() runtime.Object { return &corev1.Pod{} }
+	options.newListFunc = func() runtime.Object { return &corev1.PodList{} }
 }
 
 func withCodec(codec runtime.Codec) setupOption {
@@ -722,6 +758,72 @@ func (c *createWrapper) Create(ctx context.Context, key string, obj, out runtime
 		return true, nil
 	})
 }
+func newCacherOnStorage(t testing.TB, etcdStorage storage.Interface, opts ...setupOption) (*CacheDelegator, func()) {
+	setupOpts := setupOptions{}
+	opts = append([]setupOption{withDefaults}, opts...)
+	for _, opt := range opts {
+		opt(&setupOpts)
+	}
+	var getAttrsFunc func(runtime.Object) (labels.Set, fields.Set, error)
+	if _, ok := setupOpts.newFunc().(*corev1.Pod); ok {
+		getAttrsFunc = getCorev1PodAttrs
+	} else {
+		getAttrsFunc = GetPodAttrs
+	}
+
+	config := Config{
+		Storage:             etcdStorage,
+		Versioner:           storage.APIObjectVersioner{},
+		GroupResource:       schema.GroupResource{Resource: "pods"},
+		EventsHistoryWindow: DefaultEventFreshDuration,
+		ResourcePrefix:      setupOpts.resourcePrefix,
+		KeyFunc:             setupOpts.keyFunc,
+		GetAttrsFunc:        getAttrsFunc,
+		NewFunc:             setupOpts.newFunc,
+		NewListFunc:         setupOpts.newListFunc,
+		IndexerFuncs:        setupOpts.indexerFuncs,
+		Indexers:            &setupOpts.indexers,
+		Codec:               setupOpts.codec,
+		Clock:               setupOpts.clock,
+	}
+	cacher, err := NewCacherFromConfig(config)
+	if err != nil {
+		t.Fatalf("Failed to initialize cacher: %v", err)
+	}
+	ctx := context.Background()
+	if err := cacher.Wait(ctx); err != nil {
+		t.Fatal(err)
+	}
+	delegator := NewCacheDelegator(cacher, etcdStorage)
+	return delegator, func() {
+		delegator.Stop()
+		cacher.Stop()
+	}
+}
+
+func compactWatchCache(ctx context.Context, client *clientv3.Client, cacher *CacheDelegator, rv uint64) error {
+	_, err := client.Compact(ctx, int64(rv), clientv3.WithCompactPhysical())
+	if err != nil && !strings.Contains(err.Error(), "required revision has been compacted") {
+		return err
+	}
+
+	cacher.cacher.watchCache.Lock()
+	defer cacher.cacher.watchCache.Unlock()
+	cacher.cacher.Lock()
+	defer cacher.cacher.Unlock()
+
+	for cacher.cacher.watchCache.history.startIndex < cacher.cacher.watchCache.history.endIndex {
+		index := cacher.cacher.watchCache.history.startIndex % cacher.cacher.watchCache.history.capacity
+		if cacher.cacher.watchCache.history.cache[index].ResourceVersion > rv {
+			break
+		}
+		cacher.cacher.watchCache.history.startIndex++
+	}
+	cacher.cacher.watchCache.storage.UpdateListResourceVersion(rv)
+	cacher.cacher.watchCache.storage.CompactSnapshotsLocked(rv)
+	return nil
+}
+
 func BenchmarkStoreWriteThroughput(b *testing.B) {
 	klog.SetLogger(logr.Discard())
 	grpclog.SetLoggerV2(grpclog.NewLoggerV2(io.Discard, io.Discard, io.Discard))
@@ -732,33 +834,83 @@ func BenchmarkStoreWriteThroughput(b *testing.B) {
 	}{
 		{
 			namespaceCount:       50,
-			podPerNamespaceCount: 300,
-			nodeCount:            500,
-		},
-		{
-			namespaceCount:       50,
 			podPerNamespaceCount: 3_000,
 			nodeCount:            5_000,
 		},
 	}
 	for _, dims := range dimensions {
 		b.Run(fmt.Sprintf("Namespaces=%d/Pods=%d/Nodes=%d", dims.namespaceCount, dims.namespaceCount*dims.podPerNamespaceCount, dims.nodeCount), func(b *testing.B) {
-			opts := []setupOption{withNodeNameAndNamespaceIndex, withExternalEtcd}
-			ctx, cacher, _, terminate := testSetupWithEtcdServer(b, opts...)
-			b.Cleanup(terminate)
+			b.Cleanup(stdruntime.GC)
+			opts := []setupOption{withCorev1NodeNameAndNamespaceIndex, withExternalEtcd, withCorev1Pods}
+
+			setupOpts := setupOptions{}
+			optsForSetup := append([]setupOption{withDefaults}, opts...)
+			for _, opt := range optsForSetup {
+				opt(&setupOpts)
+			}
+
+			totalPods := dims.namespaceCount * dims.podPerNamespaceCount
+			ctx := context.Background()
+
+			fmt.Println("[Stage] Preparing benchmark data...")
 			data := storagetesting.PrepareBenchmarkData(dims.namespaceCount, dims.podPerNamespaceCount, dims.nodeCount)
+
+			seedFn := func(ctx context.Context, store storage.Interface) error {
+				return storagetesting.PrecreateBenchmarkPods(ctx, store, data)
+			}
+
+			createStoreFn := func(b testing.TB, dataDir string) (storage.Interface, func()) {
+				server, etcdStorage := newEtcdTestStorageWithOptions(b, etcd3testing.PathPrefix(), setupOpts.codec, setupOpts.transformer, setupOpts.useExternalEtcd)
+				cacher1, stopCacher1 := newCacherOnStorage(b, etcdStorage, opts...)
+				return cacher1, func() {
+					fmt.Println("[Stage] Compacting database after seeding...")
+					rv, err := cacher1.GetCurrentResourceVersion(context.Background())
+					if err == nil && rv > 0 {
+						_, err = server.V3Client.Client.Compact(context.Background(), int64(rv), clientv3.WithCompactPhysical())
+						if err != nil {
+							fmt.Printf("Warning: failed to compact seeding database: %v\n", err)
+						}
+					}
+					stopCacher1()
+					server.Terminate(b)
+				}
+			}
+
+			storagetesting.SetupPreseededDatabase(b, dims.namespaceCount, totalPods, dims.nodeCount, data, seedFn, createStoreFn)
+
+			server, etcdStorage := newEtcdTestStorageWithOptions(b, etcd3testing.PathPrefix(), setupOpts.codec, setupOpts.transformer, setupOpts.useExternalEtcd)
+			
+			stats, err := etcdStorage.Stats(ctx)
+			require.NoError(b, err)
+			expectedCount := int64(totalPods)
+			if stats.ObjectCount != expectedCount {
+				b.Fatalf("Pre-seeded storage object count mismatch: expected %d, got %d. Database may be corrupt or outdated.", expectedCount, stats.ObjectCount)
+			}
+
+			cacher2, stopCacher2 := newCacherOnStorage(b, etcdStorage, opts...)
+			b.Cleanup(func() {
+				stopCacher2()
+				server.Terminate(b)
+			})
+
 			tracker := storagetesting.NewWatchLatencyTracker(clock.RealClock{})
-			originalHandler := cacher.cacher.watchCache.config.eventHandler
-			cacher.cacher.watchCache.config.eventHandler = func(event *watchCacheEvent) {
+			originalHandler := cacher2.cacher.watchCache.config.eventHandler
+			cacher2.cacher.watchCache.config.eventHandler = func(event *watchCacheEvent) {
 				if originalHandler != nil {
 					originalHandler(event)
 				}
-				tracker.HandleEvent(event.Object)
+				tracker.HandleEvent(event.Type, event.Object)
 			}
 			b.Cleanup(func() {
-				cacher.cacher.watchCache.config.eventHandler = originalHandler
+				cacher2.cacher.watchCache.config.eventHandler = originalHandler
 			})
-			storagetesting.RunBenchmarkWriteThroughput(ctx, b, cacher, data, true, tracker)
+
+			compactFn := func(ctx context.Context, rv uint64) error {
+				return compactWatchCache(ctx, server.V3Client.Client, cacher2, rv)
+			}
+			fmt.Println("[Stage] Running BenchmarkWriteThroughput...")
+			storagetesting.RunBenchmarkWriteThroughput(ctx, b, cacher2, data, true, tracker, compactFn)
+			fmt.Println("[Stage] Benchmark completed.")
 		})
 	}
 }
@@ -790,7 +942,7 @@ func BenchmarkStoreList(b *testing.B) {
 	for _, dims := range dimensions {
 		b.Run(fmt.Sprintf("Namespaces=%d/Pods=%d/Nodes=%d", dims.namespaceCount, dims.namespaceCount*dims.podPerNamespaceCount, dims.nodeCount), func(b *testing.B) {
 			data := storagetesting.PrepareBenchmarkData(dims.namespaceCount, dims.podPerNamespaceCount, dims.nodeCount)
-			ctx, cacher, _, terminate := testSetupWithEtcdServer(b, withNodeNameAndNamespaceIndex, withExternalEtcd)
+			ctx, cacher, _, terminate := testSetupWithEtcdServer(b, withCorev1NodeNameAndNamespaceIndex, withExternalEtcd, withCorev1Pods)
 			b.Cleanup(terminate)
 			require.NoError(b, storagetesting.PrecreateBenchmarkPods(ctx, cacher, data))
 			for _, useIndex := range []bool{true, false} {
@@ -805,11 +957,11 @@ func BenchmarkStoreList(b *testing.B) {
 func BenchmarkStoreStats(b *testing.B) {
 	klog.SetLogger(logr.Discard())
 	data := storagetesting.PrepareBenchmarkData(50, 3_000, 5_000)
-	ctx, cacher, _, terminate := testSetupWithEtcdServer(b, withExternalEtcd)
+	ctx, cacher, _, terminate := testSetupWithEtcdServer(b, withExternalEtcd, withCorev1Pods)
 	b.Cleanup(terminate)
-	var out example.Pod
+	var out corev1.Pod
 	for _, pod := range data.Pods {
-		err := cacher.Create(ctx, computePodKey(pod), pod, &out, 0)
+		err := cacher.Create(ctx, fmt.Sprintf("/pods/%s/%s", pod.Namespace, pod.Name), pod, &out, 0)
 		if err != nil {
 			b.Fatal(err)
 		}

@@ -49,8 +49,8 @@ import (
 
 const (
 	// We have set a buffer in order to reduce times of context switches.
-	incomingBufSize         = 100
-	outgoingBufSize         = 100
+	incomingBufSize         = 100000
+	outgoingBufSize         = 100000
 	processEventConcurrency = 10
 
 	watchChanLogWarningInterval  = 5 * time.Second
