@@ -18,6 +18,8 @@ package etcd3
 
 import (
 	"fmt"
+	"os"
+
 	"go.etcd.io/etcd/api/v3/mvccpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
@@ -56,7 +58,7 @@ func parseKV(kv *mvccpb.KeyValue) *event {
 }
 
 func parseEvent(e *clientv3.Event) (*event, error) {
-	if !e.IsCreate() && e.PrevKv == nil {
+	if !e.IsCreate() && e.PrevKv == nil && os.Getenv("BENCHMARK_DISABLE_PREV_KV") != "true" {
 		// If the previous value is nil, error. One example of how this is possible is if the previous value has been compacted already.
 		return nil, fmt.Errorf("etcd event received with PrevKv=nil (key=%q, modRevision=%d, type=%s)", string(e.Kv.Key), e.Kv.ModRevision, e.Type.String())
 

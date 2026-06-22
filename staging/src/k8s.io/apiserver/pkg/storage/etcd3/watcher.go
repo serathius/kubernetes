@@ -32,6 +32,7 @@ import (
 	grpcstatus "google.golang.org/grpc/status"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -461,7 +462,10 @@ func (wc *watchChan) startWatching(watchClosedCh chan struct{}, initialEventsEnd
 			return e
 		}())
 	}
-	opts := []clientv3.OpOption{clientv3.WithRev(wc.initialRev + 1), clientv3.WithPrevKV()}
+	opts := []clientv3.OpOption{clientv3.WithRev(wc.initialRev + 1)}
+	if os.Getenv("BENCHMARK_DISABLE_PREV_KV") != "true" {
+		opts = append(opts, clientv3.WithPrevKV())
+	}
 	if wc.recursive {
 		opts = append(opts, clientv3.WithPrefix())
 	}
@@ -811,8 +815,40 @@ func (wc *watchChan) prepareObjs(e *event) (curObj runtime.Object, oldObj runtim
 		if err != nil {
 			return nil, nil, wc.watcher.transformIfCorruptObjectError(e, err)
 		}
+	} else if len(e.prevValue) == 0 && e.isDeleted && os.Getenv("BENCHMARK_DISABLE_PREV_KV") == "true" {
+		oldObj, err = wc.createDummyObject(e.key, e.rev)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 	return curObj, oldObj, nil
+}
+
+func (wc *watchChan) createDummyObject(key string, revision int64) (runtime.Object, error) {
+	obj := wc.watcher.newFunc()
+	parts := strings.Split(strings.TrimPrefix(key, "/"), "/")
+	if len(parts) >= 2 {
+		name := parts[len(parts)-1]
+		namespace := parts[len(parts)-2]
+
+		accessor, err := meta.Accessor(obj)
+		if err != nil {
+			return nil, err
+		}
+		accessor.SetName(name)
+		accessor.SetNamespace(namespace)
+	} else if len(parts) == 1 {
+		name := parts[0]
+		accessor, err := meta.Accessor(obj)
+		if err != nil {
+			return nil, err
+		}
+		accessor.SetName(name)
+	}
+	if err := wc.watcher.versioner.UpdateObject(obj, uint64(revision)); err != nil {
+		return nil, err
+	}
+	return obj, nil
 }
 
 type corruptObjectDeletedError struct {
