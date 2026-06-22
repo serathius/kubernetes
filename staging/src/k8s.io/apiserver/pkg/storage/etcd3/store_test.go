@@ -25,7 +25,6 @@ import (
 	"os"
 	"reflect"
 	stdruntime "runtime"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -57,7 +56,6 @@ import (
 	storagemetrics "k8s.io/apiserver/pkg/storage/metrics"
 	storagetesting "k8s.io/apiserver/pkg/storage/testing"
 	"k8s.io/apiserver/pkg/storage/value"
-	"k8s.io/apiserver/pkg/storage/value/encrypt/identity"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	featuregatetesting "k8s.io/component-base/featuregate/testing"
 	"k8s.io/component-base/metrics/legacyregistry"
@@ -74,17 +72,6 @@ var (
 )
 
 const defaultTestPrefix = "test!"
-
-func getTestPathPrefix() string {
-	pref := os.Getenv("ETCD_PREFIX")
-	if pref == "" {
-		pref = "registry"
-	}
-	if !strings.HasPrefix(pref, "/") {
-		pref = "/" + pref
-	}
-	return pref
-}
 
 func init() {
 	metav1.AddToGroupVersion(scheme, metav1.SchemeGroupVersion)
@@ -736,8 +723,6 @@ func withPrefix(prefix string) setupOption {
 	}
 }
 
-
-
 func withResourcePrefix(prefix string) setupOption {
 	return func(options *setupOptions) {
 		options.resourcePrefix = prefix
@@ -1109,30 +1094,11 @@ func BenchmarkStoreWriteThroughput(b *testing.B) {
 
 			storagetesting.SetupPreseededDatabase(b, nsCount, totalPods, nodeCount, data, seedFn, createStoreFn)
 
-			ctx, store, client := testSetup(b, withExternalEtcd, withCorev1Pods, withPrefix(getTestPathPrefix()), withTransformer(identity.NewEncryptCheckTransformer()))
-
-			storagetesting.PopulateInitialResourceVersions(ctx, b, &data, getTestPathPrefix(), func(ctx context.Context, prefix string) (map[string]string, error) {
-				actualPrefix := prefix
-				if !strings.HasPrefix(actualPrefix, "/") {
-					actualPrefix = "/" + actualPrefix
-				}
-				resp, err := client.Client.Get(ctx, actualPrefix, clientv3.WithPrefix(), clientv3.WithKeysOnly())
-				if err != nil {
-					return nil, err
-				}
-				keyToRev := make(map[string]string)
-				for _, kv := range resp.Kvs {
-					keyToRev[string(kv.Key)] = strconv.FormatInt(kv.ModRevision, 10)
-				}
-				return keyToRev, nil
-			})
+			ctx, store, client := testSetup(b, withExternalEtcd, withCorev1Pods)
 
 			b.ResetTimer()
 			compactFn := func(ctx context.Context, rv uint64) error {
 				_, err := client.Client.Compact(ctx, int64(rv), clientv3.WithCompactPhysical())
-				if err != nil && strings.Contains(err.Error(), "required revision has been compacted") {
-					return nil
-				}
 				return err
 			}
 			storagetesting.RunBenchmarkWriteThroughput(ctx, b, store, data, false, nil, compactFn)

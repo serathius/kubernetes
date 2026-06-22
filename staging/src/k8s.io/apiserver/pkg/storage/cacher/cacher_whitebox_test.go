@@ -51,6 +51,7 @@ import (
 	"k8s.io/apiserver/pkg/storage"
 	"k8s.io/apiserver/pkg/storage/cacher/delegator"
 	"k8s.io/apiserver/pkg/storage/cacher/metrics"
+	"k8s.io/apiserver/pkg/storage/cacher/store"
 	etcd3testing "k8s.io/apiserver/pkg/storage/etcd3/testing"
 	etcdfeature "k8s.io/apiserver/pkg/storage/feature"
 	storagemetrics "k8s.io/apiserver/pkg/storage/metrics"
@@ -469,8 +470,8 @@ apiserver_watch_cache_consistent_read_total{fallback="skipped", group="", resour
 				t.Fatalf("unexpected error waiting for the cache to be ready")
 			}
 
-			if fmt.Sprintf("%d", cacher.watchCache.resourceVersion) != tc.watchCacheRV {
-				t.Fatalf("Expected watch cache RV to equal watchCacheRV, got: %d, want: %s", cacher.watchCache.resourceVersion, tc.watchCacheRV)
+			if fmt.Sprintf("%d", cacher.watchCache.watchResourceVersion) != tc.watchCacheRV {
+				t.Fatalf("Expected watch cache RV to equal watchCacheRV, got: %d, want: %s", cacher.watchCache.watchResourceVersion, tc.watchCacheRV)
 			}
 			requestToStorageCount := 0
 			backingStorage.GetListFn = func(_ context.Context, key string, opts storage.ListOptions, listObj runtime.Object) error {
@@ -542,6 +543,31 @@ apiserver_watch_cache_consistent_read_total{fallback="skipped", group="", resour
 	}
 }
 
+type fakeSnapshot struct{}
+
+func (f fakeSnapshot) GetByKey(key string) (interface{}, bool, error) {
+	return nil, false, nil
+}
+func (f fakeSnapshot) OrderedListPrefix(prefix, continueKey string) ([]interface{}, error) {
+	return nil, nil
+}
+
+type fakeSnapshotter struct {
+	getLessOrEqual func(rv uint64) (store.Snapshot, bool)
+}
+
+func (f *fakeSnapshotter) Reset() {}
+func (f *fakeSnapshotter) GetLessOrEqual(rv uint64) (store.Snapshot, bool) {
+	if f.getLessOrEqual == nil {
+		return nil, false
+	}
+	return f.getLessOrEqual(rv)
+}
+func (f *fakeSnapshotter) Latest() (store.Snapshot, bool)       { return nil, false }
+func (f *fakeSnapshotter) Add(rv uint64, indexer store.Indexer) {}
+func (f *fakeSnapshotter) RemoveLess(rv uint64)                 {}
+func (f *fakeSnapshotter) Len() int                            { return 0 }
+
 func TestMatchExactResourceVersionFallback(t *testing.T) {
 	for _, snapshotAvailable := range []bool{false, true} {
 		t.Run(fmt.Sprintf("SnapshotAvailable=%t", snapshotAvailable), func(t *testing.T) {
@@ -565,7 +591,14 @@ func TestMatchExactResourceVersionFallback(t *testing.T) {
 				t.Fatalf("Couldn't create cacher: %v", err)
 			}
 			defer cacher.Stop()
-
+			cacher.watchCache.storage.SetSnapshotterForTest(&fakeSnapshotter{
+				getLessOrEqual: func(rv uint64) (store.Snapshot, bool) {
+					if snapshotAvailable {
+						return fakeSnapshot{}, true
+					}
+					return nil, false
+				},
+			})
 			if err := cacher.ready.wait(context.Background()); err != nil {
 				t.Fatalf("unexpected error waiting for the cache to be ready")
 			}
@@ -2856,8 +2889,8 @@ func TestGetBookmarkAfterResourceVersionLockedFunc(t *testing.T) {
 
 			getBookMarkFn, err := cacher.getBookmarkAfterResourceVersionLockedFunc(uint64(parsedResourceVersion), uint64(scenario.requiredResourceVersion), scenario.opts)
 			require.NoError(t, err)
-			cacher.watchCache.RLock()
-			defer cacher.watchCache.RUnlock()
+			cacher.watchCache.watchMux.RLock()
+			defer cacher.watchCache.watchMux.RUnlock()
 			getBookMarkResourceVersion := getBookMarkFn()
 			require.Equal(t, uint64(scenario.expectedBookmarkResourceVersion), getBookMarkResourceVersion, "received unexpected ResourceVersion")
 		})

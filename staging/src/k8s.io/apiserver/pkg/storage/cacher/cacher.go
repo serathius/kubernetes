@@ -624,8 +624,8 @@ func (c *Cacher) Watch(ctx context.Context, key string, opts storage.ListOptions
 	// on return from this function.
 	// Note that we cannot do it under Cacher lock, to avoid a deadlock, since the
 	// underlying watchCache is calling processEvent under its lock.
-	c.watchCache.RLock()
-	defer c.watchCache.RUnlock()
+	c.watchCache.watchMux.RLock()
+	defer c.watchCache.watchMux.RUnlock()
 
 	var cacheInterval *watchCacheInterval
 	cacheInterval, err = c.watchCache.getAllEventsSinceLocked(requiredResourceVersion, key, opts)
@@ -636,7 +636,7 @@ func (c *Cacher) Watch(ctx context.Context, key string, opts storage.ListOptions
 		return newErrWatcher(err), nil
 	}
 
-	c.setInitialEventsEndBookmarkIfRequested(cacheInterval, opts, c.watchCache.resourceVersion)
+	c.setInitialEventsEndBookmarkIfRequested(cacheInterval, opts, c.watchCache.watchResourceVersion)
 
 	addedWatcher := false
 	func() {
@@ -900,21 +900,33 @@ func (c *Cacher) dispatchEvents() {
 			if !ok {
 				return
 			}
-			// Don't dispatch bookmarks coming from the storage layer.
-			// They can be very frequent (even to the level of subseconds)
-			// to allow efficient watch resumption on kube-apiserver restarts,
-			// and propagating them down may overload the whole system.
-			//
-			// TODO: If at some point we decide the performance and scalability
-			// footprint is acceptable, this is the place to hook them in.
-			// However, we then need to check if this was called as a result
-			// of a bookmark event or regular Add/Update/Delete operation by
-			// checking if resourceVersion here has changed.
-			if event.Type != watch.Bookmark {
-				c.dispatchEvent(&event)
+			batch := []watchCacheEvent{event}
+			const maxBatchSize = 100
+		drainLoop:
+			for len(batch) < maxBatchSize {
+				select {
+				case nextEvent, ok := <-c.incoming:
+					if !ok {
+						break drainLoop
+					}
+					batch = append(batch, nextEvent)
+				default:
+					break drainLoop
+				}
 			}
-			lastProcessedResourceVersion = event.ResourceVersion
-			metrics.EventsCounter.WithLabelValues(c.groupResource.Group, c.groupResource.Resource).Inc()
+
+			var dispatchableBatch []watchCacheEvent
+			for _, ev := range batch {
+				if ev.Type != watch.Bookmark {
+					dispatchableBatch = append(dispatchableBatch, ev)
+				}
+				lastProcessedResourceVersion = ev.ResourceVersion
+				metrics.EventsCounter.WithLabelValues(c.groupResource.Group, c.groupResource.Resource).Inc()
+			}
+
+			if len(dispatchableBatch) > 0 {
+				c.dispatchBatch(dispatchableBatch)
+			}
 		case <-bookmarkTimer.C():
 			bookmarkTimer.Reset(wait.Jitter(time.Second, 0.25))
 			bookmarkEvent := &watchCacheEvent{
@@ -926,9 +938,67 @@ func (c *Cacher) dispatchEvents() {
 				klog.Errorf("failure to set resourceVersion to %d on bookmark event %+v", bookmarkEvent.ResourceVersion, bookmarkEvent.Object)
 				continue
 			}
-			c.dispatchEvent(bookmarkEvent)
+			c.dispatchBatch([]watchCacheEvent{*bookmarkEvent})
 		case <-c.stopCh:
 			return
+		}
+	}
+}
+
+func (c *Cacher) dispatchBatch(batch []watchCacheEvent) {
+	eventsPerWatcher := make(map[*cacheWatcher][]*watchCacheEvent)
+
+	// Set up caching of objects for all non-bookmark events in the batch
+	for i := range batch {
+		event := &batch[i]
+		if event.Type != watch.Bookmark {
+			setCachingObjects(event, c.versioner)
+		}
+	}
+
+	for i := range batch {
+		event := &batch[i]
+		c.startDispatching(event)
+		for _, watcher := range c.watchersBuffer {
+			eventsPerWatcher[watcher] = append(eventsPerWatcher[watcher], event)
+		}
+		c.finishDispatching()
+	}
+
+	for watcher, events := range eventsPerWatcher {
+		// Filter out bookmark events for the fallback slow-path, because
+		// bookmarks must never block and should not be added via watcher.add().
+		var nonBookmarks []*watchCacheEvent
+		var bookmarks []*watchCacheEvent
+		for _, ev := range events {
+			if ev.Type == watch.Bookmark {
+				bookmarks = append(bookmarks, ev)
+			} else {
+				nonBookmarks = append(nonBookmarks, ev)
+			}
+		}
+
+		// First try to add all events (including bookmarks) in a batch.
+		if watcher.nonblockingAddBatch(events) {
+			continue
+		}
+
+		// If batch add failed:
+		// 1. Non-blockingly add any bookmark events
+		for _, ev := range bookmarks {
+			watcher.nonblockingAdd(ev)
+		}
+		// 2. Fallback to slow path only for non-bookmark events
+		for _, ev := range nonBookmarks {
+			if !watcher.nonblockingAdd(ev) {
+				timeout := c.dispatchTimeoutBudget.takeAvailable()
+				c.timer.Reset(timeout)
+				startTime := time.Now()
+				if !watcher.add(ev, c.timer) {
+					break
+				}
+				c.dispatchTimeoutBudget.returnUnused(timeout - time.Since(startTime))
+			}
 		}
 	}
 }
@@ -964,74 +1034,6 @@ func setCachingObjects(event *watchCacheEvent, versioner storage.Versioner) {
 	}
 }
 
-func (c *Cacher) dispatchEvent(event *watchCacheEvent) {
-	c.startDispatching(event)
-	defer c.finishDispatching()
-	// Watchers stopped after startDispatching will be delayed to finishDispatching,
-
-	// Since add() can block, we explicitly add when cacher is unlocked.
-	// Dispatching event in nonblocking way first, which make faster watchers
-	// not be blocked by slower ones.
-	if event.Type == watch.Bookmark {
-		for _, watcher := range c.watchersBuffer {
-			watcher.nonblockingAdd(event)
-		}
-	} else {
-		// Set up caching of object serializations only for dispatching this event.
-		//
-		// Storing serializations in memory would result in increased memory usage,
-		// but it would help for caching encodings for watches started from old
-		// versions. However, we still don't have a convincing data that the gain
-		// from it justifies increased memory usage, so for now we drop the cached
-		// serializations after dispatching this event.
-		//
-		// Given that CachingObject is just wrapping the object and not perfoming
-		// deep-copying (until some field is explicitly being modified), we create
-		// it unconditionally to ensure safety and reduce deep-copying.
-		//
-		// Make a shallow copy to allow overwriting Object and PrevObject.
-		wcEvent := *event
-		setCachingObjects(&wcEvent, c.versioner)
-		event = &wcEvent
-
-		c.blockedWatchers = c.blockedWatchers[:0]
-		for _, watcher := range c.watchersBuffer {
-			if !watcher.nonblockingAdd(event) {
-				c.blockedWatchers = append(c.blockedWatchers, watcher)
-			}
-		}
-
-		if len(c.blockedWatchers) > 0 {
-			// dispatchEvent is called very often, so arrange
-			// to reuse timers instead of constantly allocating.
-			startTime := time.Now()
-			timeout := c.dispatchTimeoutBudget.takeAvailable()
-			c.timer.Reset(timeout)
-
-			// Send event to all blocked watchers. As long as timer is running,
-			// `add` will wait for the watcher to unblock. After timeout,
-			// `add` will not wait, but immediately close a still blocked watcher.
-			// Hence, every watcher gets the chance to unblock itself while timer
-			// is running, not only the first ones in the list.
-			timer := c.timer
-			for _, watcher := range c.blockedWatchers {
-				if !watcher.add(event, timer) {
-					// fired, clean the timer by set it to nil.
-					timer = nil
-				}
-			}
-
-			// Stop the timer if it is not fired
-			if timer != nil && !timer.Stop() {
-				// Consume triggered (but not yet received) timer event
-				// so that future reuse does not get a spurious timeout.
-				<-timer.C
-			}
-
-			c.dispatchTimeoutBudget.returnUnused(timeout - time.Since(startTime))
-		}
-	}
-}
 
 func (c *Cacher) startDispatchingBookmarkEventsLocked() {
 	// Pop already expired watchers. However, explicitly ignore stopped ones,
@@ -1259,7 +1261,7 @@ func (c *Cacher) getBookmarkAfterResourceVersionLockedFunc(parsedResourceVersion
 		return func() uint64 { return requiredResourceVersion }, nil
 	case parsedResourceVersion == 0:
 		// here we assume that watchCache locked is already held
-		return func() uint64 { return c.watchCache.resourceVersion }, nil
+		return func() uint64 { return c.watchCache.watchResourceVersion }, nil
 	default:
 		return func() uint64 { return parsedResourceVersion }, nil
 	}
@@ -1307,8 +1309,8 @@ func (c *Cacher) waitUntilWatchCacheFreshAndForceAllEvents(ctx context.Context, 
 		// In this very rare scenario, the worst case will be that this
 		// request will wait for 3 seconds before it fails.
 		consistentReadSupported := delegator.ConsistentReadSupported()
-		c.watchCache.RLock()
-		defer c.watchCache.RUnlock()
+		c.watchCache.storageMux.RLock()
+		defer c.watchCache.storageMux.RUnlock()
 		return c.watchCache.waitUntilFreshLocked(ctx, consistentReadSupported, requestedWatchRV)
 	}
 	return nil
@@ -1413,7 +1415,7 @@ func (c *Cacher) ShouldDelegateContinue(continueToken string, recursive bool) (d
 
 func (c *Cacher) shouldDelegateExactRV(rv uint64) (delegator.Result, error) {
 	// Exact requests on future revision require support for consistent read, but are not a consistent read by themselves.
-	if c.watchCache.notFresh(rv) {
+	if c.watchCache.storageNotFresh(rv) {
 		return delegator.Result{
 			ShouldDelegate: !delegator.ConsistentReadSupported(),
 		}, nil

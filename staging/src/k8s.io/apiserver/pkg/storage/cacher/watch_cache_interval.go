@@ -42,6 +42,9 @@ type watchCacheInterval struct {
 
 	// initialEventsEndBookmark will be sent after sending all events in cacheInterval
 	initialEventsEndBookmark *watchCacheEvent
+
+	// items holds the raw store Elements if initialized from store.
+	items []interface{}
 }
 
 // Next returns the next item in the cache interval provided the cache
@@ -68,10 +71,6 @@ func newCacheInterval(startIndex, endIndex int, indexer indexerFunc, indexValida
 	}
 }
 
-// newCacheIntervalFromStore is meant to handle the case of rv=0, such that the events
-// returned by Next() need to be events from a List() done on the underlying store of
-// the watch cache.
-// The items returned in the interval will be sorted by Key.
 func newCacheIntervalFromStore(resourceVersion uint64, snap store.Snapshot, key string, matchesSingle bool) (*watchCacheInterval, error) {
 	buffer := &watchCacheIntervalBuffer{}
 	var allItems []interface{}
@@ -192,10 +191,7 @@ type historyCacheIntervalSource struct {
 //
 // When this condition becomes false, the interval is no longer valid and
 // should not be used to retrieve and serve elements from the underlying
-// source.
 func (s *historyCacheIntervalSource) Next() (*watchCacheEvent, error) {
-	// if there are items in the buffer to return, return from
-	// the buffer.
 	if event, exists := s.buffer.next(); exists {
 		return event, nil
 	}

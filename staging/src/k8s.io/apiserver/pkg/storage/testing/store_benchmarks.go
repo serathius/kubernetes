@@ -82,7 +82,7 @@ func RunBenchmarkWriteThroughput(ctx context.Context, b *testing.B, store storag
 				panic(fmt.Sprintf("Failed to get current resource version for seeding compaction: %v", err))
 			}
 			if rv > 0 {
-				if err := compactFn(ctx, rv); err != nil {
+				if err := compactFn(ctx, rv); err != nil && !strings.Contains(err.Error(), "compacted") {
 					panic(fmt.Sprintf("Failed to compact etcd to revision %d after database seeding: %v", rv, err))
 				}
 			}
@@ -114,7 +114,7 @@ func RunBenchmarkWriteThroughput(ctx context.Context, b *testing.B, store storag
 										panic(fmt.Sprintf("Failed to get current resource version for compaction: %v", err))
 									}
 									if rv > 0 {
-										if err := compactFn(ctx, rv); err != nil {
+										if err := compactFn(ctx, rv); err != nil && !strings.Contains(err.Error(), "compacted") {
 											panic(fmt.Sprintf("Failed to compact etcd to revision %d before benchmark: %v", rv, err))
 										}
 									}

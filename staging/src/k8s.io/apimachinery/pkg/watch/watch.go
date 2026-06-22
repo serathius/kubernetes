@@ -50,6 +50,12 @@ type Interface interface {
 	ResultChan() <-chan Event
 }
 
+// BatchEventsWatcher allows consumers to receive events in batches.
+type BatchEventsWatcher interface {
+	Interface
+	ResultChanBatch() <-chan []Event
+}
+
 // EventType defines the possible types of events.
 type EventType string
 

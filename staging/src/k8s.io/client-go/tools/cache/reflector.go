@@ -89,6 +89,14 @@ type ReflectorStore interface {
 	Resync() error
 }
 
+// BatchReflectorStore is an optional interface that ReflectorStore can implement to support batching of events.
+type BatchReflectorStore interface {
+	ReflectorStore
+	// BatchProcess processes a list of events in a single transaction/operation.
+	// If it returns an error, the Reflector will fail and restart the watch stream.
+	BatchProcess(events []watch.Event) error
+}
+
 // ReflectorBookmarkStore is an optional interface that allows a store
 // to be informed of bookmark events received by the reflector.
 type ReflectorBookmarkStore interface {
@@ -996,6 +1004,77 @@ func handleAnyWatch(
 		}
 	}()
 
+	batchStore, isBatchStore := store.(BatchReflectorStore)
+	var pendingBatch []watch.Event
+
+	var batchResultChan <-chan []watch.Event
+	if bw, ok := w.(watch.BatchEventsWatcher); ok {
+		batchResultChan = bw.ResultChanBatch()
+	}
+
+	flushBatch := func() error {
+		if len(pendingBatch) == 0 {
+			return nil
+		}
+		err := batchStore.BatchProcess(pendingBatch)
+		if err != nil {
+			return err
+		}
+		// Update resource version of last event in the batch
+		lastEvent := pendingBatch[len(pendingBatch)-1]
+		meta, err := meta.Accessor(lastEvent.Object)
+		if err == nil {
+			setLastSyncResourceVersion(meta.GetResourceVersion(), eventReceivedBesidesAdded)
+		}
+		pendingBatch = pendingBatch[:0]
+		return nil
+	}
+
+	validateAndExtractEvent := func(event watch.Event) (metav1.Object, bool, error) {
+		if event.Type == watch.Error {
+			return nil, false, apierrors.FromObject(event.Object)
+		}
+		if expectedType != nil {
+			if e, a := expectedType, reflect.TypeOf(event.Object); e != a {
+				utilruntime.HandleErrorWithContext(ctx, nil, "Unexpected watch event object type", "reflector", name, "expectedType", e, "actualType", a)
+				return nil, false, nil // skip
+			}
+		}
+		if expectedGVK != nil {
+			if e, a := *expectedGVK, event.Object.GetObjectKind().GroupVersionKind(); e != a {
+				utilruntime.HandleErrorWithContext(ctx, nil, "Unexpected watch event object gvk", "reflector", name, "expectedGVK", e, "actualGVK", a)
+				return nil, false, nil // skip
+			}
+		}
+		if unsupportedGVK := isUnsupportedTableObject(event.Object); unsupportedGVK {
+			utilruntime.HandleErrorWithContext(ctx, nil, "Unsupported watch event object gvk", "reflector", name, "actualGVK", event.Object.GetObjectKind().GroupVersionKind())
+			return nil, false, nil // skip
+		}
+		meta, err := meta.Accessor(event.Object)
+		if err != nil {
+			utilruntime.HandleErrorWithContext(ctx, err, "Unable to understand watch event", "reflector", name, "event", event)
+			return nil, false, nil // skip
+		}
+		return meta, true, nil
+	}
+
+	processBookmark := func(event watch.Event, meta metav1.Object) error {
+		resourceVersion := meta.GetResourceVersion()
+		eventReceivedBesidesAdded = true
+		if meta.GetAnnotations()[metav1.InitialEventsAnnotationKey] == "true" {
+			watchListBookmarkReceived = true
+		}
+		if bookmarkStore, ok := store.(ReflectorBookmarkStore); ok {
+			err := bookmarkStore.Bookmark(resourceVersion)
+			if err != nil {
+				utilruntime.HandleErrorWithContext(ctx, err, "Unable to send bookmark event to store", "reflector", name, "object", event.Object)
+			}
+		}
+		setLastSyncResourceVersion(resourceVersion, eventReceivedBesidesAdded)
+		eventCount++
+		return nil
+	}
+
 loop:
 	for {
 		select {
@@ -1003,77 +1082,175 @@ loop:
 			return watchListBookmarkReceived, errorStopRequested
 		case err := <-errCh:
 			return watchListBookmarkReceived, err
+		case batch, ok := <-batchResultChan:
+			if !ok {
+				break loop
+			}
+			var pendingEvents []watch.Event
+			for _, event := range batch {
+				objMeta, valid, err := validateAndExtractEvent(event)
+				if err != nil {
+					return watchListBookmarkReceived, err
+				}
+				if !valid {
+					continue
+				}
+				if event.Type == watch.Bookmark {
+					if isBatchStore && len(pendingEvents) > 0 {
+						if err := batchStore.BatchProcess(pendingEvents); err != nil {
+							return watchListBookmarkReceived, err
+						}
+						lastEvent := pendingEvents[len(pendingEvents)-1]
+						lastMeta, err := meta.Accessor(lastEvent.Object)
+						if err == nil {
+							setLastSyncResourceVersion(lastMeta.GetResourceVersion(), eventReceivedBesidesAdded)
+						}
+						eventCount += len(pendingEvents)
+						pendingEvents = pendingEvents[:0]
+					}
+					if err := processBookmark(event, objMeta); err != nil {
+						return watchListBookmarkReceived, err
+					}
+				} else {
+					if isBatchStore {
+						pendingEvents = append(pendingEvents, event)
+						if event.Type != watch.Added {
+							eventReceivedBesidesAdded = true
+						}
+					} else {
+						resourceVersion := objMeta.GetResourceVersion()
+						switch event.Type {
+						case watch.Added:
+							err := store.Add(event.Object)
+							if err != nil {
+								utilruntime.HandleErrorWithContext(ctx, err, "Unable to add watch event object to store", "reflector", name, "object", event.Object)
+							}
+						case watch.Modified:
+							eventReceivedBesidesAdded = true
+							err := store.Update(event.Object)
+							if err != nil {
+								utilruntime.HandleErrorWithContext(ctx, err, "Unable to update watch event object to store", "reflector", name, "object", event.Object)
+							}
+						case watch.Deleted:
+							eventReceivedBesidesAdded = true
+							err := store.Delete(event.Object)
+							if err != nil {
+								utilruntime.HandleErrorWithContext(ctx, err, "Unable to delete watch event object from store", "reflector", name, "object", event.Object)
+							}
+						}
+						setLastSyncResourceVersion(resourceVersion, eventReceivedBesidesAdded)
+						eventCount++
+					}
+				}
+			}
+			if isBatchStore && len(pendingEvents) > 0 {
+				if err := batchStore.BatchProcess(pendingEvents); err != nil {
+					return watchListBookmarkReceived, err
+				}
+				lastEvent := pendingEvents[len(pendingEvents)-1]
+				lastMeta, err := meta.Accessor(lastEvent.Object)
+				if err == nil {
+					setLastSyncResourceVersion(lastMeta.GetResourceVersion(), eventReceivedBesidesAdded)
+				}
+				eventCount += len(pendingEvents)
+			}
+			if exitOnWatchListBookmarkReceived && watchListBookmarkReceived {
+				stopWatcher = false
+				watchDuration := clock.Since(start)
+				klog.FromContext(ctx).V(4).Info("Exiting watch because received the bookmark that marks the end of initial events stream", "reflector", name, "totalItems", eventCount, "duration", watchDuration)
+				return watchListBookmarkReceived, nil
+			}
+			initialEventsEndBookmarkWarningTicker.observeLastEventTimeStamp(clock.Now())
+
 		case event, ok := <-w.ResultChan():
 			if !ok {
 				break loop
 			}
-			if event.Type == watch.Error {
-				return watchListBookmarkReceived, apierrors.FromObject(event.Object)
-			}
-			if expectedType != nil {
-				if e, a := expectedType, reflect.TypeOf(event.Object); e != a {
-					utilruntime.HandleErrorWithContext(ctx, nil, "Unexpected watch event object type", "reflector", name, "expectedType", e, "actualType", a)
-					continue
-				}
-			}
-			if expectedGVK != nil {
-				if e, a := *expectedGVK, event.Object.GetObjectKind().GroupVersionKind(); e != a {
-					utilruntime.HandleErrorWithContext(ctx, nil, "Unexpected watch event object gvk", "reflector", name, "expectedGVK", e, "actualGVK", a)
-					continue
-				}
-			}
-			// we don't support receiving resources in Table format
-			// see #132926 for more info
-			if unsupportedGVK := isUnsupportedTableObject(event.Object); unsupportedGVK {
-				utilruntime.HandleErrorWithContext(ctx, nil, "Unsupported watch event object gvk", "reflector", name, "actualGVK", event.Object.GetObjectKind().GroupVersionKind())
-				continue
-			}
-			meta, err := meta.Accessor(event.Object)
+			meta, valid, err := validateAndExtractEvent(event)
 			if err != nil {
-				utilruntime.HandleErrorWithContext(ctx, err, "Unable to understand watch event", "reflector", name, "event", event)
+				return watchListBookmarkReceived, err
+			}
+			if !valid {
 				continue
 			}
-			resourceVersion := meta.GetResourceVersion()
-			switch event.Type {
-			case watch.Added:
-				err := store.Add(event.Object)
-				if err != nil {
-					utilruntime.HandleErrorWithContext(ctx, err, "Unable to add watch event object to store", "reflector", name, "object", event.Object)
+
+			if isBatchStore && event.Type != watch.Bookmark {
+				pendingBatch = append(pendingBatch, event)
+				if event.Type != watch.Added {
+					eventReceivedBesidesAdded = true
 				}
-			case watch.Modified:
-				eventReceivedBesidesAdded = true
-				err := store.Update(event.Object)
-				if err != nil {
-					utilruntime.HandleErrorWithContext(ctx, err, "Unable to update watch event object to store", "reflector", name, "object", event.Object)
-				}
-			case watch.Deleted:
-				// TODO: Will any consumers need access to the "last known
-				// state", which is passed in event.Object? If so, may need
-				// to change this.
-				eventReceivedBesidesAdded = true
-				err := store.Delete(event.Object)
-				if err != nil {
-					utilruntime.HandleErrorWithContext(ctx, err, "Unable to delete watch event object from store", "reflector", name, "object", event.Object)
-				}
-			case watch.Bookmark:
-				// A `Bookmark` means watch has synced here, just update the resourceVersion
-				eventReceivedBesidesAdded = true
-				if meta.GetAnnotations()[metav1.InitialEventsAnnotationKey] == "true" {
-					watchListBookmarkReceived = true
-				}
-				// Propagate the resource version from the bookmark event to stores which indicate they want it
-				if bookmarkStore, ok := store.(ReflectorBookmarkStore); ok {
-					err := bookmarkStore.Bookmark(resourceVersion)
-					if err != nil {
-						utilruntime.HandleErrorWithContext(ctx, err, "Unable to send bookmark event to store", "reflector", name, "object", event.Object)
+				eventCount++
+
+				draining := true
+				for draining && len(pendingBatch) < 100 {
+					select {
+					case nextEvent, ok := <-w.ResultChan():
+						if !ok {
+							draining = false
+							break loop
+						}
+						nextMeta, nextValid, err := validateAndExtractEvent(nextEvent)
+						if err != nil {
+							return watchListBookmarkReceived, err
+						}
+						if !nextValid {
+							continue
+						}
+						if nextEvent.Type == watch.Bookmark {
+							if err := flushBatch(); err != nil {
+								return watchListBookmarkReceived, err
+							}
+							if err := processBookmark(nextEvent, nextMeta); err != nil {
+								return watchListBookmarkReceived, err
+							}
+							draining = false
+						} else {
+							pendingBatch = append(pendingBatch, nextEvent)
+							if nextEvent.Type != watch.Added {
+								eventReceivedBesidesAdded = true
+							}
+							eventCount++
+						}
+					default:
+						draining = false
 					}
 				}
-			default:
-				utilruntime.HandleErrorWithContext(ctx, err, "Unknown watch event", "reflector", name, "event", event)
+				if err := flushBatch(); err != nil {
+					return watchListBookmarkReceived, err
+				}
+			} else {
+				if event.Type == watch.Bookmark {
+					if err := processBookmark(event, meta); err != nil {
+						return watchListBookmarkReceived, err
+					}
+				} else {
+					resourceVersion := meta.GetResourceVersion()
+					switch event.Type {
+					case watch.Added:
+						err := store.Add(event.Object)
+						if err != nil {
+							utilruntime.HandleErrorWithContext(ctx, err, "Unable to add watch event object to store", "reflector", name, "object", event.Object)
+						}
+					case watch.Modified:
+						eventReceivedBesidesAdded = true
+						err := store.Update(event.Object)
+						if err != nil {
+							utilruntime.HandleErrorWithContext(ctx, err, "Unable to update watch event object to store", "reflector", name, "object", event.Object)
+						}
+					case watch.Deleted:
+						eventReceivedBesidesAdded = true
+						err := store.Delete(event.Object)
+						if err != nil {
+							utilruntime.HandleErrorWithContext(ctx, err, "Unable to delete watch event object from store", "reflector", name, "object", event.Object)
+						}
+					default:
+						utilruntime.HandleErrorWithContext(ctx, err, "Unknown watch event", "reflector", name, "event", event)
+					}
+					setLastSyncResourceVersion(resourceVersion, eventReceivedBesidesAdded)
+					eventCount++
+				}
 			}
-			// when eventReceivedBesidesAdded is true, that indicates we are definitely past any initial synthetic Added events
-			setLastSyncResourceVersion(resourceVersion, eventReceivedBesidesAdded)
-			eventCount++
+
 			if exitOnWatchListBookmarkReceived && watchListBookmarkReceived {
 				stopWatcher = false
 				watchDuration := clock.Since(start)

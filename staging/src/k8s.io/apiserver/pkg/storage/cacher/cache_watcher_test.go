@@ -234,7 +234,7 @@ func TestCacheWatcherStoppedInAnotherGoroutine(t *testing.T) {
 	// After that, verifies the cacheWatcher.process goroutine works correctly.
 	for i := 0; i < maxRetriesToProduceTheRaceCondition; i++ {
 		w = newCacheWatcher(2, filter, emptyFunc, storage.APIObjectVersioner{}, deadline, false, schema.GroupResource{Resource: "pods"}, "")
-		w.input <- &watchCacheEvent{Object: &v1.Pod{}, ResourceVersion: uint64(i + 1)}
+		w.nonblockingAdd(&watchCacheEvent{Object: &v1.Pod{}, ResourceVersion: uint64(i + 1)})
 		ctx, cancel := context.WithDeadline(context.Background(), deadline)
 		defer cancel()
 		go w.processInterval(ctx, intervalFromEvents(nil), 0)

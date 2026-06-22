@@ -308,8 +308,8 @@ func TestCacheIntervalNextFromWatchCache(t *testing.T) {
 				wc.history.endIndex,
 				indexerFunc,
 				wc.history.isIndexValidLocked,
-				wc.resourceVersion,
-				&wc.RWMutex,
+				wc.watchResourceVersion,
+				wc.watchMux.RLocker(),
 			)
 			src := historySource(wci)
 
@@ -407,6 +407,7 @@ func TestCacheIntervalNextFromStore(t *testing.T) {
 	}
 
 	for i := 0; i < numEvents; i++ {
+
 		event, err := wci.Next()
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)

@@ -30,6 +30,12 @@ import (
 	"k8s.io/client-go/tools/cache"
 )
 
+type EventToStore struct {
+	Action          watch.EventType
+	Element         *Element
+	ResourceVersion uint64
+}
+
 func NewWatchCacheStorage(keyFunc func(runtime.Object) (string, error), indexers *cache.Indexers) *WatchCacheStorage {
 	storage := &WatchCacheStorage{
 		keyFunc:             keyFunc,
@@ -91,6 +97,10 @@ func (w *WatchCacheStorage) CanServeExactRV(rv uint64) bool {
 
 func (w *WatchCacheStorage) UpdateListResourceVersion(rv uint64) {
 	w.listResourceVersion = rv
+}
+
+func (w *WatchCacheStorage) SetSnapshotterForTest(s Snapshotter) {
+	w.snapshots = s
 }
 
 func (w *WatchCacheStorage) Compact(rev uint64) {
@@ -261,6 +271,31 @@ func (w *WatchCacheStorage) UpdateStoreLocked(eventType watch.EventType, elem *E
 	}
 	return nil
 }
+
+func (w *WatchCacheStorage) BatchUpdateStoreLocked(events []EventToStore) error {
+	for _, p := range events {
+		var err error
+		switch p.Action {
+		case watch.Added:
+			err = w.store.Add(p.Element)
+		case watch.Modified:
+			err = w.store.Update(p.Element)
+		case watch.Deleted:
+			err = w.store.Delete(p.Element)
+		default:
+			err = fmt.Errorf("unexpected event type: %v", p.Action)
+		}
+		if err != nil {
+			return err
+		}
+		if w.snapshots != nil && w.snapshottingEnabled.Load() {
+			w.snapshots.Add(p.ResourceVersion, w.store)
+		}
+	}
+	w.updateLatestSnapshot()
+	return nil
+}
+
 
 // CompactSnapshotsLocked prunes snapshots older than the oldest history version.
 func (w *WatchCacheStorage) CompactSnapshotsLocked(oldestRV uint64) {

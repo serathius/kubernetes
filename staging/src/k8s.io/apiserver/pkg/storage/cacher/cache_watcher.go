@@ -51,13 +51,16 @@ const (
 // cacheWatcher implements watch.Interface
 // this is not thread-safe
 type cacheWatcher struct {
-	input     chan *watchCacheEvent
-	result    chan watch.Event
-	done      chan struct{}
-	filter    filterWithAttrsFunc
-	stopped   bool
-	forget    func(bool)
-	versioner storage.Versioner
+	inputQueue  []*watchCacheEvent
+	inputMutex  sync.Mutex
+	inputCond   *sync.Cond
+	inputCap    int
+	result      chan watch.Event
+	done        chan struct{}
+	filter      filterWithAttrsFunc
+	stopped     bool
+	forget      func(bool)
+	versioner   storage.Versioner
 	// The watcher will be closed by server after the deadline,
 	// save it here to send bookmark events before that.
 	deadline            time.Time
@@ -97,8 +100,7 @@ func newCacheWatcher(
 	groupResource schema.GroupResource,
 	identifier string,
 ) *cacheWatcher {
-	return &cacheWatcher{
-		input:               make(chan *watchCacheEvent, chanSize),
+	w := &cacheWatcher{
 		result:              make(chan watch.Event, chanSize),
 		done:                make(chan struct{}),
 		filter:              filter,
@@ -109,7 +111,10 @@ func newCacheWatcher(
 		allowWatchBookmarks: allowWatchBookmarks,
 		groupResource:       groupResource,
 		identifier:          identifier,
+		inputCap:            chanSize,
 	}
+	w.inputCond = sync.NewCond(&w.inputMutex)
+	return w
 }
 
 // Implements watch.Interface.
@@ -124,13 +129,18 @@ func (c *cacheWatcher) Stop() {
 
 // we rely on the fact that stopLocked is actually protected by Cacher.Lock()
 func (c *cacheWatcher) stopLocked() {
+	c.inputMutex.Lock()
+	alreadyStopped := c.stopped
 	if !c.stopped {
 		c.stopped = true
-		// stop without draining the input channel was requested.
+		c.inputCond.Broadcast()
+	}
+	c.inputMutex.Unlock()
+
+	if !alreadyStopped {
 		if !c.drainInputBuffer {
 			close(c.done)
 		}
-		close(c.input)
 	}
 
 	// Even if the watcher was already stopped, if it previously was
@@ -153,13 +163,32 @@ func (c *cacheWatcher) nonblockingAdd(event *watchCacheEvent) bool {
 	if event.Type == watch.Bookmark && event.ResourceVersion < c.bookmarkAfterResourceVersion {
 		return false
 	}
-	select {
-	case c.input <- event:
-		c.markBookmarkAfterRvAsReceived(event)
-		return true
-	default:
+	c.inputMutex.Lock()
+	defer c.inputMutex.Unlock()
+	if len(c.inputQueue) >= c.inputCap {
 		return false
 	}
+	c.inputQueue = append(c.inputQueue, event)
+	c.markBookmarkAfterRvAsReceived(event)
+	c.inputCond.Signal()
+	return true
+}
+
+func (c *cacheWatcher) nonblockingAddBatch(events []*watchCacheEvent) bool {
+	c.inputMutex.Lock()
+	defer c.inputMutex.Unlock()
+	if len(c.inputQueue)+len(events) > c.inputCap {
+		return false
+	}
+	for _, event := range events {
+		if event.Type == watch.Bookmark && event.ResourceVersion < c.bookmarkAfterResourceVersion {
+			continue
+		}
+		c.inputQueue = append(c.inputQueue, event)
+		c.markBookmarkAfterRvAsReceived(event)
+	}
+	c.inputCond.Signal()
+	return true
 }
 
 // Nil timer means that add will not block (if it can't send event immediately, it will break the watcher)
@@ -200,7 +229,10 @@ func (c *cacheWatcher) add(event *watchCacheEvent, timer *time.Timer) bool {
 			defer c.stateMutex.Unlock()
 			return c.state == cacheWatcherBookmarkReceived
 		}()
-		klog.V(1).Infof("Forcing %v watcher close due to unresponsiveness: %v. len(c.input) = %v, len(c.result) = %v, graceful = %v", c.groupResource.String(), c.identifier, len(c.input), len(c.result), graceful)
+		c.inputMutex.Lock()
+		queueLen := len(c.inputQueue)
+		c.inputMutex.Unlock()
+		klog.V(1).Infof("Forcing %v watcher close due to unresponsiveness: %v. len(c.inputQueue) = %v, len(c.result) = %v, graceful = %v", c.groupResource.String(), c.identifier, queueLen, len(c.result), graceful)
 		c.forget(graceful)
 	}
 
@@ -210,12 +242,18 @@ func (c *cacheWatcher) add(event *watchCacheEvent, timer *time.Timer) bool {
 	}
 
 	// OK, block sending, but only until timer fires.
-	select {
-	case c.input <- event:
-		return true
-	case <-timer.C:
-		closeFunc()
-		return false
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			if c.nonblockingAdd(event) {
+				return true
+			}
+		case <-timer.C:
+			closeFunc()
+			return false
+		}
 	}
 }
 
@@ -438,6 +476,14 @@ func (c *cacheWatcher) processInterval(ctx context.Context, cacheInterval *watch
 	defer close(c.result)
 	defer c.Stop()
 
+	go func() {
+		select {
+		case <-ctx.Done():
+			c.Stop()
+		case <-c.done:
+		}
+	}()
+
 	// Check how long we are processing initEvents.
 	// As long as these are not processed, we are not processing
 	// any incoming events, so if it takes long, we may actually
@@ -527,19 +573,36 @@ func (c *cacheWatcher) process(ctx context.Context, resourceVersion uint64) {
 	utilflowcontrol.WatchInitialized(ctx)
 
 	for {
+		var event *watchCacheEvent
+		exit := func() bool {
+			c.inputMutex.Lock()
+			defer c.inputMutex.Unlock()
+			for len(c.inputQueue) == 0 && !c.stopped {
+				c.inputCond.Wait()
+			}
+			if c.stopped && len(c.inputQueue) == 0 {
+				return true
+			}
+			event = c.inputQueue[0]
+			c.inputQueue = c.inputQueue[1:]
+			return false
+		}()
+
+		if exit {
+			return
+		}
+
+		// only send events newer than resourceVersion
+		// or a bookmark event with an RV equal to resourceVersion
+		// if we haven't sent one to the client
+		if event.ResourceVersion > resourceVersion || (event.Type == watch.Bookmark && event.ResourceVersion == resourceVersion && !c.wasBookmarkAfterRvSent()) {
+			c.sendWatchCacheEvent(event)
+		}
+
 		select {
-		case event, ok := <-c.input:
-			if !ok {
-				return
-			}
-			// only send events newer than resourceVersion
-			// or a bookmark event with an RV equal to resourceVersion
-			// if we haven't sent one to the client
-			if event.ResourceVersion > resourceVersion || (event.Type == watch.Bookmark && event.ResourceVersion == resourceVersion && !c.wasBookmarkAfterRvSent()) {
-				c.sendWatchCacheEvent(event)
-			}
 		case <-ctx.Done():
 			return
+		default:
 		}
 	}
 }

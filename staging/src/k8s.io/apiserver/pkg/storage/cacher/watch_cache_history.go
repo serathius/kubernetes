@@ -114,6 +114,20 @@ func (w *watchCacheHistory) updateCache(event *watchCacheEvent) {
 	w.endIndex++
 }
 
+// Assumes that lock is already held for write.
+func (w *watchCacheHistory) batchUpdateCache(events []preparedEvent) {
+	for _, p := range events {
+		w.resizeCacheLocked(p.wcEvent.RecordTime)
+		if w.isCacheFullLocked() {
+			w.startIndex++
+			w.removedEventSinceRelist = true
+		}
+		w.cache[w.endIndex%w.capacity] = p.wcEvent
+		w.endIndex++
+	}
+}
+
+
 // resizeCacheLocked resizes the cache if necessary:
 // - increases capacity by 2x if cache is full and all cached events occurred within last eventFreshDuration.
 // - decreases capacity by 2x when recent quarter of events occurred outside of eventFreshDuration(protect watchCache from flapping).

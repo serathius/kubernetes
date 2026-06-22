@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"io"
 	stdruntime "runtime"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -800,30 +799,6 @@ func newCacherOnStorage(t testing.TB, etcdStorage storage.Interface, opts ...set
 		cacher.Stop()
 	}
 }
-
-func compactWatchCache(ctx context.Context, client *clientv3.Client, cacher *CacheDelegator, rv uint64) error {
-	_, err := client.Compact(ctx, int64(rv), clientv3.WithCompactPhysical())
-	if err != nil && !strings.Contains(err.Error(), "required revision has been compacted") {
-		return err
-	}
-
-	cacher.cacher.watchCache.Lock()
-	defer cacher.cacher.watchCache.Unlock()
-	cacher.cacher.Lock()
-	defer cacher.cacher.Unlock()
-
-	for cacher.cacher.watchCache.history.startIndex < cacher.cacher.watchCache.history.endIndex {
-		index := cacher.cacher.watchCache.history.startIndex % cacher.cacher.watchCache.history.capacity
-		if cacher.cacher.watchCache.history.cache[index].ResourceVersion > rv {
-			break
-		}
-		cacher.cacher.watchCache.history.startIndex++
-	}
-	cacher.cacher.watchCache.storage.UpdateListResourceVersion(rv)
-	cacher.cacher.watchCache.storage.CompactSnapshotsLocked(rv)
-	return nil
-}
-
 func BenchmarkStoreWriteThroughput(b *testing.B) {
 	klog.SetLogger(logr.Discard())
 	grpclog.SetLoggerV2(grpclog.NewLoggerV2(io.Discard, io.Discard, io.Discard))
@@ -852,7 +827,6 @@ func BenchmarkStoreWriteThroughput(b *testing.B) {
 			totalPods := dims.namespaceCount * dims.podPerNamespaceCount
 			ctx := context.Background()
 
-			fmt.Println("[Stage] Preparing benchmark data...")
 			data := storagetesting.PrepareBenchmarkData(dims.namespaceCount, dims.podPerNamespaceCount, dims.nodeCount)
 
 			seedFn := func(ctx context.Context, store storage.Interface) error {
@@ -863,13 +837,9 @@ func BenchmarkStoreWriteThroughput(b *testing.B) {
 				server, etcdStorage := newEtcdTestStorageWithOptions(b, etcd3testing.PathPrefix(), setupOpts.codec, setupOpts.transformer, setupOpts.useExternalEtcd)
 				cacher1, stopCacher1 := newCacherOnStorage(b, etcdStorage, opts...)
 				return cacher1, func() {
-					fmt.Println("[Stage] Compacting database after seeding...")
 					rv, err := cacher1.GetCurrentResourceVersion(context.Background())
 					if err == nil && rv > 0 {
-						_, err = server.V3Client.Client.Compact(context.Background(), int64(rv), clientv3.WithCompactPhysical())
-						if err != nil {
-							fmt.Printf("Warning: failed to compact seeding database: %v\n", err)
-						}
+						_, _ = server.V3Client.Client.Compact(context.Background(), int64(rv), clientv3.WithCompactPhysical())
 					}
 					stopCacher1()
 					server.Terminate(b)
@@ -906,11 +876,10 @@ func BenchmarkStoreWriteThroughput(b *testing.B) {
 			})
 
 			compactFn := func(ctx context.Context, rv uint64) error {
-				return compactWatchCache(ctx, server.V3Client.Client, cacher2, rv)
+				_, err := server.V3Client.Client.Compact(ctx, int64(rv), clientv3.WithCompactPhysical())
+				return err
 			}
-			fmt.Println("[Stage] Running BenchmarkWriteThroughput...")
 			storagetesting.RunBenchmarkWriteThroughput(ctx, b, cacher2, data, true, tracker, compactFn)
-			fmt.Println("[Stage] Benchmark completed.")
 		})
 	}
 }

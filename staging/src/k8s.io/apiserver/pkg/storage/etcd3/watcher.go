@@ -108,12 +108,18 @@ type watchChan struct {
 	internalPred             storage.SelectionPredicate
 	ctx                      context.Context
 	cancel                   context.CancelFunc
-	incomingEventChan        chan *event
+	incomingEventChan        chan []*event
 	resultChan               chan watch.Event
+	resultChanBatch          chan []watch.Event
+	useBatch                 atomic.Bool
 	getResourceSizeEstimator func() *resourceSizeEstimator
 
 	incomingEventLogger *blockLogger
 	resultLogger        *blockLogger
+
+	initialEventsEndBookmarkRequired bool
+	forceInitialEvents               bool
+	startOnce                        sync.Once
 }
 
 // Watch watches on a key and returns a watch.Interface that transfers relevant notifications.
@@ -135,7 +141,8 @@ func (w *watcher) Watch(ctx context.Context, key string, rev int64, opts storage
 		return nil, err
 	}
 	wc := w.createWatchChan(ctx, key, startWatchRV, opts.Recursive, opts.ProgressNotify, opts.Predicate)
-	go wc.run(isInitialEventsEndBookmarkRequired(opts), areInitialEventsRequired(rev, opts))
+	wc.initialEventsEndBookmarkRequired = isInitialEventsEndBookmarkRequired(opts)
+	wc.forceInitialEvents = areInitialEventsRequired(rev, opts)
 
 	// For etcd watch we don't have an easy way to answer whether the watch
 	// has already caught up. So in the initial version (given that watchcache
@@ -155,8 +162,9 @@ func (w *watcher) createWatchChan(ctx context.Context, key string, rev int64, re
 		recursive:                recursive,
 		progressNotify:           progressNotify,
 		internalPred:             pred,
-		incomingEventChan:        make(chan *event, incomingBufSize),
+		incomingEventChan:        make(chan []*event, incomingBufSize),
 		resultChan:               make(chan watch.Event, outgoingBufSize),
+		resultChanBatch:          make(chan []watch.Event, outgoingBufSize),
 		getResourceSizeEstimator: w.getResourceSizeEstimator,
 	}
 	if pred.Empty() {
@@ -275,6 +283,7 @@ func (wc *watchChan) run(initialEventsEndBookmarkRequired, forceInitialEvents bo
 	// we need to wait until resultChan wouldn't be used anymore
 	resultChanWG.Wait()
 	close(wc.resultChan)
+	close(wc.resultChanBatch)
 }
 
 func (wc *watchChan) Stop() {
@@ -282,7 +291,18 @@ func (wc *watchChan) Stop() {
 }
 
 func (wc *watchChan) ResultChan() <-chan watch.Event {
+	wc.startOnce.Do(func() {
+		go wc.run(wc.initialEventsEndBookmarkRequired, wc.forceInitialEvents)
+	})
 	return wc.resultChan
+}
+
+func (wc *watchChan) ResultChanBatch() <-chan []watch.Event {
+	wc.useBatch.Store(true)
+	wc.startOnce.Do(func() {
+		go wc.run(wc.initialEventsEndBookmarkRequired, wc.forceInitialEvents)
+	})
+	return wc.resultChanBatch
 }
 
 func (wc *watchChan) RequestWatchProgress() error {
@@ -340,12 +360,14 @@ func (wc *watchChan) syncPaginated() error {
 		}
 
 		// send items from the response until no more results
+		batch := make([]*event, 0, len(getResp.Kvs))
 		for i, kv := range getResp.Kvs {
 			lastKey = kv.Key
-			wc.queueEvent(parseKV(kv))
+			batch = append(batch, parseKV(kv))
 			// free kv early. Long lists can take O(seconds) to decode.
 			getResp.Kvs[i] = nil
 		}
+		wc.queueEvents(batch)
 
 		if withRev == 0 {
 			wc.initialRev = getResp.Header.Revision
@@ -392,11 +414,13 @@ func (wc *watchChan) syncStreamRecursive() error {
 			return interpretListError(err, false, wc.key, wc.key)
 		}
 		rangeResp := r.RangeResponse
+		batch := make([]*event, 0, len(rangeResp.Kvs))
 		for i, kv := range rangeResp.Kvs {
-			wc.queueEvent(parseKV(kv))
+			batch = append(batch, parseKV(kv))
 			// free kv early. Long lists can take O(seconds) to decode.
 			rangeResp.Kvs[i] = nil
 		}
+		wc.queueEvents(batch)
 		if initialRev == 0 && rangeResp.Header != nil {
 			initialRev = rangeResp.Header.Revision
 		}
@@ -456,11 +480,9 @@ func (wc *watchChan) startWatching(watchClosedCh chan struct{}, initialEventsEnd
 		}
 	}
 	if initialEventsEndBookmarkRequired {
-		wc.queueEvent(func() *event {
-			e := progressNotifyEvent(wc.initialRev)
-			e.isInitialEventsEndBookmark = true
-			return e
-		}())
+		e := progressNotifyEvent(wc.initialRev)
+		e.isInitialEventsEndBookmark = true
+		wc.queueEvents([]*event{e})
 	}
 	opts := []clientv3.OpOption{clientv3.WithRev(wc.initialRev + 1)}
 	if os.Getenv("BENCHMARK_DISABLE_PREV_KV") != "true" {
@@ -488,11 +510,12 @@ func (wc *watchChan) startWatching(watchClosedCh chan struct{}, initialEventsEnd
 			return
 		}
 		if wres.IsProgressNotify() {
-			wc.queueEvent(progressNotifyEvent(wres.Header.GetRevision()))
+			wc.queueEvents([]*event{progressNotifyEvent(wres.Header.GetRevision())})
 			metrics.RecordEtcdBookmark(wc.watcher.groupResource)
 			continue
 		}
 
+		parsedEvents := make([]*event, 0, len(wres.Events))
 		for _, e := range wres.Events {
 			if estimator != nil {
 				switch e.Type {
@@ -514,8 +537,9 @@ func (wc *watchChan) startWatching(watchClosedCh chan struct{}, initialEventsEnd
 				wc.sendError(err)
 				return
 			}
-			wc.queueEvent(parsedEvent)
+			parsedEvents = append(parsedEvents, parsedEvent)
 		}
+		wc.queueEvents(parsedEvents)
 	}
 	// When we come to this point, it's only possible that client side ends the watch.
 	// e.g. cancel the context, close the client.
@@ -537,18 +561,24 @@ func (wc *watchChan) serialProcessEvents(wg *sync.WaitGroup) {
 	defer wg.Done()
 	for {
 		select {
-		case e := <-wc.incomingEventChan:
-			res, err := wc.transform(e)
-			if err != nil {
-				wc.sendError(err)
-				return
-			}
+		case batch := <-wc.incomingEventChan:
+			watchEvents := make([]watch.Event, 0, len(batch))
+			for _, e := range batch {
+				res, err := wc.transform(e)
+				if err != nil {
+					wc.sendError(err)
+					return
+				}
 
-			if res == nil {
-				continue
+				if res == nil {
+					continue
+				}
+				watchEvents = append(watchEvents, *res)
 			}
-			if !wc.sendEvent(res) {
-				return
+			if len(watchEvents) > 0 {
+				if !wc.sendEventBatch(watchEvents) {
+					return
+				}
 			}
 		case <-wc.ctx.Done():
 			return
@@ -559,7 +589,7 @@ func (wc *watchChan) serialProcessEvents(wg *sync.WaitGroup) {
 func (wc *watchChan) concurrentProcessEvents(wg *sync.WaitGroup) {
 	p := concurrentOrderedEventProcessing{
 		wc:              wc,
-		processingQueue: make(chan chan *processingResult, processEventConcurrency-1),
+		processingQueue: make(chan []chan *processingResult, processEventConcurrency-1),
 
 		objectType:    wc.watcher.objectType,
 		groupResource: wc.watcher.groupResource,
@@ -584,61 +614,70 @@ type processingResult struct {
 type concurrentOrderedEventProcessing struct {
 	wc *watchChan
 
-	processingQueue chan chan *processingResult
+	processingQueue chan []chan *processingResult
 	// Metadata for logging
 	objectType    string
 	groupResource schema.GroupResource
 }
 
 func (p *concurrentOrderedEventProcessing) scheduleEventProcessing(ctx context.Context, wg *sync.WaitGroup) {
-	var e *event
+	var batch []*event
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case e = <-p.wc.incomingEventChan:
+		case batch = <-p.wc.incomingEventChan:
 		}
-		processingResponse := make(chan *processingResult, 1)
+		chans := make([]chan *processingResult, len(batch))
+		for i, e := range batch {
+			chans[i] = make(chan *processingResult, 1)
+			wg.Add(1)
+			go func(e *event, response chan<- *processingResult) {
+				defer wg.Done()
+				responseEvent, err := p.wc.transform(e)
+				select {
+				case <-ctx.Done():
+				case response <- &processingResult{event: responseEvent, err: err}:
+				}
+			}(e, chans[i])
+		}
 		select {
 		case <-ctx.Done():
 			return
-		case p.processingQueue <- processingResponse:
+		case p.processingQueue <- chans:
 		}
-		wg.Add(1)
-		go func(e *event, response chan<- *processingResult) {
-			defer wg.Done()
-			responseEvent, err := p.wc.transform(e)
-			select {
-			case <-ctx.Done():
-			case response <- &processingResult{event: responseEvent, err: err}:
-			}
-		}(e, processingResponse)
 	}
 }
 
 func (p *concurrentOrderedEventProcessing) collectEventProcessing(ctx context.Context) {
-	var processingResponse chan *processingResult
-	var r *processingResult
+	var chans []chan *processingResult
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case processingResponse = <-p.processingQueue:
+		case chans = <-p.processingQueue:
 		}
-		select {
-		case <-ctx.Done():
-			return
-		case r = <-processingResponse:
+		watchEvents := make([]watch.Event, 0, len(chans))
+		for _, ch := range chans {
+			var r *processingResult
+			select {
+			case <-ctx.Done():
+				return
+			case r = <-ch:
+			}
+			if r.err != nil {
+				p.wc.sendError(r.err)
+				return
+			}
+			if r.event == nil {
+				continue
+			}
+			watchEvents = append(watchEvents, *r.event)
 		}
-		if r.err != nil {
-			p.wc.sendError(r.err)
-			return
-		}
-		if r.event == nil {
-			continue
-		}
-		if !p.wc.sendEvent(r.event) {
-			return
+		if len(watchEvents) > 0 {
+			if !p.wc.sendEventBatch(watchEvents) {
+				return
+			}
 		}
 	}
 }
@@ -751,9 +790,16 @@ func (wc *watchChan) sendError(err error) {
 	errResult := transformErrorToEvent(err)
 	if errResult != nil {
 		// error result is guaranteed to be received by user before closing ResultChan.
-		select {
-		case wc.resultChan <- *errResult:
-		case <-wc.ctx.Done(): // user has given up all results
+		if wc.useBatch.Load() {
+			select {
+			case wc.resultChanBatch <- []watch.Event{*errResult}:
+			case <-wc.ctx.Done():
+			}
+		} else {
+			select {
+			case wc.resultChan <- *errResult:
+			case <-wc.ctx.Done(): // user has given up all results
+			}
 		}
 	}
 }
@@ -774,11 +820,38 @@ func (wc *watchChan) sendEvent(event *watch.Event) bool {
 	}
 }
 
-func (wc *watchChan) queueEvent(e *event) {
+// sendEventBatch synchronously puts event batch into resultChanBatch or resultChan.
+// Returns true if it was successful.
+func (wc *watchChan) sendEventBatch(events []watch.Event) bool {
+	defer func(start time.Time) { wc.resultLogger.recordWait(time.Since(start)) }(time.Now())
+
+	if wc.useBatch.Load() {
+		select {
+		case wc.resultChanBatch <- events:
+			return true
+		case <-wc.ctx.Done():
+			return false
+		}
+	}
+
+	for _, event := range events {
+		select {
+		case wc.resultChan <- event:
+		case <-wc.ctx.Done():
+			return false
+		}
+	}
+	return true
+}
+
+func (wc *watchChan) queueEvents(events []*event) {
+	if len(events) == 0 {
+		return
+	}
 	defer func(start time.Time) { wc.incomingEventLogger.recordWait(time.Since(start)) }(time.Now())
 
 	select {
-	case wc.incomingEventChan <- e:
+	case wc.incomingEventChan <- events:
 	case <-wc.ctx.Done():
 	}
 }
