@@ -36,6 +36,7 @@ func NewWatchCacheStorage(keyFunc func(runtime.Object) (string, error), indexers
 		store:               NewIndexer(indexers),
 		listResourceVersion: 0,
 	}
+	storage.updateLatestSnapshot()
 	if utilfeature.DefaultFeatureGate.Enabled(features.ListFromCacheSnapshot) {
 		storage.snapshottingEnabled.Store(true)
 		storage.snapshots = NewSnapshotter()
@@ -52,6 +53,8 @@ type WatchCacheStorage struct {
 	// NOTE: We assume that <store> is thread-safe.
 	store Indexer
 
+	latestSnapshot atomic.Value // holds store.Snapshot
+
 	// ResourceVersion of the last list result (populated via Replace() method).
 	listResourceVersion uint64
 
@@ -60,10 +63,17 @@ type WatchCacheStorage struct {
 	snapshottingEnabled atomic.Bool
 }
 
+func (w *WatchCacheStorage) updateLatestSnapshot() {
+	w.latestSnapshot.Store(w.store.Clone())
+}
+
 // StoreLocked returns the live store as a Snapshot.
 // Unlike GetExactSnapshotLocked this is not an immutable point-in-time copy.
 // The caller must hold the lock for the duration of use.
 func (w *WatchCacheStorage) StoreLocked() Snapshot {
+	if val := w.latestSnapshot.Load(); val != nil {
+		return val.(Snapshot)
+	}
 	return w.store
 }
 
@@ -205,11 +215,19 @@ func (w *WatchCacheStorage) Get(obj interface{}) (interface{}, bool, error) {
 		return nil, false, fmt.Errorf("couldn't compute key: %w", err)
 	}
 
+	if val := w.latestSnapshot.Load(); val != nil {
+		snap := val.(Snapshot)
+		return snap.GetByKey(key)
+	}
 	return w.store.Get(&Element{Key: key, Object: object})
 }
 
 // GetByKey returns pointer to <storeElement>.
 func (w *WatchCacheStorage) GetByKey(key string) (interface{}, bool, error) {
+	if val := w.latestSnapshot.Load(); val != nil {
+		snap := val.(Snapshot)
+		return snap.GetByKey(key)
+	}
 	return w.store.GetByKey(key)
 }
 
@@ -237,6 +255,7 @@ func (w *WatchCacheStorage) UpdateStoreLocked(eventType watch.EventType, elem *E
 	if err != nil {
 		return err
 	}
+	w.updateLatestSnapshot()
 	if w.snapshots != nil && w.snapshottingEnabled.Load() {
 		w.snapshots.Add(resourceVersion, w.store)
 	}
@@ -255,6 +274,7 @@ func (w *WatchCacheStorage) ReplaceLocked(toReplace []interface{}, resourceVersi
 	if err := w.store.Replace(toReplace, resourceVersion); err != nil {
 		return err
 	}
+	w.updateLatestSnapshot()
 	if w.snapshots != nil {
 		w.snapshots.Reset()
 		if w.snapshottingEnabled.Load() {
