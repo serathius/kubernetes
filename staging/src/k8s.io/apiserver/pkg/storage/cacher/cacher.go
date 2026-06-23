@@ -30,6 +30,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/conversion"
 	"k8s.io/apimachinery/pkg/fields"
@@ -784,7 +785,7 @@ func (c *Cacher) GetList(ctx context.Context, key string, opts storage.ListOptio
 	// Why not directly put object in the items of listObj?
 	//   the elements in ListObject are Struct type, making slice will bring excessive memory consumption.
 	//   so we try to delay this action as much as possible
-	var selectedObjects []runtime.Object
+	selectedObjects := make([]runtime.Object, 0, len(resp.Items))
 	var lastSelectedObjectKey string
 	var hasMoreListItems bool
 	limit := computeListLimit(opts)
@@ -814,11 +815,19 @@ func (c *Cacher) GetList(ctx context.Context, key string, opts storage.ListOptio
 		// Ensure that we never return a nil Items pointer in the result for consistency.
 		listVal.Set(reflect.MakeSlice(listVal.Type(), 0, 0))
 	} else {
-		// Resize the slice appropriately, since we already know that size of result set
-		listVal.Set(reflect.MakeSlice(listVal.Type(), len(selectedObjects), len(selectedObjects)))
-		span.AddEvent("Resized result")
-		for i, o := range selectedObjects {
-			listVal.Index(i).Set(reflect.ValueOf(o).Elem())
+		if podList, isPodList := listObj.(*corev1.PodList); isPodList {
+			pods := make([]corev1.Pod, len(selectedObjects))
+			for i, o := range selectedObjects {
+				pods[i] = *(baseObjectThreadUnsafe(o).(*corev1.Pod))
+			}
+			podList.Items = pods
+		} else {
+			// Resize the slice appropriately, since we already know that size of result set
+			listVal.Set(reflect.MakeSlice(listVal.Type(), len(selectedObjects), len(selectedObjects)))
+			span.AddEvent("Resized result")
+			for i, o := range selectedObjects {
+				listVal.Index(i).Set(reflect.ValueOf(o).Elem())
+			}
 		}
 	}
 	span.AddEvent("Filtered items", attribute.Int("count", listVal.Len()))

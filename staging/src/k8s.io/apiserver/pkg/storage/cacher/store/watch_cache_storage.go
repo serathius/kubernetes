@@ -127,6 +127,9 @@ func (w *WatchCacheStorage) LatestSnapshotLocked() (Snapshot, bool) {
 }
 
 func (w *WatchCacheStorage) GetLatestSnapshotOrBuildLocked(key, continueKey string) (Snapshot, error) {
+	if val := w.latestSnapshot.Load(); val != nil {
+		return val.(Snapshot), nil
+	}
 	if snap, ok := w.LatestSnapshotLocked(); ok {
 		// Snapshots are added in order as we update store, so the
 		// latest snapshot match latest store state and latest revision.
