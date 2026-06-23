@@ -120,6 +120,9 @@ func (w *WatchCacheStorage) MarkConsistent(consistent bool) {
 }
 
 func (w *WatchCacheStorage) LatestSnapshotLocked() (Snapshot, bool) {
+	if val := w.latestSnapshot.Load(); val != nil {
+		return val.(Snapshot), true
+	}
 	if w.SnapshottingEnabled() {
 		return w.snapshots.Latest()
 	}
@@ -298,7 +301,6 @@ func (w *WatchCacheStorage) BatchUpdateStoreLocked(events []EventToStore) error 
 	w.updateLatestSnapshot()
 	return nil
 }
-
 
 // CompactSnapshotsLocked prunes snapshots older than the oldest history version.
 func (w *WatchCacheStorage) CompactSnapshotsLocked(oldestRV uint64) {

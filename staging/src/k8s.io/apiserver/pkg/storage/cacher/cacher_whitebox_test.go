@@ -566,7 +566,7 @@ func (f *fakeSnapshotter) GetLessOrEqual(rv uint64) (store.Snapshot, bool) {
 func (f *fakeSnapshotter) Latest() (store.Snapshot, bool)       { return nil, false }
 func (f *fakeSnapshotter) Add(rv uint64, indexer store.Indexer) {}
 func (f *fakeSnapshotter) RemoveLess(rv uint64)                 {}
-func (f *fakeSnapshotter) Len() int                            { return 0 }
+func (f *fakeSnapshotter) Len() int                             { return 0 }
 
 func TestMatchExactResourceVersionFallback(t *testing.T) {
 	for _, snapshotAvailable := range []bool{false, true} {
@@ -591,6 +591,7 @@ func TestMatchExactResourceVersionFallback(t *testing.T) {
 				t.Fatalf("Couldn't create cacher: %v", err)
 			}
 			defer cacher.Stop()
+			cacher.watchCache.storageMux.Lock()
 			cacher.watchCache.storage.SetSnapshotterForTest(&fakeSnapshotter{
 				getLessOrEqual: func(rv uint64) (store.Snapshot, bool) {
 					if snapshotAvailable {
@@ -599,6 +600,7 @@ func TestMatchExactResourceVersionFallback(t *testing.T) {
 					return nil, false
 				},
 			})
+			cacher.watchCache.storageMux.Unlock()
 			if err := cacher.ready.wait(context.Background()); err != nil {
 				t.Fatalf("unexpected error waiting for the cache to be ready")
 			}

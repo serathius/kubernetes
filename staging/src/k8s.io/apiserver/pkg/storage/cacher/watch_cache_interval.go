@@ -278,3 +278,48 @@ func (wcib *watchCacheIntervalBuffer) isFull() bool {
 func (wcib *watchCacheIntervalBuffer) isEmpty() bool {
 	return wcib.startIndex == wcib.endIndex
 }
+
+func newCacheIntervalFromLazySnapshot(resourceVersion uint64, snap store.Snapshot) *watchCacheInterval {
+	return &watchCacheInterval{
+		source: &lazySnapshotCacheIntervalSource{
+			resourceVersion: resourceVersion,
+			snapshot:        snap,
+		},
+		resourceVersion: resourceVersion,
+	}
+}
+
+type lazySnapshotCacheIntervalSource struct {
+	resourceVersion uint64
+	snapshot        store.Snapshot
+	buffer          *watchCacheIntervalBuffer
+}
+
+func (s *lazySnapshotCacheIntervalSource) Next() (*watchCacheEvent, error) {
+	if s.snapshot != nil {
+		allItems, err := s.snapshot.OrderedListPrefix("", "")
+		if err != nil {
+			return nil, err
+		}
+		buffer := &watchCacheIntervalBuffer{}
+		buffer.buffer = make([]*watchCacheEvent, len(allItems))
+		for i, item := range allItems {
+			elem, ok := item.(*store.Element)
+			if !ok {
+				return nil, fmt.Errorf("not a storeElement: %v", elem)
+			}
+			buffer.buffer[i] = storeElementToWatchCacheEvent(elem, s.resourceVersion)
+			buffer.endIndex++
+		}
+		s.buffer = buffer
+		s.snapshot = nil
+	}
+	if s.buffer == nil {
+		return nil, nil
+	}
+	event, exists := s.buffer.next()
+	if !exists {
+		return nil, nil
+	}
+	return event, nil
+}

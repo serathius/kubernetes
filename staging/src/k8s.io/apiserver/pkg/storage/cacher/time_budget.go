@@ -60,7 +60,7 @@ type timeBudgetImpl struct {
 func newTimeBudget() timeBudget {
 	result := &timeBudgetImpl{
 		clock:     clock.RealClock{},
-		budget:    time.Duration(0),
+		budget:    maxBudget,
 		refresh:   refreshPerSecond,
 		maxBudget: maxBudget,
 	}

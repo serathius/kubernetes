@@ -78,15 +78,18 @@ func TestLatestSnapshotLocked(t *testing.T) {
 	indexers := &cache.Indexers{}
 	s := NewWatchCacheStorage(keyFunc, indexers)
 
-	_, ok := s.LatestSnapshotLocked()
-	assert.False(t, ok, "expected no snapshot before any writes")
+	snap, ok := s.LatestSnapshotLocked()
+	assert.True(t, ok, "expected snapshot before any writes")
+	items, err := snap.OrderedListPrefix("", "")
+	require.NoError(t, err)
+	assert.Empty(t, items)
 
 	elem := &Element{Key: "foo", Object: &mockObject{key: "foo", val: "100"}}
 	require.NoError(t, s.UpdateStoreLocked(watch.Added, elem, 100))
 
-	snap, ok := s.LatestSnapshotLocked()
+	snap, ok = s.LatestSnapshotLocked()
 	require.True(t, ok, "expected snapshot after write")
-	items, err := snap.OrderedListPrefix("", "")
+	items, err = snap.OrderedListPrefix("", "")
 	require.NoError(t, err)
 	assert.Len(t, items, 1)
 	assert.Equal(t, &mockObject{key: "foo", val: "100"}, items[0].(*Element).Object)
