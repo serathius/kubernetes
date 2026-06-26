@@ -149,7 +149,7 @@ func newWatchCache(
 	wc := &watchCache{
 		resourceVersion: 0,
 		config:          config,
-		history:         newWatchCacheHistory(config, eventFreshDuration),
+		history:         newWatchCacheHistory(groupResource, eventFreshDuration),
 		storage:         store.NewWatchCacheStorage(config.keyFunc, indexers),
 	}
 	wc.cond = sync.NewCond(wc.RLocker())
@@ -624,7 +624,7 @@ func (w *watchCache) getAllEventsSinceLocked(resourceVersion uint64, key string,
 		resourceVersion = w.resourceVersion
 	}
 
-	return w.history.GetIntervalLocked(resourceVersion, w.storage.ListResourceVersion(), w.RWMutex.RLocker())
+	return w.history.GetIntervalLocked(resourceVersion, w.storage.ListResourceVersion(), w.config.indexValidator, w.RWMutex.RLocker())
 }
 
 // getIntervalFromStoreLocked returns a watchCacheInterval
