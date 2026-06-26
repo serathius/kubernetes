@@ -2031,7 +2031,7 @@ func testCachingObjects(t *testing.T, watchersCount int) {
 			object = event.Object.(runtime.CacheableObject).GetObject()
 
 			if event.Type == watch.Deleted {
-				resourceVersion, err := cacher.versioner.ObjectResourceVersion(cacher.watchCache.history.cache[index].PrevObject)
+				resourceVersion, err := cacher.versioner.ObjectResourceVersion(dispatchedEvents[index].PrevObject)
 				if err != nil {
 					t.Fatalf("Failed to parse resource version: %v", err)
 				}
@@ -2041,9 +2041,9 @@ func testCachingObjects(t *testing.T, watchersCount int) {
 			var e runtime.Object
 			switch event.Type {
 			case watch.Added, watch.Modified:
-				e = cacher.watchCache.history.cache[index].Object
+				e = dispatchedEvents[index].Object
 			case watch.Deleted:
-				e = cacher.watchCache.history.cache[index].PrevObject
+				e = dispatchedEvents[index].PrevObject
 			default:
 				t.Errorf("unexpected watch event: %#v", event)
 			}

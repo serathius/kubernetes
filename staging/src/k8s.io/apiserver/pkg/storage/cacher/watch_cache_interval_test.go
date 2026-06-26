@@ -23,13 +23,14 @@ import (
 	"sort"
 	"sync"
 	"testing"
+	"time"
 
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/watch"
-	"k8s.io/client-go/tools/cache"
 
 	"k8s.io/apiserver/pkg/storage/cacher/store"
 )
@@ -241,7 +242,7 @@ func TestFillBuffer(t *testing.T) {
 	}
 }
 
-func TestCacheIntervalNextFromWatchCache(t *testing.T) {
+func TestCacheIntervalNextFromHistory(t *testing.T) {
 	// Have the capacity such that it facilitates
 	// filling the interval buffer more than once
 	// completely and then some more - 10 here is
@@ -294,26 +295,33 @@ func TestCacheIntervalNextFromWatchCache(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			wc := newTestWatchCache(capacity, DefaultEventFreshDuration, &cache.Indexers{})
-			defer wc.Stop()
+			h := newWatchCacheHistory(schema.GroupResource{Resource: "pods"}, DefaultEventFreshDuration)
+			h.capacity = capacity
+			h.cache = make([]*watchCacheEvent, capacity)
+
+			now := time.Now()
 			for i := 0; i < c.eventsAddedToWatchcache; i++ {
-				wc.Add(makeTestPod(fmt.Sprintf("pod%d", i), uint64(i)))
+				h.updateCache(&watchCacheEvent{
+					ResourceVersion: uint64(i + 1),
+					RecordTime:      now,
+				})
 			}
 			indexerFunc := func(i int) *watchCacheEvent {
-				return wc.history.cache[i%wc.history.capacity]
+				return h.cache[i%h.capacity]
 			}
 
+			locker := &sync.RWMutex{}
 			wci := newCacheInterval(
 				c.intervalStartIndex,
-				wc.history.endIndex,
+				h.endIndex,
 				indexerFunc,
-				wc.history.isIndexValidLocked,
-				wc.resourceVersion,
-				&wc.RWMutex,
+				h.isIndexValidLocked,
+				uint64(c.eventsAddedToWatchcache),
+				locker,
 			)
 			src := historySource(wci)
 
-			numExpectedEvents := wc.history.endIndex - c.intervalStartIndex
+			numExpectedEvents := h.endIndex - c.intervalStartIndex
 			for i := 0; i < numExpectedEvents; i++ {
 				// Simulate and test interval invalidation iff
 				// the watchCache itself is not empty.
@@ -325,8 +333,8 @@ func TestCacheIntervalNextFromWatchCache(t *testing.T) {
 					// copying over events from the underlying watch cache,
 					// i.e. freshly filling in the interval buffer.
 					if i%bufferSize == 0 && i != c.eventsAddedToWatchcache {
-						originalCacheStartIndex := wc.history.startIndex
-						wc.history.startIndex = src.startIndex + 1
+						originalCacheStartIndex := h.startIndex
+						h.startIndex = src.startIndex + 1
 						event, err := wci.Next()
 						if err == nil {
 							t.Errorf("expected non-nil error")
@@ -335,7 +343,7 @@ func TestCacheIntervalNextFromWatchCache(t *testing.T) {
 							t.Errorf("expected nil event, got %v", *event)
 						}
 						// Restore startIndex.
-						wc.history.startIndex = originalCacheStartIndex
+						h.startIndex = originalCacheStartIndex
 					}
 				}
 
@@ -356,8 +364,8 @@ func TestCacheIntervalNextFromWatchCache(t *testing.T) {
 					return
 				}
 
-				expectedIndex := (c.intervalStartIndex + i) % wc.history.capacity
-				expectedEvent := wc.history.cache[expectedIndex]
+				expectedIndex := (c.intervalStartIndex + i) % h.capacity
+				expectedEvent := h.cache[expectedIndex]
 				if err := verifyEvent(true, event, expectedEvent); err != nil {
 					t.Error(err)
 				}
