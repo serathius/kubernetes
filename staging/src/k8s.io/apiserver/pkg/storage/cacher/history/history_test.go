@@ -299,3 +299,70 @@ func checkCacheElements(h *History) bool {
 	}
 	return true
 }
+
+func TestCapacityUpperBound(t *testing.T) {
+	testCases := []struct {
+		name               string
+		eventFreshDuration time.Duration
+		expected           int
+	}{
+		{
+			name:               "default eventFreshDuration",
+			eventFreshDuration: DefaultEventFreshDuration, // 75s
+			expected:           DefaultUpperBoundCapacity, // 100 * 1024
+		},
+		{
+			name:               "lower eventFreshDuration, capacity limit unchanged",
+			eventFreshDuration: 45 * time.Second,          // 45s
+			expected:           DefaultUpperBoundCapacity, // 100 * 1024
+		},
+		{
+			name:               "higher eventFreshDuration, capacity limit scaled up",
+			eventFreshDuration: 4 * DefaultEventFreshDuration, // 4 * 75s
+			expected:           4 * DefaultUpperBoundCapacity, // 4 * 100 * 1024
+		},
+		{
+			name:               "higher eventFreshDuration, capacity limit scaled and rounded up",
+			eventFreshDuration: 3 * DefaultEventFreshDuration, // 3 * 75s
+			expected:           4 * DefaultUpperBoundCapacity, // 4 * 100 * 1024
+		},
+		{
+			name:               "higher eventFreshDuration, capacity limit scaled up and capped",
+			eventFreshDuration: DefaultEventFreshDuration << 20, // 2^20 * 75s
+			expected:           DefaultUpperBoundCapacity << 14, // 2^14 * 100 * 1024
+		},
+	}
+
+	for _, test := range testCases {
+		t.Run(test.name, func(t *testing.T) {
+			capacity := CapacityUpperBound(test.eventFreshDuration)
+			if test.expected != capacity {
+				t.Errorf("expected %v, got %v", test.expected, capacity)
+			}
+		})
+	}
+}
+
+func BenchmarkHistory_UpdateCache(b *testing.B) {
+	h := NewHistory(schema.GroupResource{Resource: "pods"}, DefaultEventFreshDuration)
+	h.SetCapacity(DefaultUpperBoundCapacity)
+	h.Clear()
+	h.SetBounds(DefaultLowerBoundCapacity, DefaultUpperBoundCapacity)
+	for i := 0; i < DefaultUpperBoundCapacity; i++ {
+		event := &Event{
+			Key:        fmt.Sprintf("event-%d", i),
+			RecordTime: time.Now(),
+		}
+		h.SetEvent(i, event)
+	}
+	h.SetEndIndex(DefaultUpperBoundCapacity)
+
+	add := &Event{
+		Key:        fmt.Sprintf("event-%d", DefaultUpperBoundCapacity),
+		RecordTime: time.Now(),
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		h.UpdateCache(add)
+	}
+}
