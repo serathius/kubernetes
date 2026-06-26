@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apiserver/pkg/storage/cacher/metrics"
 	"k8s.io/klog/v2"
 )
@@ -37,9 +38,9 @@ const (
 	defaultUpperBoundCapacity = 100 * 1024
 )
 
-func newWatchCacheHistory(config *ImmutableWatchCacheConfig, eventFreshDuration time.Duration) *watchCacheHistory {
+func newWatchCacheHistory(groupResource schema.GroupResource, eventFreshDuration time.Duration) *watchCacheHistory {
 	h := &watchCacheHistory{
-		config:             config,
+		groupResource:      groupResource,
 		capacity:           defaultLowerBoundCapacity,
 		cache:              make([]*watchCacheEvent, defaultLowerBoundCapacity),
 		lowerBoundCapacity: defaultLowerBoundCapacity,
@@ -48,7 +49,7 @@ func newWatchCacheHistory(config *ImmutableWatchCacheConfig, eventFreshDuration 
 		endIndex:           0,
 		eventFreshDuration: eventFreshDuration,
 	}
-	metrics.WatchCacheCapacity.WithLabelValues(config.groupResource.Group, config.groupResource.Resource).Set(float64(h.capacity))
+	metrics.WatchCacheCapacity.WithLabelValues(groupResource.Group, groupResource.Resource).Set(float64(h.capacity))
 	return h
 }
 
@@ -77,7 +78,8 @@ func capacityUpperBound(eventFreshDuration time.Duration) int {
 }
 
 type watchCacheHistory struct {
-	config *ImmutableWatchCacheConfig
+	groupResource schema.GroupResource
+
 
 	// Maximum size of history window.
 	capacity int
@@ -152,7 +154,7 @@ func (w *watchCacheHistory) doCacheResizeLocked(capacity int) {
 		newCache[i%capacity] = w.cache[i%w.capacity]
 	}
 	w.cache = newCache
-	metrics.RecordsWatchCacheCapacityChange(w.config.groupResource, w.capacity, capacity)
+	metrics.RecordsWatchCacheCapacityChange(w.groupResource, w.capacity, capacity)
 	w.capacity = capacity
 }
 
@@ -214,7 +216,7 @@ func (w *watchCacheHistory) suggestedWatchChannelSize(indexExists, triggerUsed b
 // GetIntervalLocked returns a watchCacheInterval that can be used to
 // retrieve events since a certain resourceVersion. This function assumes to
 // be called under the lock.
-func (w *watchCacheHistory) GetIntervalLocked(resourceVersion uint64, listResourceVersion uint64, locker sync.Locker) (*watchCacheInterval, error) {
+func (w *watchCacheHistory) GetIntervalLocked(resourceVersion uint64, listResourceVersion uint64, indexValidator indexValidator, locker sync.Locker) (*watchCacheInterval, error) {
 	size := w.endIndex - w.startIndex
 	var oldest uint64
 	switch {
@@ -245,7 +247,7 @@ func (w *watchCacheHistory) GetIntervalLocked(resourceVersion uint64, listResour
 	indexerFunc := func(i int) *watchCacheEvent {
 		return w.cache[i%w.capacity]
 	}
-	ci := newCacheInterval(w.startIndex+first, w.endIndex, indexerFunc, w.config.indexValidator, resourceVersion, locker)
+	ci := newCacheInterval(w.startIndex+first, w.endIndex, indexerFunc, indexValidator, resourceVersion, locker)
 	return ci, nil
 }
 
