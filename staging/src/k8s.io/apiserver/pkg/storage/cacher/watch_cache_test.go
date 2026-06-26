@@ -24,6 +24,8 @@ import (
 	"testing"
 	"time"
 
+	"k8s.io/apiserver/pkg/storage/cacher/history"
+
 	"github.com/stretchr/testify/require"
 
 	v1 "k8s.io/api/core/v1"
@@ -84,13 +86,13 @@ type testWatchCache struct {
 	stopCh           chan struct{}
 }
 
-func (w *testWatchCache) getAllEventsSince(resourceVersion uint64, opts storage.ListOptions) ([]*watchCacheEvent, error) {
+func (w *testWatchCache) getAllEventsSince(resourceVersion uint64, opts storage.ListOptions) ([]*history.Event, error) {
 	cacheInterval, err := w.getCacheIntervalForEvents(resourceVersion, opts)
 	if err != nil {
 		return nil, err
 	}
 
-	result := []*watchCacheEvent{}
+	result := []*history.Event{}
 	for {
 		event, err := cacheInterval.Next()
 		if err != nil {
@@ -105,7 +107,7 @@ func (w *testWatchCache) getAllEventsSince(resourceVersion uint64, opts storage.
 	return result, nil
 }
 
-func (w *testWatchCache) getCacheIntervalForEvents(resourceVersion uint64, opts storage.ListOptions) (*watchCacheInterval, error) {
+func (w *testWatchCache) getCacheIntervalForEvents(resourceVersion uint64, opts storage.ListOptions) (*history.Interval, error) {
 	w.RLock()
 	defer w.RUnlock()
 
@@ -125,7 +127,7 @@ func newTestWatchCache(capacity int, eventFreshDuration time.Duration, indexers 
 		return labels.Set(pod.Labels), fields.Set{"spec.nodeName": pod.Spec.NodeName}, nil
 	}
 	versioner := storage.APIObjectVersioner{}
-	mockHandler := func(*watchCacheEvent) {}
+	mockHandler := func(*history.Event) {}
 	wc := &testWatchCache{}
 	wc.bookmarkRevision = make(chan int64, 1)
 	wc.stopCh = make(chan struct{})
@@ -139,10 +141,8 @@ func newTestWatchCache(capacity int, eventFreshDuration time.Duration, indexers 
 	wc.watchCache = newWatchCache(keyFunc, mockHandler, getAttrsFunc, versioner, indexers, testingclock.NewFakeClock(time.Now()), eventFreshDuration, schema.GroupResource{Resource: "pods"}, pr, getCurrentRV)
 	// To preserve behavior of tests that assume a given capacity,
 	// resize it to th expected size.
-	wc.history.capacity = capacity
-	wc.history.cache = make([]*watchCacheEvent, capacity)
-	wc.history.lowerBoundCapacity = min(capacity, defaultLowerBoundCapacity)
-	wc.history.upperBoundCapacity = max(capacity, defaultUpperBoundCapacity)
+	wc.history.SetCapacity(capacity)
+	wc.history.SetBounds(min(capacity, history.DefaultLowerBoundCapacity), max(capacity, history.DefaultUpperBoundCapacity))
 
 	return wc
 }
@@ -284,9 +284,7 @@ func TestEvents(t *testing.T) {
 	store := newTestWatchCache(5, DefaultEventFreshDuration, &cache.Indexers{})
 	defer store.Stop()
 
-	// no dynamic-size cache to fit old tests.
-	store.history.lowerBoundCapacity = 5
-	store.history.upperBoundCapacity = 5
+	store.history.SetBounds(5, 5)
 
 	store.Add(makeTestPod("pod", 3))
 
@@ -689,293 +687,18 @@ func TestReflectorForWatchCache(t *testing.T) {
 	}
 }
 
-func TestDynamicCache(t *testing.T) {
-	tests := []struct {
-		name          string
-		eventCount    int
-		cacheCapacity int
-		startIndex    int
-		// interval is time duration between adjacent events.
-		lowerBoundCapacity int
-		upperBoundCapacity int
-		interval           time.Duration
-		expectCapacity     int
-		expectStartIndex   int
-	}{
-		{
-			name:               "[capacity not equals 4*n] events inside DefaultEventFreshDuration cause cache expanding",
-			eventCount:         5,
-			cacheCapacity:      5,
-			lowerBoundCapacity: 5 / 2,
-			upperBoundCapacity: 5 * 2,
-			interval:           DefaultEventFreshDuration / 6,
-			expectCapacity:     10,
-			expectStartIndex:   0,
-		},
-		{
-			name:               "[capacity not equals 4*n] events outside DefaultEventFreshDuration without change cache capacity",
-			eventCount:         5,
-			cacheCapacity:      5,
-			lowerBoundCapacity: 5 / 2,
-			upperBoundCapacity: 5 * 2,
-			interval:           DefaultEventFreshDuration / 4,
-			expectCapacity:     5,
-			expectStartIndex:   0,
-		},
-		{
-			name:               "[capacity not equals 4*n] quarter of recent events outside DefaultEventFreshDuration cause cache shrinking",
-			eventCount:         5,
-			cacheCapacity:      5,
-			lowerBoundCapacity: 5 / 2,
-			upperBoundCapacity: 5 * 2,
-			interval:           DefaultEventFreshDuration + time.Second,
-			expectCapacity:     2,
-			expectStartIndex:   3,
-		},
-		{
-			name:               "[capacity not equals 4*n] quarter of recent events outside DefaultEventFreshDuration cause cache shrinking with given lowerBoundCapacity",
-			eventCount:         5,
-			cacheCapacity:      5,
-			lowerBoundCapacity: 3,
-			upperBoundCapacity: 5 * 2,
-			interval:           DefaultEventFreshDuration + time.Second,
-			expectCapacity:     3,
-			expectStartIndex:   2,
-		},
-		{
-			name:               "[capacity not equals 4*n] events inside DefaultEventFreshDuration cause cache expanding with given upperBoundCapacity",
-			eventCount:         5,
-			cacheCapacity:      5,
-			lowerBoundCapacity: 5 / 2,
-			upperBoundCapacity: 8,
-			interval:           DefaultEventFreshDuration / 6,
-			expectCapacity:     8,
-			expectStartIndex:   0,
-		},
-		{
-			name:               "[capacity not equals 4*n] [startIndex not equal 0] events inside DefaultEventFreshDuration cause cache expanding",
-			eventCount:         5,
-			cacheCapacity:      5,
-			startIndex:         3,
-			lowerBoundCapacity: 5 / 2,
-			upperBoundCapacity: 5 * 2,
-			interval:           DefaultEventFreshDuration / 6,
-			expectCapacity:     10,
-			expectStartIndex:   3,
-		},
-		{
-			name:               "[capacity not equals 4*n] [startIndex not equal 0] events outside DefaultEventFreshDuration without change cache capacity",
-			eventCount:         5,
-			cacheCapacity:      5,
-			startIndex:         3,
-			lowerBoundCapacity: 5 / 2,
-			upperBoundCapacity: 5 * 2,
-			interval:           DefaultEventFreshDuration / 4,
-			expectCapacity:     5,
-			expectStartIndex:   3,
-		},
-		{
-			name:               "[capacity not equals 4*n] [startIndex not equal 0] quarter of recent events outside DefaultEventFreshDuration cause cache shrinking",
-			eventCount:         5,
-			cacheCapacity:      5,
-			startIndex:         3,
-			lowerBoundCapacity: 5 / 2,
-			upperBoundCapacity: 5 * 2,
-			interval:           DefaultEventFreshDuration + time.Second,
-			expectCapacity:     2,
-			expectStartIndex:   6,
-		},
-		{
-			name:               "[capacity not equals 4*n] [startIndex not equal 0] quarter of recent events outside DefaultEventFreshDuration cause cache shrinking with given lowerBoundCapacity",
-			eventCount:         5,
-			cacheCapacity:      5,
-			startIndex:         3,
-			lowerBoundCapacity: 3,
-			upperBoundCapacity: 5 * 2,
-			interval:           DefaultEventFreshDuration + time.Second,
-			expectCapacity:     3,
-			expectStartIndex:   5,
-		},
-		{
-			name:               "[capacity not equals 4*n] [startIndex not equal 0] events inside DefaultEventFreshDuration cause cache expanding with given upperBoundCapacity",
-			eventCount:         5,
-			cacheCapacity:      5,
-			startIndex:         3,
-			lowerBoundCapacity: 5 / 2,
-			upperBoundCapacity: 8,
-			interval:           DefaultEventFreshDuration / 6,
-			expectCapacity:     8,
-			expectStartIndex:   3,
-		},
-		{
-			name:               "[capacity equals 4*n] events inside DefaultEventFreshDuration cause cache expanding",
-			eventCount:         8,
-			cacheCapacity:      8,
-			lowerBoundCapacity: 8 / 2,
-			upperBoundCapacity: 8 * 2,
-			interval:           DefaultEventFreshDuration / 9,
-			expectCapacity:     16,
-			expectStartIndex:   0,
-		},
-		{
-			name:               "[capacity equals 4*n] events outside DefaultEventFreshDuration without change cache capacity",
-			eventCount:         8,
-			cacheCapacity:      8,
-			lowerBoundCapacity: 8 / 2,
-			upperBoundCapacity: 8 * 2,
-			interval:           DefaultEventFreshDuration / 8,
-			expectCapacity:     8,
-			expectStartIndex:   0,
-		},
-		{
-			name:               "[capacity equals 4*n] quarter of recent events outside DefaultEventFreshDuration cause cache shrinking",
-			eventCount:         8,
-			cacheCapacity:      8,
-			lowerBoundCapacity: 8 / 2,
-			upperBoundCapacity: 8 * 2,
-			interval:           DefaultEventFreshDuration/2 + time.Second,
-			expectCapacity:     4,
-			expectStartIndex:   4,
-		},
-		{
-			name:               "[capacity equals 4*n] quarter of recent events outside DefaultEventFreshDuration cause cache shrinking with given lowerBoundCapacity",
-			eventCount:         8,
-			cacheCapacity:      8,
-			lowerBoundCapacity: 7,
-			upperBoundCapacity: 8 * 2,
-			interval:           DefaultEventFreshDuration/2 + time.Second,
-			expectCapacity:     7,
-			expectStartIndex:   1,
-		},
-		{
-			name:               "[capacity equals 4*n] events inside DefaultEventFreshDuration cause cache expanding with given upperBoundCapacity",
-			eventCount:         8,
-			cacheCapacity:      8,
-			lowerBoundCapacity: 8 / 2,
-			upperBoundCapacity: 10,
-			interval:           DefaultEventFreshDuration / 9,
-			expectCapacity:     10,
-			expectStartIndex:   0,
-		},
-		{
-			name:               "[capacity equals 4*n] [startIndex not equal 0] events inside DefaultEventFreshDuration cause cache expanding",
-			eventCount:         8,
-			cacheCapacity:      8,
-			startIndex:         3,
-			lowerBoundCapacity: 8 / 2,
-			upperBoundCapacity: 8 * 2,
-			interval:           DefaultEventFreshDuration / 9,
-			expectCapacity:     16,
-			expectStartIndex:   3,
-		},
-		{
-			name:               "[capacity equals 4*n] [startIndex not equal 0] events outside DefaultEventFreshDuration without change cache capacity",
-			eventCount:         8,
-			cacheCapacity:      8,
-			startIndex:         3,
-			lowerBoundCapacity: 8 / 2,
-			upperBoundCapacity: 8 * 2,
-			interval:           DefaultEventFreshDuration / 8,
-			expectCapacity:     8,
-			expectStartIndex:   3,
-		},
-		{
-			name:               "[capacity equals 4*n] [startIndex not equal 0] quarter of recent events outside DefaultEventFreshDuration cause cache shrinking",
-			eventCount:         8,
-			cacheCapacity:      8,
-			startIndex:         3,
-			lowerBoundCapacity: 8 / 2,
-			upperBoundCapacity: 8 * 2,
-			interval:           DefaultEventFreshDuration/2 + time.Second,
-			expectCapacity:     4,
-			expectStartIndex:   7,
-		},
-		{
-			name:               "[capacity equals 4*n] [startIndex not equal 0] quarter of recent events outside DefaultEventFreshDuration cause cache shrinking with given lowerBoundCapacity",
-			eventCount:         8,
-			cacheCapacity:      8,
-			startIndex:         3,
-			lowerBoundCapacity: 7,
-			upperBoundCapacity: 8 * 2,
-			interval:           DefaultEventFreshDuration/2 + time.Second,
-			expectCapacity:     7,
-			expectStartIndex:   4,
-		},
-		{
-			name:               "[capacity equals 4*n] [startIndex not equal 0] events inside DefaultEventFreshDuration cause cache expanding with given upperBoundCapacity",
-			eventCount:         8,
-			cacheCapacity:      8,
-			startIndex:         3,
-			lowerBoundCapacity: 8 / 2,
-			upperBoundCapacity: 10,
-			interval:           DefaultEventFreshDuration / 9,
-			expectCapacity:     10,
-			expectStartIndex:   3,
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			store := newTestWatchCache(test.cacheCapacity, DefaultEventFreshDuration, &cache.Indexers{})
-			defer store.Stop()
-			store.history.cache = make([]*watchCacheEvent, test.cacheCapacity)
-			store.history.startIndex = test.startIndex
-			store.history.lowerBoundCapacity = test.lowerBoundCapacity
-			store.history.upperBoundCapacity = test.upperBoundCapacity
-			loadEventWithDuration(store, test.eventCount, test.interval)
-			nextInterval := store.config.clock.Now().Add(time.Duration(test.interval.Nanoseconds() * int64(test.eventCount)))
-			store.history.resizeCacheLocked(nextInterval)
-			if store.history.capacity != test.expectCapacity {
-				t.Errorf("expect capacity %d, but get %d", test.expectCapacity, store.history.capacity)
-			}
-
-			// check cache's startIndex, endIndex and all elements.
-			if store.history.startIndex != test.expectStartIndex {
-				t.Errorf("expect startIndex %d, but get %d", test.expectStartIndex, store.history.startIndex)
-			}
-			if store.history.endIndex != test.startIndex+test.eventCount {
-				t.Errorf("expect endIndex %d get %d", test.startIndex+test.eventCount, store.history.endIndex)
-			}
-			if !checkCacheElements(store) {
-				t.Errorf("some elements locations in cache is wrong")
-			}
-		})
-	}
-}
-
-func loadEventWithDuration(cache *testWatchCache, count int, interval time.Duration) {
-	for i := 0; i < count; i++ {
-		event := &watchCacheEvent{
-			Key:        fmt.Sprintf("event-%d", i+cache.history.startIndex),
-			RecordTime: cache.config.clock.Now().Add(time.Duration(interval.Nanoseconds() * int64(i))),
-		}
-		cache.history.cache[(i+cache.history.startIndex)%cache.history.capacity] = event
-	}
-	cache.history.endIndex = cache.history.startIndex + count
-}
-
-func checkCacheElements(cache *testWatchCache) bool {
-	for i := cache.history.startIndex; i < cache.history.endIndex; i++ {
-		location := i % cache.history.capacity
-		if cache.history.cache[location].Key != fmt.Sprintf("event-%d", i) {
-			return false
-		}
-	}
-	return true
-}
-
 func TestCacheIncreaseDoesNotBreakWatch(t *testing.T) {
 	store := newTestWatchCache(2, DefaultEventFreshDuration, &cache.Indexers{})
 	defer store.Stop()
 
 	now := store.config.clock.Now()
 	addEvent := func(key string, rv uint64, t time.Time) {
-		event := &watchCacheEvent{
+		event := &history.Event{
 			Key:             key,
 			ResourceVersion: rv,
 			RecordTime:      t,
 		}
-		store.history.updateCache(event)
+		store.history.UpdateCache(event)
 	}
 
 	// Initial LIST comes from the moment of RV=10.
@@ -1156,7 +879,7 @@ func TestSuggestedWatchChannelSize(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			store := newTestWatchCache(test.capacity, test.eventsFreshDuration, &cache.Indexers{})
 			defer store.Stop()
-			got := store.suggestedWatchChannelSize(test.indexExists, test.triggerUsed)
+			got := store.SuggestedWatchChannelSize(test.indexExists, test.triggerUsed)
 			if got != test.expected {
 				t.Errorf("unexpected channel size got: %v, expected: %v", got, test.expected)
 			}
@@ -1172,34 +895,34 @@ func TestCapacityUpperBound(t *testing.T) {
 	}{
 		{
 			name:               "default eventFreshDuration",
-			eventFreshDuration: DefaultEventFreshDuration, // 75s
-			expected:           defaultUpperBoundCapacity, // 100 * 1024
+			eventFreshDuration: DefaultEventFreshDuration,         // 75s
+			expected:           history.DefaultUpperBoundCapacity, // 100 * 1024
 		},
 		{
 			name:               "lower eventFreshDuration, capacity limit unchanged",
-			eventFreshDuration: 45 * time.Second,          // 45s
-			expected:           defaultUpperBoundCapacity, // 100 * 1024
+			eventFreshDuration: 45 * time.Second,                  // 45s
+			expected:           history.DefaultUpperBoundCapacity, // 100 * 1024
 		},
 		{
 			name:               "higher eventFreshDuration, capacity limit scaled up",
-			eventFreshDuration: 4 * DefaultEventFreshDuration, // 4 * 75s
-			expected:           4 * defaultUpperBoundCapacity, // 4 * 100 * 1024
+			eventFreshDuration: 4 * DefaultEventFreshDuration,         // 4 * 75s
+			expected:           4 * history.DefaultUpperBoundCapacity, // 4 * 100 * 1024
 		},
 		{
 			name:               "higher eventFreshDuration, capacity limit scaled and rounded up",
-			eventFreshDuration: 3 * DefaultEventFreshDuration, // 3 * 75s
-			expected:           4 * defaultUpperBoundCapacity, // 4 * 100 * 1024
+			eventFreshDuration: 3 * DefaultEventFreshDuration,         // 3 * 75s
+			expected:           4 * history.DefaultUpperBoundCapacity, // 4 * 100 * 1024
 		},
 		{
 			name:               "higher eventFreshDuration, capacity limit scaled up and capped",
-			eventFreshDuration: DefaultEventFreshDuration << 20, // 2^20 * 75s
-			expected:           defaultUpperBoundCapacity << 14, // 2^14 * 100 * 1024
+			eventFreshDuration: DefaultEventFreshDuration << 20,         // 2^20 * 75s
+			expected:           history.DefaultUpperBoundCapacity << 14, // 2^14 * 100 * 1024
 		},
 	}
 
 	for _, test := range testCases {
 		t.Run(test.name, func(t *testing.T) {
-			capacity := capacityUpperBound(test.eventFreshDuration)
+			capacity := history.CapacityUpperBound(test.eventFreshDuration)
 			if test.expected != capacity {
 				t.Errorf("expected %v, got %v", test.expected, capacity)
 			}
@@ -1208,19 +931,30 @@ func TestCapacityUpperBound(t *testing.T) {
 }
 
 func BenchmarkWatchCache_updateCache(b *testing.B) {
-	store := newTestWatchCache(defaultUpperBoundCapacity, DefaultEventFreshDuration, &cache.Indexers{})
+	store := newTestWatchCache(history.DefaultUpperBoundCapacity, DefaultEventFreshDuration, &cache.Indexers{})
 	defer store.Stop()
-	store.history.cache = store.history.cache[:0]
-	store.history.upperBoundCapacity = defaultUpperBoundCapacity
-	loadEventWithDuration(store, defaultUpperBoundCapacity, 0)
-	add := &watchCacheEvent{
-		Key:        fmt.Sprintf("event-%d", defaultUpperBoundCapacity),
+	store.history.Clear()
+	store.history.SetBounds(history.DefaultLowerBoundCapacity, history.DefaultUpperBoundCapacity)
+	loadEventWithDuration(store, history.DefaultUpperBoundCapacity, 0)
+	add := &history.Event{
+		Key:        fmt.Sprintf("event-%d", history.DefaultUpperBoundCapacity),
 		RecordTime: store.config.clock.Now(),
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		store.history.updateCache(add)
+		store.history.UpdateCache(add)
 	}
+}
+
+func loadEventWithDuration(cache *testWatchCache, count int, interval time.Duration) {
+	for i := 0; i < count; i++ {
+		event := &history.Event{
+			Key:        fmt.Sprintf("event-%d", i+cache.history.StartIndex()),
+			RecordTime: cache.config.clock.Now().Add(time.Duration(interval.Nanoseconds() * int64(i))),
+		}
+		cache.history.SetEvent(i+cache.history.StartIndex(), event)
+	}
+	cache.history.SetEndIndex(cache.history.StartIndex() + count)
 }
 
 func TestHistogramCacheReadWait(t *testing.T) {

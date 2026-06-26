@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package cacher
+package history
 
 import (
 	"errors"
@@ -35,9 +35,9 @@ import (
 	"k8s.io/apiserver/pkg/storage/cacher/store"
 )
 
-func intervalFromEvents(events []*watchCacheEvent) *watchCacheInterval {
+func intervalFromEvents(events []*Event) *Interval {
 	startIndex, endIndex, locker := 0, len(events), &sync.Mutex{}
-	indexer := func(i int) *watchCacheEvent {
+	indexer := func(i int) *Event {
 		if len(events) == 0 {
 			return nil
 		}
@@ -45,16 +45,16 @@ func intervalFromEvents(events []*watchCacheEvent) *watchCacheInterval {
 	}
 	indexValidator := func(_ int) bool { return true }
 
-	return newCacheInterval(startIndex, endIndex, indexer, indexValidator, 0, locker)
+	return NewCacheInterval(startIndex, endIndex, indexer, indexValidator, 0, locker)
 }
 
-func historySource(wci *watchCacheInterval) *historyCacheIntervalSource {
+func historySource(wci *Interval) *historyCacheIntervalSource {
 	return wci.source.(*historyCacheIntervalSource)
 }
 
-func bufferFromEvents(events []*watchCacheEvent) *watchCacheIntervalBuffer {
+func bufferFromEvents(events []*Event) *watchCacheIntervalBuffer {
 	wcib := &watchCacheIntervalBuffer{
-		buffer:     make([]*watchCacheEvent, bufferSize),
+		buffer:     make([]*Event, BufferSize),
 		startIndex: 0,
 		endIndex:   len(events),
 	}
@@ -63,11 +63,11 @@ func bufferFromEvents(events []*watchCacheEvent) *watchCacheIntervalBuffer {
 	return wcib
 }
 
-func generateEvents(start, end int) []*watchCacheEvent {
+func generateEvents(start, end int) []*Event {
 	n := end - start
-	events := make([]*watchCacheEvent, n)
+	events := make([]*Event, n)
 	for i := 0; i < n; i++ {
-		events[i] = &watchCacheEvent{
+		events[i] = &Event{
 			Type:   watch.Added,
 			Object: makeTestPod(fmt.Sprintf("pod%d", start+i), uint64(start+i)),
 		}
@@ -75,7 +75,7 @@ func generateEvents(start, end int) []*watchCacheEvent {
 	return events
 }
 
-func verifyEvent(ok bool, event, expectedEvent *watchCacheEvent) error {
+func verifyEvent(ok bool, event, expectedEvent *Event) error {
 	if !ok {
 		return fmt.Errorf("expected event: %#v, got no event", expectedEvent)
 	}
@@ -91,7 +91,7 @@ func verifyEvent(ok bool, event, expectedEvent *watchCacheEvent) error {
 	return nil
 }
 
-func verifyNoEvent(ok bool, event *watchCacheEvent) error {
+func verifyNoEvent(ok bool, event *Event) error {
 	if ok {
 		return errors.New("unexpected bool value indicating buffer is not empty")
 	}
@@ -107,9 +107,9 @@ func TestIntervalBufferIsFull(t *testing.T) {
 		endIndex int
 		expected bool
 	}{
-		{endIndex: bufferSize - 1, expected: false},
-		{endIndex: bufferSize, expected: true},
-		{endIndex: bufferSize + 1, expected: true},
+		{endIndex: BufferSize - 1, expected: false},
+		{endIndex: BufferSize, expected: true},
+		{endIndex: BufferSize + 1, expected: true},
 	}
 
 	for _, c := range cases {
@@ -147,11 +147,11 @@ func TestIntervalBufferIsEmpty(t *testing.T) {
 func TestIntervalBufferNext(t *testing.T) {
 	cases := []struct {
 		name   string
-		events []*watchCacheEvent
+		events []*Event
 	}{
 		{
 			name: "buffer has elements",
-			events: []*watchCacheEvent{
+			events: []*Event{
 				{Type: watch.Added, Object: makeTestPod("pod1", 1)},
 				{Type: watch.Added, Object: makeTestPod("pod2", 2)},
 				{Type: watch.Modified, Object: makeTestPod("pod3", 3)},
@@ -159,7 +159,7 @@ func TestIntervalBufferNext(t *testing.T) {
 		},
 		{
 			name:   "buffer is empty",
-			events: []*watchCacheEvent{},
+			events: []*Event{},
 		},
 	}
 
@@ -190,16 +190,16 @@ func TestFillBuffer(t *testing.T) {
 			numEventsToFill: 0,
 		},
 		{
-			name:            "less than bufferSize events to put in buffer",
+			name:            "less than BufferSize events to put in buffer",
 			numEventsToFill: 5,
 		},
 		{
-			name:            "equal to bufferSize events to put in buffer",
-			numEventsToFill: bufferSize,
+			name:            "equal to BufferSize events to put in buffer",
+			numEventsToFill: BufferSize,
 		},
 		{
-			name:            "greater than bufferSize events to put in buffer",
-			numEventsToFill: bufferSize + 5,
+			name:            "greater than BufferSize events to put in buffer",
+			numEventsToFill: BufferSize + 5,
 		},
 	}
 
@@ -210,16 +210,16 @@ func TestFillBuffer(t *testing.T) {
 			src := historySource(wci)
 
 			for i := 0; i < len(events); i++ {
-				if i%bufferSize == 0 {
+				if i%BufferSize == 0 {
 					src.fillBuffer()
 				}
 				event, ok := src.buffer.next()
 				if err := verifyEvent(ok, event, events[i]); err != nil {
 					t.Error(err)
 				}
-				// If we have already received bufferSize number of events,
+				// If we have already received BufferSize number of events,
 				// buffer should be empty and we should receive no event.
-				if i%bufferSize == bufferSize-1 {
+				if i%BufferSize == BufferSize-1 {
 					event, ok := src.buffer.next()
 					if err := verifyNoEvent(ok, event); err != nil {
 						t.Error(err)
@@ -247,7 +247,7 @@ func TestCacheIntervalNextFromHistory(t *testing.T) {
 	// filling the interval buffer more than once
 	// completely and then some more - 10 here is
 	// arbitrary.
-	const capacity = 2*bufferSize + 10
+	const capacity = 2*BufferSize + 10
 
 	cases := []struct {
 		name string
@@ -263,12 +263,12 @@ func TestCacheIntervalNextFromHistory(t *testing.T) {
 		},
 		{
 			name:                    "watchCache partially propagated, eventsAddedToWatchcache < capacity",
-			eventsAddedToWatchcache: bufferSize,
+			eventsAddedToWatchcache: BufferSize,
 			intervalStartIndex:      0,
 		},
 		{
 			name:                    "watchCache partially propagated, eventsAddedToWatchcache < capacity, intervalStartIndex at some offset",
-			eventsAddedToWatchcache: bufferSize,
+			eventsAddedToWatchcache: BufferSize,
 			intervalStartIndex:      5,
 		},
 		{
@@ -283,39 +283,39 @@ func TestCacheIntervalNextFromHistory(t *testing.T) {
 		},
 		{
 			name:                    "watchCache over propagated, eventsAddedToWatchcache > capacity",
-			eventsAddedToWatchcache: capacity + bufferSize,
+			eventsAddedToWatchcache: capacity + BufferSize,
 			intervalStartIndex:      0,
 		},
 		{
 			name:                    "watchCache over propagated, eventsAddedToWatchcache > capacity, intervalStartIndex at some offset",
-			eventsAddedToWatchcache: capacity + bufferSize,
+			eventsAddedToWatchcache: capacity + BufferSize,
 			intervalStartIndex:      5,
 		},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			h := newWatchCacheHistory(schema.GroupResource{Resource: "pods"}, DefaultEventFreshDuration)
+			h := NewHistory(schema.GroupResource{Resource: "pods"}, DefaultEventFreshDuration)
 			h.capacity = capacity
-			h.cache = make([]*watchCacheEvent, capacity)
+			h.cache = make([]*Event, capacity)
 
 			now := time.Now()
 			for i := 0; i < c.eventsAddedToWatchcache; i++ {
-				h.updateCache(&watchCacheEvent{
+				h.UpdateCache(&Event{
 					ResourceVersion: uint64(i + 1),
 					RecordTime:      now,
 				})
 			}
-			indexerFunc := func(i int) *watchCacheEvent {
+			indexerFunc := func(i int) *Event {
 				return h.cache[i%h.capacity]
 			}
 
 			locker := &sync.RWMutex{}
-			wci := newCacheInterval(
+			wci := NewCacheInterval(
 				c.intervalStartIndex,
 				h.endIndex,
 				indexerFunc,
-				h.isIndexValidLocked,
+				h.IsIndexValidLocked,
 				uint64(c.eventsAddedToWatchcache),
 				locker,
 			)
@@ -328,11 +328,11 @@ func TestCacheIntervalNextFromHistory(t *testing.T) {
 				if c.eventsAddedToWatchcache > 0 {
 					// The points at which we want to artificially
 					// invalidate the interval and test its behaviour
-					// should be multiples of bufferSize. This is because
+					// should be multiples of BufferSize. This is because
 					// invalidation only needs to be checked when we are
 					// copying over events from the underlying watch cache,
 					// i.e. freshly filling in the interval buffer.
-					if i%bufferSize == 0 && i != c.eventsAddedToWatchcache {
+					if i%BufferSize == 0 && i != c.eventsAddedToWatchcache {
 						originalCacheStartIndex := h.startIndex
 						h.startIndex = src.startIndex + 1
 						event, err := wci.Next()
@@ -349,11 +349,11 @@ func TestCacheIntervalNextFromHistory(t *testing.T) {
 
 				// Check if the state of the interval buffer is as expected.
 				// The interval buffer can be empty either when received is
-				// either a multiple of bufferSize (after one complete fill)
+				// either a multiple of BufferSize (after one complete fill)
 				// or when received is equal to the number of expected events.
 				// The latter happens when partial filling occurs and no more
 				// events are left post the partial fill.
-				if src.buffer.isEmpty() != (i%bufferSize == 0 || i == numExpectedEvents) {
+				if src.buffer.isEmpty() != (i%BufferSize == 0 || i == numExpectedEvents) {
 					t.Error("expected empty interval buffer")
 					return
 				}
@@ -389,7 +389,7 @@ func TestCacheIntervalNextFromStore(t *testing.T) {
 	}
 	const numEvents = 50
 	store := store.NewIndexer(nil)
-	events := make(map[string]*watchCacheEvent)
+	events := make(map[string]*Event)
 	var rv uint64 = 1 // arbitrary number; rv till which the watch cache has progressed.
 
 	for i := 0; i < numEvents; i++ {
@@ -398,7 +398,7 @@ func TestCacheIntervalNextFromStore(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		events[elem.Key] = &watchCacheEvent{
+		events[elem.Key] = &Event{
 			Type:            watch.Added,
 			Object:          elem.Object,
 			ObjLabels:       objLabels,
@@ -409,7 +409,7 @@ func TestCacheIntervalNextFromStore(t *testing.T) {
 		store.Add(elem)
 	}
 
-	wci, err := newCacheIntervalFromStore(rv, store, "", false)
+	wci, err := NewCacheIntervalFromStore(rv, store, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -442,7 +442,7 @@ func TestCacheIntervalNextFromStore(t *testing.T) {
 	}
 }
 
-// TestCacheIntervalFromStoreSorted verifies newCacheIntervalFromStore returns
+// TestCacheIntervalFromStoreSorted verifies NewCacheIntervalFromStore returns
 // events sorted by Key for both indexer backends.
 func TestCacheIntervalFromStoreSorted(t *testing.T) {
 	cases := []struct {
@@ -465,7 +465,7 @@ func TestCacheIntervalFromStoreSorted(t *testing.T) {
 				}
 			}
 
-			wci, err := newCacheIntervalFromStore(n, tc.indexer, "", false)
+			wci, err := NewCacheIntervalFromStore(n, tc.indexer, "", false)
 			if err != nil {
 				t.Fatal(err)
 			}

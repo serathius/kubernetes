@@ -22,6 +22,8 @@ import (
 	"sync"
 	"time"
 
+	"k8s.io/apiserver/pkg/storage/cacher/history"
+
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -51,7 +53,7 @@ const (
 // cacheWatcher implements watch.Interface
 // this is not thread-safe
 type cacheWatcher struct {
-	input     chan *watchCacheEvent
+	input     chan *history.Event
 	result    chan watch.Event
 	done      chan struct{}
 	filter    filterWithAttrsFunc
@@ -98,7 +100,7 @@ func newCacheWatcher(
 	identifier string,
 ) *cacheWatcher {
 	return &cacheWatcher{
-		input:               make(chan *watchCacheEvent, chanSize),
+		input:               make(chan *history.Event, chanSize),
 		result:              make(chan watch.Event, chanSize),
 		done:                make(chan struct{}),
 		filter:              filter,
@@ -144,7 +146,7 @@ func (c *cacheWatcher) stopLocked() {
 	}
 }
 
-func (c *cacheWatcher) nonblockingAdd(event *watchCacheEvent) bool {
+func (c *cacheWatcher) nonblockingAdd(event *history.Event) bool {
 	// if the bookmarkAfterResourceVersion hasn't been seen
 	// we will try to deliver a bookmark event every second.
 	// the following check will discard a bookmark event
@@ -166,7 +168,7 @@ func (c *cacheWatcher) nonblockingAdd(event *watchCacheEvent) bool {
 //
 // Note that bookmark events are never added via the add method only via the nonblockingAdd.
 // Changing this behaviour will require moving the markBookmarkAfterRvAsReceived method
-func (c *cacheWatcher) add(event *watchCacheEvent, timer *time.Timer) bool {
+func (c *cacheWatcher) add(event *history.Event, timer *time.Timer) bool {
 	// Try to send the event immediately, without blocking.
 	if c.nonblockingAdd(event) {
 		return true
@@ -272,7 +274,7 @@ func (c *cacheWatcher) wasBookmarkAfterRvReceivedLocked() bool {
 
 // markBookmarkAfterRvAsReceived indicates that the given cacheWatcher
 // have seen a bookmark event >= bookmarkAfterResourceVersion
-func (c *cacheWatcher) markBookmarkAfterRvAsReceived(event *watchCacheEvent) {
+func (c *cacheWatcher) markBookmarkAfterRvAsReceived(event *history.Event) {
 	if event.Type == watch.Bookmark {
 		c.stateMutex.Lock()
 		defer c.stateMutex.Unlock()
@@ -306,7 +308,7 @@ func (c *cacheWatcher) wasBookmarkAfterRvSent() bool {
 // this function relies on the fact that the nonblockingAdd method
 // won't admit a bookmark event with an RV < the bookmarkAfterResourceVersion
 // so the first received bookmark event is considered to match the bookmarkAfterResourceVersion
-func (c *cacheWatcher) markBookmarkAfterRvSent(event *watchCacheEvent) {
+func (c *cacheWatcher) markBookmarkAfterRvSent(event *history.Event) {
 	// note that bookmark events are not so common so will acquire a lock every ~60 second or so
 	if event.Type == watch.Bookmark {
 		c.stateMutex.Lock()
@@ -359,7 +361,7 @@ func updateResourceVersion(object runtime.Object, versioner storage.Versioner, r
 	}
 }
 
-func (c *cacheWatcher) convertToWatchEvent(event *watchCacheEvent) *watch.Event {
+func (c *cacheWatcher) convertToWatchEvent(event *history.Event) *watch.Event {
 	if event.Type == watch.Bookmark {
 		e := &watch.Event{Type: watch.Bookmark, Object: event.Object.DeepCopyObject()}
 		if !c.wasBookmarkAfterRvSent() {
@@ -401,7 +403,7 @@ func (c *cacheWatcher) convertToWatchEvent(event *watchCacheEvent) *watch.Event 
 }
 
 // NOTE: sendWatchCacheEvent is assumed to not modify <event> !!!
-func (c *cacheWatcher) sendWatchCacheEvent(event *watchCacheEvent) {
+func (c *cacheWatcher) sendWatchCacheEvent(event *history.Event) {
 	watchEvent := c.convertToWatchEvent(event)
 	if watchEvent == nil {
 		// Watcher is not interested in that object.
@@ -433,7 +435,7 @@ func (c *cacheWatcher) sendWatchCacheEvent(event *watchCacheEvent) {
 	}
 }
 
-func (c *cacheWatcher) processInterval(ctx context.Context, cacheInterval *watchCacheInterval, resourceVersion uint64) {
+func (c *cacheWatcher) processInterval(ctx context.Context, cacheInterval *history.Interval, resourceVersion uint64) {
 	defer utilruntime.HandleCrashWithContext(ctx)
 	defer close(c.result)
 	defer c.Stop()
@@ -457,8 +459,8 @@ func (c *cacheWatcher) processInterval(ctx context.Context, cacheInterval *watch
 	// cacheInterval may be created from a version being more fresh than requested
 	// (e.g. for NotOlderThan semantic). In such a case, we need to prevent watch event
 	// with lower resourceVersion from being delivered to ensure watch contract.
-	if cacheInterval.resourceVersion > resourceVersion {
-		resourceVersion = cacheInterval.resourceVersion
+	if cacheInterval.ResourceVersion > resourceVersion {
+		resourceVersion = cacheInterval.ResourceVersion
 	}
 
 	initEventCount := 0
@@ -511,8 +513,8 @@ func (c *cacheWatcher) processInterval(ctx context.Context, cacheInterval *watch
 	}
 
 	// send bookmark after sending all events in cacheInterval for watchlist request
-	if cacheInterval.initialEventsEndBookmark != nil {
-		c.sendWatchCacheEvent(cacheInterval.initialEventsEndBookmark)
+	if cacheInterval.InitialEventsEndBookmark != nil {
+		c.sendWatchCacheEvent(cacheInterval.InitialEventsEndBookmark)
 	}
 	c.process(ctx, resourceVersion)
 }
