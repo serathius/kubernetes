@@ -24,6 +24,8 @@ import (
 	"testing"
 	"time"
 
+	"k8s.io/apiserver/pkg/storage/cacher/history"
+
 	"github.com/stretchr/testify/require"
 
 	v1 "k8s.io/api/core/v1"
@@ -84,13 +86,13 @@ type testWatchCache struct {
 	stopCh           chan struct{}
 }
 
-func (w *testWatchCache) getAllEventsSince(resourceVersion uint64, opts storage.ListOptions) ([]*watchCacheEvent, error) {
+func (w *testWatchCache) getAllEventsSince(resourceVersion uint64, opts storage.ListOptions) ([]*history.Event, error) {
 	cacheInterval, err := w.getCacheIntervalForEvents(resourceVersion, opts)
 	if err != nil {
 		return nil, err
 	}
 
-	result := []*watchCacheEvent{}
+	result := []*history.Event{}
 	for {
 		event, err := cacheInterval.Next()
 		if err != nil {
@@ -105,7 +107,7 @@ func (w *testWatchCache) getAllEventsSince(resourceVersion uint64, opts storage.
 	return result, nil
 }
 
-func (w *testWatchCache) getCacheIntervalForEvents(resourceVersion uint64, opts storage.ListOptions) (*watchCacheInterval, error) {
+func (w *testWatchCache) getCacheIntervalForEvents(resourceVersion uint64, opts storage.ListOptions) (*history.Interval, error) {
 	w.RLock()
 	defer w.RUnlock()
 
@@ -125,7 +127,7 @@ func newTestWatchCache(capacity int, eventFreshDuration time.Duration, indexers 
 		return labels.Set(pod.Labels), fields.Set{"spec.nodeName": pod.Spec.NodeName}, nil
 	}
 	versioner := storage.APIObjectVersioner{}
-	mockHandler := func(*watchCacheEvent) {}
+	mockHandler := func(*history.Event) {}
 	wc := &testWatchCache{}
 	wc.bookmarkRevision = make(chan int64, 1)
 	wc.stopCh = make(chan struct{})
@@ -139,10 +141,8 @@ func newTestWatchCache(capacity int, eventFreshDuration time.Duration, indexers 
 	wc.watchCache = newWatchCache(keyFunc, mockHandler, getAttrsFunc, versioner, indexers, testingclock.NewFakeClock(time.Now()), eventFreshDuration, schema.GroupResource{Resource: "pods"}, pr, getCurrentRV)
 	// To preserve behavior of tests that assume a given capacity,
 	// resize it to th expected size.
-	wc.history.capacity = capacity
-	wc.history.cache = make([]*watchCacheEvent, capacity)
-	wc.history.lowerBoundCapacity = min(capacity, defaultLowerBoundCapacity)
-	wc.history.upperBoundCapacity = max(capacity, defaultUpperBoundCapacity)
+	wc.history.SetCapacity(capacity)
+	wc.history.SetBounds(min(capacity, history.DefaultLowerBoundCapacity), max(capacity, history.DefaultUpperBoundCapacity))
 
 	return wc
 }
@@ -284,9 +284,7 @@ func TestEvents(t *testing.T) {
 	store := newTestWatchCache(5, DefaultEventFreshDuration, &cache.Indexers{})
 	defer store.Stop()
 
-	// no dynamic-size cache to fit old tests.
-	store.history.lowerBoundCapacity = 5
-	store.history.upperBoundCapacity = 5
+	store.history.SetBounds(5, 5)
 
 	store.Add(makeTestPod("pod", 3))
 
@@ -689,20 +687,18 @@ func TestReflectorForWatchCache(t *testing.T) {
 	}
 }
 
-
-
 func TestCacheIncreaseDoesNotBreakWatch(t *testing.T) {
 	store := newTestWatchCache(2, DefaultEventFreshDuration, &cache.Indexers{})
 	defer store.Stop()
 
 	now := store.config.clock.Now()
 	addEvent := func(key string, rv uint64, t time.Time) {
-		event := &watchCacheEvent{
+		event := &history.Event{
 			Key:             key,
 			ResourceVersion: rv,
 			RecordTime:      t,
 		}
-		store.history.updateCache(event)
+		store.history.UpdateCache(event)
 	}
 
 	// Initial LIST comes from the moment of RV=10.
@@ -883,15 +879,13 @@ func TestSuggestedWatchChannelSize(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			store := newTestWatchCache(test.capacity, test.eventsFreshDuration, &cache.Indexers{})
 			defer store.Stop()
-			got := store.suggestedWatchChannelSize(test.indexExists, test.triggerUsed)
+			got := store.SuggestedWatchChannelSize(test.indexExists, test.triggerUsed)
 			if got != test.expected {
 				t.Errorf("unexpected channel size got: %v, expected: %v", got, test.expected)
 			}
 		})
 	}
 }
-
-
 
 func TestHistogramCacheReadWait(t *testing.T) {
 	registry := k8smetrics.NewKubeRegistry()

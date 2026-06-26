@@ -24,6 +24,8 @@ import (
 	"testing"
 	"time"
 
+	"k8s.io/apiserver/pkg/storage/cacher/history"
+
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/require"
 
@@ -734,7 +736,7 @@ func BenchmarkStoreWriteThroughput(b *testing.B) {
 			data := storagetesting.PrepareBenchmarkData(dims.namespaceCount, dims.podPerNamespaceCount, dims.nodeCount)
 			tracker := storagetesting.NewWatchLatencyTracker(clock.RealClock{})
 			originalHandler := cacher.cacher.watchCache.config.eventHandler
-			cacher.cacher.watchCache.config.eventHandler = func(event *watchCacheEvent) {
+			cacher.cacher.watchCache.config.eventHandler = func(event *history.Event) {
 				if originalHandler != nil {
 					originalHandler(event)
 				}

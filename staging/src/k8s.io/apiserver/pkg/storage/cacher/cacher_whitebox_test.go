@@ -29,6 +29,8 @@ import (
 	"testing"
 	"time"
 
+	"k8s.io/apiserver/pkg/storage/cacher/history"
+
 	"github.com/stretchr/testify/require"
 
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
@@ -1568,7 +1570,7 @@ func TestDispatchingBookmarkEventsWithConcurrentStop(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to create watch: %v", err)
 		}
-		bookmark := &watchCacheEvent{
+		bookmark := &history.Event{
 			Type:            watch.Bookmark,
 			ResourceVersion: uint64(i),
 			Object:          cacher.newFunc(),
@@ -1980,8 +1982,8 @@ func testCachingObjects(t *testing.T, watchersCount int) {
 	}
 	defer cacher.Stop()
 
-	dispatchedEvents := []*watchCacheEvent{}
-	cacher.watchCache.config.eventHandler = func(event *watchCacheEvent) {
+	dispatchedEvents := []*history.Event{}
+	cacher.watchCache.config.eventHandler = func(event *history.Event) {
 		dispatchedEvents = append(dispatchedEvents, event)
 		cacher.processEvent(event)
 	}
@@ -2079,7 +2081,7 @@ func TestCacheIntervalInvalidationStopsWatch(t *testing.T) {
 
 	// We define a custom index validator such that the interval is
 	// able to serve the first bufferSize elements successfully, but
-	// on trying to fill it's buffer again, the indexValidator simulates
+	// on trying to fill it's buffer again, the history.IndexValidator simulates
 	// an invalidation leading to the watch being closed and the number
 	// of events we actually process to be bufferSize, each event of
 	// type watch.Added.
@@ -2089,7 +2091,7 @@ func TestCacheIntervalInvalidationStopsWatch(t *testing.T) {
 	}
 	once := sync.Once{}
 	indexValidator := func(index int) bool {
-		isValid := valid && (index >= cacher.watchCache.history.startIndex)
+		isValid := valid && (index >= cacher.watchCache.history.StartIndex())
 		once.Do(invalidateCacheInterval)
 		return isValid
 	}
@@ -2137,9 +2139,9 @@ func TestCacheIntervalInvalidationStopsWatch(t *testing.T) {
 		}
 	}
 	// Since the watch is stopped after the interval is invalidated,
-	// we should have processed exactly bufferSize number of elements.
-	if received != bufferSize {
-		t.Errorf("unexpected number of events received, expected: %d, got: %d", bufferSize+1, received)
+	// we should have processed exactly history.BufferSize number of elements.
+	if received != history.BufferSize {
+		t.Errorf("unexpected number of events received, expected: %d, got: %d", history.BufferSize+1, received)
 	}
 }
 

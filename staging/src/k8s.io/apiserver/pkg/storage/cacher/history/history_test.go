@@ -14,14 +14,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package cacher
+package history
 
 import (
 	"fmt"
 	"testing"
 	"time"
 
-	"k8s.io/client-go/tools/cache"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
 func TestDynamicCache(t *testing.T) {
@@ -251,48 +251,49 @@ func TestDynamicCache(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			store := newTestWatchCache(test.cacheCapacity, DefaultEventFreshDuration, &cache.Indexers{})
-			defer store.Stop()
-			store.history.cache = make([]*watchCacheEvent, test.cacheCapacity)
-			store.history.startIndex = test.startIndex
-			store.history.lowerBoundCapacity = test.lowerBoundCapacity
-			store.history.upperBoundCapacity = test.upperBoundCapacity
-			loadEventWithDuration(store, test.eventCount, test.interval)
-			nextInterval := store.config.clock.Now().Add(time.Duration(test.interval.Nanoseconds() * int64(test.eventCount)))
-			store.history.resizeCacheLocked(nextInterval)
-			if store.history.capacity != test.expectCapacity {
-				t.Errorf("expect capacity %d, but get %d", test.expectCapacity, store.history.capacity)
+			h := NewHistory(schema.GroupResource{Resource: "pods"}, DefaultEventFreshDuration)
+			h.capacity = test.cacheCapacity
+			h.cache = make([]*Event, test.cacheCapacity)
+			h.startIndex = test.startIndex
+			h.lowerBoundCapacity = test.lowerBoundCapacity
+			h.upperBoundCapacity = test.upperBoundCapacity
+			loadEventWithDuration(h, test.startIndex, test.eventCount, test.interval)
+			nextInterval := time.Now().Add(time.Duration(test.interval.Nanoseconds() * int64(test.eventCount)))
+			h.resizeCacheLocked(nextInterval)
+			if h.capacity != test.expectCapacity {
+				t.Errorf("expect capacity %d, but get %d", test.expectCapacity, h.capacity)
 			}
 
 			// check cache's startIndex, endIndex and all elements.
-			if store.history.startIndex != test.expectStartIndex {
-				t.Errorf("expect startIndex %d, but get %d", test.expectStartIndex, store.history.startIndex)
+			if h.startIndex != test.expectStartIndex {
+				t.Errorf("expect startIndex %d, but get %d", test.expectStartIndex, h.startIndex)
 			}
-			if store.history.endIndex != test.startIndex+test.eventCount {
-				t.Errorf("expect endIndex %d get %d", test.startIndex+test.eventCount, store.history.endIndex)
+			if h.endIndex != test.startIndex+test.eventCount {
+				t.Errorf("expect endIndex %d get %d", test.startIndex+test.eventCount, h.endIndex)
 			}
-			if !checkCacheElements(store) {
+			if !checkCacheElements(h) {
 				t.Errorf("some elements locations in cache is wrong")
 			}
 		})
 	}
 }
 
-func loadEventWithDuration(cache *testWatchCache, count int, interval time.Duration) {
+func loadEventWithDuration(h *History, start int, count int, interval time.Duration) {
+	now := time.Now()
 	for i := 0; i < count; i++ {
-		event := &watchCacheEvent{
-			Key:        fmt.Sprintf("event-%d", i+cache.history.startIndex),
-			RecordTime: cache.config.clock.Now().Add(time.Duration(interval.Nanoseconds() * int64(i))),
+		event := &Event{
+			Key:        fmt.Sprintf("event-%d", i+start),
+			RecordTime: now.Add(time.Duration(interval.Nanoseconds() * int64(i))),
 		}
-		cache.history.cache[(i+cache.history.startIndex)%cache.history.capacity] = event
+		h.cache[(i+start)%h.capacity] = event
 	}
-	cache.history.endIndex = cache.history.startIndex + count
+	h.endIndex = start + count
 }
 
-func checkCacheElements(cache *testWatchCache) bool {
-	for i := cache.history.startIndex; i < cache.history.endIndex; i++ {
-		location := i % cache.history.capacity
-		if cache.history.cache[location].Key != fmt.Sprintf("event-%d", i) {
+func checkCacheElements(h *History) bool {
+	for i := h.startIndex; i < h.endIndex; i++ {
+		location := i % h.capacity
+		if h.cache[location].Key != fmt.Sprintf("event-%d", i) {
 			return false
 		}
 	}
@@ -308,33 +309,33 @@ func TestCapacityUpperBound(t *testing.T) {
 		{
 			name:               "default eventFreshDuration",
 			eventFreshDuration: DefaultEventFreshDuration, // 75s
-			expected:           defaultUpperBoundCapacity, // 100 * 1024
+			expected:           DefaultUpperBoundCapacity, // 100 * 1024
 		},
 		{
 			name:               "lower eventFreshDuration, capacity limit unchanged",
 			eventFreshDuration: 45 * time.Second,          // 45s
-			expected:           defaultUpperBoundCapacity, // 100 * 1024
+			expected:           DefaultUpperBoundCapacity, // 100 * 1024
 		},
 		{
 			name:               "higher eventFreshDuration, capacity limit scaled up",
 			eventFreshDuration: 4 * DefaultEventFreshDuration, // 4 * 75s
-			expected:           4 * defaultUpperBoundCapacity, // 4 * 100 * 1024
+			expected:           4 * DefaultUpperBoundCapacity, // 4 * 100 * 1024
 		},
 		{
 			name:               "higher eventFreshDuration, capacity limit scaled and rounded up",
 			eventFreshDuration: 3 * DefaultEventFreshDuration, // 3 * 75s
-			expected:           4 * defaultUpperBoundCapacity, // 4 * 100 * 1024
+			expected:           4 * DefaultUpperBoundCapacity, // 4 * 100 * 1024
 		},
 		{
 			name:               "higher eventFreshDuration, capacity limit scaled up and capped",
 			eventFreshDuration: DefaultEventFreshDuration << 20, // 2^20 * 75s
-			expected:           defaultUpperBoundCapacity << 14, // 2^14 * 100 * 1024
+			expected:           DefaultUpperBoundCapacity << 14, // 2^14 * 100 * 1024
 		},
 	}
 
 	for _, test := range testCases {
 		t.Run(test.name, func(t *testing.T) {
-			capacity := capacityUpperBound(test.eventFreshDuration)
+			capacity := CapacityUpperBound(test.eventFreshDuration)
 			if test.expected != capacity {
 				t.Errorf("expected %v, got %v", test.expected, capacity)
 			}
@@ -342,18 +343,26 @@ func TestCapacityUpperBound(t *testing.T) {
 	}
 }
 
-func BenchmarkWatchCache_updateCache(b *testing.B) {
-	store := newTestWatchCache(defaultUpperBoundCapacity, DefaultEventFreshDuration, &cache.Indexers{})
-	defer store.Stop()
-	store.history.cache = store.history.cache[:0]
-	store.history.upperBoundCapacity = defaultUpperBoundCapacity
-	loadEventWithDuration(store, defaultUpperBoundCapacity, 0)
-	add := &watchCacheEvent{
-		Key:        fmt.Sprintf("event-%d", defaultUpperBoundCapacity),
-		RecordTime: store.config.clock.Now(),
+func BenchmarkHistory_UpdateCache(b *testing.B) {
+	h := NewHistory(schema.GroupResource{Resource: "pods"}, DefaultEventFreshDuration)
+	h.SetCapacity(DefaultUpperBoundCapacity)
+	h.Clear()
+	h.SetBounds(DefaultLowerBoundCapacity, DefaultUpperBoundCapacity)
+	for i := 0; i < DefaultUpperBoundCapacity; i++ {
+		event := &Event{
+			Key:        fmt.Sprintf("event-%d", i),
+			RecordTime: time.Now(),
+		}
+		h.SetEvent(i, event)
+	}
+	h.SetEndIndex(DefaultUpperBoundCapacity)
+
+	add := &Event{
+		Key:        fmt.Sprintf("event-%d", DefaultUpperBoundCapacity),
+		RecordTime: time.Now(),
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		store.history.updateCache(add)
+		h.UpdateCache(add)
 	}
 }

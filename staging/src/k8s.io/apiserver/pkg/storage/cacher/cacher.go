@@ -25,6 +25,8 @@ import (
 	"sync"
 	"time"
 
+	"k8s.io/apiserver/pkg/storage/cacher/history"
+
 	"go.opentelemetry.io/otel/attribute"
 	"google.golang.org/grpc/metadata"
 
@@ -267,7 +269,7 @@ type Cacher struct {
 	// See: https://golang.org/pkg/sync/atomic/ for more information
 	incomingHWM storage.HighWaterMark
 	// Incoming events that should be dispatched to watchers.
-	incoming chan watchCacheEvent
+	incoming chan history.Event
 
 	resourcePrefix string
 
@@ -403,7 +405,7 @@ func NewCacherFromConfig(config Config) (*Cacher, error) {
 			valueWatchers: make(map[string]watchersMap),
 		},
 		// TODO: Figure out the correct value for the buffer size.
-		incoming:              make(chan watchCacheEvent, 100),
+		incoming:              make(chan history.Event, 100),
 		dispatchTimeoutBudget: newTimeBudget(),
 		// We need to (potentially) stop both:
 		// - wait.Until go-routine
@@ -567,7 +569,7 @@ func (c *Cacher) Watch(ctx context.Context, key string, opts storage.ListOptions
 	// - having it large enough to ensure that watchers that need to process
 	//   a bunch of changes have enough buffer to avoid from blocking other
 	//   watchers on our watcher having a processing hiccup
-	chanSize := c.watchCache.suggestedWatchChannelSize(c.indexedTrigger != nil, triggerSupported)
+	chanSize := c.watchCache.SuggestedWatchChannelSize(c.indexedTrigger != nil, triggerSupported)
 
 	// client-go is going to fall back to a standard LIST on any error
 	// returned for watch-list requests
@@ -627,7 +629,7 @@ func (c *Cacher) Watch(ctx context.Context, key string, opts storage.ListOptions
 	c.watchCache.RLock()
 	defer c.watchCache.RUnlock()
 
-	var cacheInterval *watchCacheInterval
+	var cacheInterval *history.Interval
 	cacheInterval, err = c.watchCache.getAllEventsSinceLocked(requiredResourceVersion, key, opts)
 	if err != nil {
 		// To match the uncached watch implementation, once we have passed authn/authz/admission,
@@ -847,7 +849,7 @@ func baseObjectThreadUnsafe(object runtime.Object) runtime.Object {
 	return object
 }
 
-func (c *Cacher) triggerValuesThreadUnsafe(event *watchCacheEvent) ([]string, bool) {
+func (c *Cacher) triggerValuesThreadUnsafe(event *history.Event) ([]string, bool) {
 	if c.indexedTrigger == nil {
 		return nil, false
 	}
@@ -864,7 +866,7 @@ func (c *Cacher) triggerValuesThreadUnsafe(event *watchCacheEvent) ([]string, bo
 	return result, true
 }
 
-func (c *Cacher) processEvent(event *watchCacheEvent) {
+func (c *Cacher) processEvent(event *history.Event) {
 	if curLen := int64(len(c.incoming)); c.incomingHWM.Update(curLen) {
 		// Monitor if this gets backed up, and how much.
 		klog.V(1).Infof("cacher (%v): %v objects queued in incoming channel.", c.groupResource.String(), curLen)
@@ -917,7 +919,7 @@ func (c *Cacher) dispatchEvents() {
 			metrics.EventsCounter.WithLabelValues(c.groupResource.Group, c.groupResource.Resource).Inc()
 		case <-bookmarkTimer.C():
 			bookmarkTimer.Reset(wait.Jitter(time.Second, 0.25))
-			bookmarkEvent := &watchCacheEvent{
+			bookmarkEvent := &history.Event{
 				Type:            watch.Bookmark,
 				Object:          c.newFunc(),
 				ResourceVersion: lastProcessedResourceVersion,
@@ -933,7 +935,7 @@ func (c *Cacher) dispatchEvents() {
 	}
 }
 
-func setCachingObjects(event *watchCacheEvent, versioner storage.Versioner) {
+func setCachingObjects(event *history.Event, versioner storage.Versioner) {
 	switch event.Type {
 	case watch.Added, watch.Modified:
 		if object, err := newCachingObject(event.Object); err == nil {
@@ -964,7 +966,7 @@ func setCachingObjects(event *watchCacheEvent, versioner storage.Versioner) {
 	}
 }
 
-func (c *Cacher) dispatchEvent(event *watchCacheEvent) {
+func (c *Cacher) dispatchEvent(event *history.Event) {
 	c.startDispatching(event)
 	defer c.finishDispatching()
 	// Watchers stopped after startDispatching will be delayed to finishDispatching,
@@ -1051,10 +1053,10 @@ func (c *Cacher) startDispatchingBookmarkEventsLocked() {
 
 // startDispatching chooses watchers potentially interested in a given event
 // a marks dispatching as true.
-func (c *Cacher) startDispatching(event *watchCacheEvent) {
+func (c *Cacher) startDispatching(event *history.Event) {
 	// It is safe to call triggerValuesThreadUnsafe here, because at this
 	// point only this thread can access this event (we create a separate
-	// watchCacheEvent for every dispatch).
+	// history.Event for every dispatch).
 	triggerValues, supported := c.triggerValuesThreadUnsafe(event)
 
 	c.Lock()
@@ -1319,12 +1321,12 @@ func (c *Cacher) Wait(ctx context.Context) error {
 	return c.ready.wait(ctx)
 }
 
-// setInitialEventsEndBookmarkIfRequested sets initialEventsEndBookmark field in watchCacheInterval for watchlist request
-func (c *Cacher) setInitialEventsEndBookmarkIfRequested(cacheInterval *watchCacheInterval, opts storage.ListOptions, currentResourceVersion uint64) {
+// setInitialEventsEndBookmarkIfRequested sets initialEventsEndBookmark field in history.Interval for watchlist request
+func (c *Cacher) setInitialEventsEndBookmarkIfRequested(cacheInterval *history.Interval, opts storage.ListOptions, currentResourceVersion uint64) {
 	if opts.SendInitialEvents != nil && *opts.SendInitialEvents && opts.Predicate.AllowWatchBookmarks {
 		// We don't need to set the InitialEventsAnnotation for this bookmark event,
 		// because this will be automatically set during event conversion in cacheWatcher.convertToWatchEvent method
-		initialEventsEndBookmark := &watchCacheEvent{
+		initialEventsEndBookmark := &history.Event{
 			Type:            watch.Bookmark,
 			Object:          c.newFunc(),
 			ResourceVersion: currentResourceVersion,
@@ -1335,7 +1337,7 @@ func (c *Cacher) setInitialEventsEndBookmarkIfRequested(cacheInterval *watchCach
 			initialEventsEndBookmark = nil
 		}
 
-		cacheInterval.initialEventsEndBookmark = initialEventsEndBookmark
+		cacheInterval.InitialEventsEndBookmark = initialEventsEndBookmark
 	}
 }
 

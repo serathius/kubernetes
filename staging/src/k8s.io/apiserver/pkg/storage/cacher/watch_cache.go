@@ -22,6 +22,8 @@ import (
 	"sync"
 	"time"
 
+	"k8s.io/apiserver/pkg/storage/cacher/history"
+
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
@@ -52,23 +54,6 @@ const (
 	resourceVersionTooHighRetrySeconds = 1
 )
 
-// watchCacheEvent is a single "watch event" that is send to users of
-// watchCache. Additionally to a typical "watch.Event" it contains
-// the previous value of the object to enable proper filtering in the
-// upper layers.
-type watchCacheEvent struct {
-	Type            watch.EventType
-	Object          runtime.Object
-	ObjLabels       labels.Set
-	ObjFields       fields.Set
-	PrevObject      runtime.Object
-	PrevObjLabels   labels.Set
-	PrevObjFields   fields.Set
-	Key             string
-	ResourceVersion uint64
-	RecordTime      time.Time
-}
-
 // watchCache implements a Store interface.
 // However, it depends on the elements implementing runtime.Object interface.
 //
@@ -87,7 +72,7 @@ type watchCache struct {
 	// This handler is run at the end of every successful Replace() method.
 	onReplace func()
 
-	history *watchCacheHistory
+	history *history.History
 	storage *store.WatchCacheStorage
 
 	config *ImmutableWatchCacheConfig
@@ -102,7 +87,7 @@ type ImmutableWatchCacheConfig struct {
 
 	// This handler is run at the end of every Add/Update/Delete method
 	// and additionally gets the previous value of the object.
-	eventHandler func(*watchCacheEvent)
+	eventHandler func(*history.Event)
 
 	// for testing timeouts.
 	clock clock.Clock
@@ -114,7 +99,7 @@ type ImmutableWatchCacheConfig struct {
 	groupResource schema.GroupResource
 
 	// For testing cache interval invalidation.
-	indexValidator indexValidator
+	indexValidator history.IndexValidator
 
 	// Requests progress notification if there are requests waiting for watch
 	// to be fresh
@@ -125,7 +110,7 @@ type ImmutableWatchCacheConfig struct {
 
 func newWatchCache(
 	keyFunc func(runtime.Object) (string, error),
-	eventHandler func(*watchCacheEvent),
+	eventHandler func(*history.Event),
 	getAttrsFunc func(runtime.Object) (labels.Set, fields.Set, error),
 	versioner storage.Versioner,
 	indexers *cache.Indexers,
@@ -149,11 +134,11 @@ func newWatchCache(
 	wc := &watchCache{
 		resourceVersion: 0,
 		config:          config,
-		history:         newWatchCacheHistory(groupResource, eventFreshDuration),
+		history:         history.NewHistory(groupResource, eventFreshDuration),
 		storage:         store.NewWatchCacheStorage(config.keyFunc, indexers),
 	}
 	wc.cond = sync.NewCond(wc.RLocker())
-	wc.config.indexValidator = wc.history.isIndexValidLocked
+	wc.config.indexValidator = wc.history.IsIndexValidLocked
 
 	return wc
 }
@@ -218,7 +203,7 @@ func (w *watchCache) processEvent(event watch.Event, resourceVersion uint64) err
 		return err
 	}
 
-	wcEvent := &watchCacheEvent{
+	wcEvent := &history.Event{
 		Type:            event.Type,
 		Object:          elem.Object,
 		ObjLabels:       elem.Labels,
@@ -248,11 +233,11 @@ func (w *watchCache) processEvent(event watch.Event, resourceVersion uint64) err
 		w.Lock()
 		defer w.Unlock()
 
-		w.history.updateCache(wcEvent)
+		w.history.UpdateCache(wcEvent)
 		w.resourceVersion = resourceVersion
 		defer w.cond.Broadcast()
 
-		if w.history.isCacheFullLocked() {
+		if w.history.IsCacheFullLocked() {
 			oldestRV := w.history.OldestResourceVersionLocked()
 			w.storage.CompactSnapshotsLocked(oldestRV)
 		}
@@ -294,7 +279,7 @@ func (w *watchCache) UpdateResourceVersion(resourceVersion string) {
 	// UpdateResourceVersion in flight at any point in time, which is true now,
 	// because reflector calls them synchronously from its main thread.
 	if w.config.eventHandler != nil {
-		wcEvent := &watchCacheEvent{
+		wcEvent := &history.Event{
 			Type:            watch.Bookmark,
 			ResourceVersion: rv,
 		}
@@ -553,7 +538,7 @@ func (w *watchCache) Replace(objs []interface{}, resourceVersion string) error {
 	w.Lock()
 	defer w.Unlock()
 
-	// Ensure startIndex never decreases, so that existing watchCacheInterval
+	// Ensure startIndex never decreases, so that existing history.Interval
 	// instances get "invalid" errors if the try to download from the buffer
 	// using their own start/end indexes calculated from previous buffer
 	// content.
@@ -592,16 +577,16 @@ func (w *watchCache) getListResourceVersion() uint64 {
 	return w.storage.ListResourceVersion()
 }
 
-func (w *watchCache) suggestedWatchChannelSize(indexExists, triggerUsed bool) int {
+func (w *watchCache) SuggestedWatchChannelSize(indexExists, triggerUsed bool) int {
 	w.RLock()
 	defer w.RUnlock()
-	return w.history.suggestedWatchChannelSize(indexExists, triggerUsed)
+	return w.history.SuggestedWatchChannelSize(indexExists, triggerUsed)
 }
 
-// getAllEventsSinceLocked returns a watchCacheInterval that can be used to
+// getAllEventsSinceLocked returns a history.Interval that can be used to
 // retrieve events since a certain resourceVersion. This function assumes to
 // be called under the watchCache lock.
-func (w *watchCache) getAllEventsSinceLocked(resourceVersion uint64, key string, opts storage.ListOptions) (*watchCacheInterval, error) {
+func (w *watchCache) getAllEventsSinceLocked(resourceVersion uint64, key string, opts storage.ListOptions) (*history.Interval, error) {
 	_, matchesSingle := opts.Predicate.MatchesSingle()
 	matchesSingle = matchesSingle && !opts.Recursive
 	if opts.SendInitialEvents != nil && *opts.SendInitialEvents {
@@ -627,9 +612,9 @@ func (w *watchCache) getAllEventsSinceLocked(resourceVersion uint64, key string,
 	return w.history.GetIntervalLocked(resourceVersion, w.storage.ListResourceVersion(), w.config.indexValidator, w.RWMutex.RLocker())
 }
 
-// getIntervalFromStoreLocked returns a watchCacheInterval
+// getIntervalFromStoreLocked returns a history.Interval
 // that covers the entire storage state.
 // This function assumes to be called under the watchCache lock.
-func (w *watchCache) getIntervalFromStoreLocked(key string, matchesSingle bool) (*watchCacheInterval, error) {
-	return newCacheIntervalFromStore(w.resourceVersion, w.storage.StoreLocked(), key, matchesSingle)
+func (w *watchCache) getIntervalFromStoreLocked(key string, matchesSingle bool) (*history.Interval, error) {
+	return history.NewCacheIntervalFromStore(w.resourceVersion, w.storage.StoreLocked(), key, matchesSingle)
 }

@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package cacher
+package history
 
 import (
 	"fmt"
@@ -30,21 +30,25 @@ import (
 )
 
 const (
-	// defaultLowerBoundCapacity is a default value for event cache capacity's lower bound.
-	// TODO: Figure out, to what value we can decreased it.
-	defaultLowerBoundCapacity = 100
+	// DefaultEventFreshDuration is the default time duration of events
+	// we want to keep.
+	DefaultEventFreshDuration = 75 * time.Second
 
-	// defaultUpperBoundCapacity should be able to keep the required history.
-	defaultUpperBoundCapacity = 100 * 1024
+	// DefaultLowerBoundCapacity is a default value for event cache capacity's lower bound.
+	// TODO: Figure out, to what value we can decreased it.
+	DefaultLowerBoundCapacity = 100
+
+	// DefaultUpperBoundCapacity should be able to keep the required history.
+	DefaultUpperBoundCapacity = 100 * 1024
 )
 
-func newWatchCacheHistory(groupResource schema.GroupResource, eventFreshDuration time.Duration) *watchCacheHistory {
-	h := &watchCacheHistory{
+func NewHistory(groupResource schema.GroupResource, eventFreshDuration time.Duration) *History {
+	h := &History{
 		groupResource:      groupResource,
-		capacity:           defaultLowerBoundCapacity,
-		cache:              make([]*watchCacheEvent, defaultLowerBoundCapacity),
-		lowerBoundCapacity: defaultLowerBoundCapacity,
-		upperBoundCapacity: capacityUpperBound(eventFreshDuration),
+		capacity:           DefaultLowerBoundCapacity,
+		cache:              make([]*Event, DefaultLowerBoundCapacity),
+		lowerBoundCapacity: DefaultLowerBoundCapacity,
+		upperBoundCapacity: CapacityUpperBound(eventFreshDuration),
 		startIndex:         0,
 		endIndex:           0,
 		eventFreshDuration: eventFreshDuration,
@@ -53,11 +57,11 @@ func newWatchCacheHistory(groupResource schema.GroupResource, eventFreshDuration
 	return h
 }
 
-// capacityUpperBound denotes the maximum possible capacity of the watch cache
+// CapacityUpperBound denotes the maximum possible capacity of the watch cache
 // to which it can resize.
-func capacityUpperBound(eventFreshDuration time.Duration) int {
+func CapacityUpperBound(eventFreshDuration time.Duration) int {
 	if eventFreshDuration <= DefaultEventFreshDuration {
-		return defaultUpperBoundCapacity
+		return DefaultUpperBoundCapacity
 	}
 	// eventFreshDuration determines how long the watch events are supposed
 	// to be stored in the watch cache.
@@ -69,17 +73,16 @@ func capacityUpperBound(eventFreshDuration time.Duration) int {
 	// Given that the watch cache size can only double, we round up that
 	// proportion to the next power of two.
 	exponent := int(math.Ceil((math.Log2(eventFreshDuration.Seconds() / DefaultEventFreshDuration.Seconds()))))
-	if maxExponent := int(math.Floor((math.Log2(math.MaxInt32 / defaultUpperBoundCapacity)))); exponent > maxExponent {
+	if maxExponent := int(math.Floor((math.Log2(math.MaxInt32 / DefaultUpperBoundCapacity)))); exponent > maxExponent {
 		// Making sure that the capacity's upper bound fits in a 32-bit integer.
 		exponent = maxExponent
-		klog.Warningf("Capping watch cache capacity upper bound to %v", defaultUpperBoundCapacity<<exponent)
+		klog.Warningf("Capping watch cache capacity upper bound to %v", DefaultUpperBoundCapacity<<exponent)
 	}
-	return defaultUpperBoundCapacity << exponent
+	return DefaultUpperBoundCapacity << exponent
 }
 
-type watchCacheHistory struct {
+type History struct {
 	groupResource schema.GroupResource
-
 
 	// Maximum size of history window.
 	capacity int
@@ -93,7 +96,7 @@ type watchCacheHistory struct {
 	// cache is used a cyclic buffer - the "current" contents of it are
 	// stored in [start_index%capacity, end_index%capacity) - so the
 	// "current" contents have exactly end_index-start_index items.
-	cache      []*watchCacheEvent
+	cache      []*Event
 	startIndex int
 	endIndex   int
 	// removedEventSinceRelist holds the information whether any of the events
@@ -105,9 +108,9 @@ type watchCacheHistory struct {
 }
 
 // Assumes that lock is already held for write.
-func (w *watchCacheHistory) updateCache(event *watchCacheEvent) {
+func (w *History) UpdateCache(event *Event) {
 	w.resizeCacheLocked(event.RecordTime)
-	if w.isCacheFullLocked() {
+	if w.IsCacheFullLocked() {
 		// Cache is full - remove the oldest element.
 		w.startIndex++
 		w.removedEventSinceRelist = true
@@ -119,15 +122,15 @@ func (w *watchCacheHistory) updateCache(event *watchCacheEvent) {
 // resizeCacheLocked resizes the cache if necessary:
 // - increases capacity by 2x if cache is full and all cached events occurred within last eventFreshDuration.
 // - decreases capacity by 2x when recent quarter of events occurred outside of eventFreshDuration(protect watchCache from flapping).
-func (w *watchCacheHistory) resizeCacheLocked(eventTime time.Time) {
-	if w.isCacheFullLocked() && eventTime.Sub(w.cache[w.startIndex%w.capacity].RecordTime) < w.eventFreshDuration {
+func (w *History) resizeCacheLocked(eventTime time.Time) {
+	if w.IsCacheFullLocked() && eventTime.Sub(w.cache[w.startIndex%w.capacity].RecordTime) < w.eventFreshDuration {
 		capacity := min(w.capacity*2, w.upperBoundCapacity)
 		if capacity > w.capacity {
 			w.doCacheResizeLocked(capacity)
 		}
 		return
 	}
-	if w.isCacheFullLocked() && eventTime.Sub(w.cache[(w.endIndex-w.capacity/4)%w.capacity].RecordTime) > w.eventFreshDuration {
+	if w.IsCacheFullLocked() && eventTime.Sub(w.cache[(w.endIndex-w.capacity/4)%w.capacity].RecordTime) > w.eventFreshDuration {
 		capacity := max(w.capacity/2, w.lowerBoundCapacity)
 		if capacity < w.capacity {
 			w.doCacheResizeLocked(capacity)
@@ -136,16 +139,16 @@ func (w *watchCacheHistory) resizeCacheLocked(eventTime time.Time) {
 	}
 }
 
-// isCacheFullLocked used to judge whether watchCacheEvent is full.
+// IsCacheFullLocked used to judge whether Event is full.
 // Assumes that lock is already held for write.
-func (w *watchCacheHistory) isCacheFullLocked() bool {
+func (w *History) IsCacheFullLocked() bool {
 	return w.endIndex == w.startIndex+w.capacity
 }
 
 // doCacheResizeLocked resize watchCache's event array with different capacity.
 // Assumes that lock is already held for write.
-func (w *watchCacheHistory) doCacheResizeLocked(capacity int) {
-	newCache := make([]*watchCacheEvent, capacity)
+func (w *History) doCacheResizeLocked(capacity int) {
+	newCache := make([]*Event, capacity)
 	if capacity < w.capacity {
 		// adjust startIndex if cache capacity shrink.
 		w.startIndex = w.endIndex - capacity
@@ -158,15 +161,15 @@ func (w *watchCacheHistory) doCacheResizeLocked(capacity int) {
 	w.capacity = capacity
 }
 
-// isIndexValidLocked checks if a given index is still valid.
+// IsIndexValidLocked checks if a given index is still valid.
 // This assumes that the lock is held.
-func (w *watchCacheHistory) isIndexValidLocked(index int) bool {
+func (w *History) IsIndexValidLocked(index int) bool {
 	return index >= w.startIndex
 }
 
 // ResetLocked empties the cyclic buffer, ensuring startIndex doesn't decrease.
 // Assumes that lock is already held for write.
-func (w *watchCacheHistory) ResetLocked() {
+func (w *History) ResetLocked() {
 	w.startIndex = w.endIndex
 	w.removedEventSinceRelist = false
 	clear(w.cache)
@@ -190,7 +193,7 @@ const (
 	maxWatchChanSizeWithoutIndex = 100
 )
 
-func (w *watchCacheHistory) suggestedWatchChannelSize(indexExists, triggerUsed bool) int {
+func (w *History) SuggestedWatchChannelSize(indexExists, triggerUsed bool) int {
 	// To estimate the channel size we use a heuristic that a channel
 	// should roughly be able to keep one second of history.
 	// We don't have an exact data, but given we store updates from
@@ -213,10 +216,10 @@ func (w *watchCacheHistory) suggestedWatchChannelSize(indexExists, triggerUsed b
 	return min(chanSize, maxChanSize)
 }
 
-// GetIntervalLocked returns a watchCacheInterval that can be used to
+// GetIntervalLocked returns a Interval that can be used to
 // retrieve events since a certain resourceVersion. This function assumes to
 // be called under the lock.
-func (w *watchCacheHistory) GetIntervalLocked(resourceVersion uint64, listResourceVersion uint64, indexValidator indexValidator, locker sync.Locker) (*watchCacheInterval, error) {
+func (w *History) GetIntervalLocked(resourceVersion uint64, listResourceVersion uint64, indexValidator IndexValidator, locker sync.Locker) (*Interval, error) {
 	size := w.endIndex - w.startIndex
 	var oldest uint64
 	switch {
@@ -244,19 +247,91 @@ func (w *watchCacheHistory) GetIntervalLocked(resourceVersion uint64, listResour
 		return w.cache[(w.startIndex+i)%w.capacity].ResourceVersion > resourceVersion
 	}
 	first := sort.Search(size, f)
-	indexerFunc := func(i int) *watchCacheEvent {
+	indexerFunc := func(i int) *Event {
 		return w.cache[i%w.capacity]
 	}
-	ci := newCacheInterval(w.startIndex+first, w.endIndex, indexerFunc, indexValidator, resourceVersion, locker)
+	ci := NewCacheInterval(w.startIndex+first, w.endIndex, indexerFunc, indexValidator, resourceVersion, locker)
 	return ci, nil
 }
 
 // OldestResourceVersionLocked returns the resource version of the oldest event in the cyclic buffer.
-func (w *watchCacheHistory) OldestResourceVersionLocked() uint64 {
+func (w *History) OldestResourceVersionLocked() uint64 {
 	return w.cache[w.startIndex%w.capacity].ResourceVersion
 }
 
 // Capacity returns the current capacity of the event history cache.
-func (w *watchCacheHistory) Capacity() int {
+func (w *History) Capacity() int {
 	return w.capacity
+}
+
+// StartIndex returns the start index of the cyclic buffer.
+func (w *History) StartIndex() int {
+	return w.startIndex
+}
+
+// EndIndex returns the end index of the cyclic buffer.
+func (w *History) EndIndex() int {
+	return w.endIndex
+}
+
+// Compact compacts the history by removing all events with ResourceVersion <= rv.
+// This is used for testing compaction behavior.
+func (w *History) Compact(rv uint64) {
+	for w.startIndex < w.endIndex {
+		index := w.startIndex % w.capacity
+		if w.cache[index].ResourceVersion > rv {
+			break
+		}
+		w.startIndex++
+	}
+}
+
+// SetCapacity resets the capacity and allocates a new cache buffer.
+// This is used for testing.
+func (w *History) SetCapacity(capacity int) {
+	w.capacity = capacity
+	w.cache = make([]*Event, capacity)
+}
+
+// SetBounds sets the lower and upper capacity bounds.
+// This is used for testing.
+func (w *History) SetBounds(lowerBoundCapacity, upperBoundCapacity int) {
+	w.lowerBoundCapacity = lowerBoundCapacity
+	w.upperBoundCapacity = upperBoundCapacity
+}
+
+// SetStartIndex sets the start index of the cyclic buffer.
+// This is used for testing.
+func (w *History) SetStartIndex(startIndex int) {
+	w.startIndex = startIndex
+}
+
+// SetEndIndex sets the end index of the cyclic buffer.
+// This is used for testing.
+func (w *History) SetEndIndex(endIndex int) {
+	w.endIndex = endIndex
+}
+
+// SetEvent sets the event at the given index in the cyclic buffer.
+// This is used for testing.
+func (w *History) SetEvent(index int, event *Event) {
+	w.cache[index%w.capacity] = event
+}
+
+// Clear clears the history cache.
+// This is used for testing.
+func (w *History) Clear() {
+	w.cache = w.cache[:0]
+}
+
+// ResizeCache resizes the cache if necessary.
+// This is used for testing.
+func (w *History) ResizeCache(eventTime time.Time) {
+	w.resizeCacheLocked(eventTime)
+}
+
+// GetEvent returns the event at the given index in the cyclic buffer.
+// This is used for testing.
+func (w *History) GetEvent(index int) *Event {
+	return w.cache[index%w.capacity]
 }
