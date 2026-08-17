@@ -37,13 +37,18 @@ import (
 )
 
 // BenchmarkSlowWatcherTax measures event delivery latency through the cacher's
-// dispatch path to a healthy watcher. It needs wall-clock time; run it with:
+// dispatch path to a healthy watcher, alone and next to a companion watcher.
+// Every scenario runs with the WatchCacheStallResume gate off and on.
+// It needs wall-clock time; run it with:
 //
 //	go test ./staging/src/k8s.io/apiserver/pkg/storage/cacher/ -run xxx -bench BenchmarkSlowWatcherTax -benchtime 1x -v
 func BenchmarkSlowWatcherTax(b *testing.B) {
 	registry := compbasemetrics.NewKubeRegistry()
 	// The cacher's own instruments; an unregistered vector records nothing.
-	for _, m := range []compbasemetrics.Registerable{metrics.DispatchStageDuration, metrics.TerminatedWatchersCounter} {
+	for _, m := range []compbasemetrics.Registerable{
+		metrics.DispatchStageDuration, metrics.TerminatedWatchersCounter,
+		metrics.WatcherStalls, metrics.WatcherDeferredEvents, metrics.WatcherCatchupRounds,
+	} {
 		if err := registry.Register(m); err != nil {
 			b.Fatal(err)
 		}
@@ -51,22 +56,42 @@ func BenchmarkSlowWatcherTax(b *testing.B) {
 
 	scenarios := []slowWatcherScenario{
 		{name: "baseline", eventsPerSecond: 100},
+		{name: "draining-companion", eventsPerSecond: 100, companion: true, drains: true, reconnects: true},
+		{name: "stalled-once", eventsPerSecond: 100, companion: true},
+		{name: "stalled-reconnecting", eventsPerSecond: 100, companion: true, reconnects: true},
+		{name: "baseline-1000", eventsPerSecond: 1000},
+		{name: "stalled-reconnecting-1000", eventsPerSecond: 1000, companion: true, reconnects: true},
 	}
-	for _, scenario := range scenarios {
-		b.Run(scenario.name, func(b *testing.B) {
-			var r slowWatcherResult
-			for i := 0; i < b.N; i++ {
-				r = runSlowWatcherScenario(b, registry, scenario)
+	for _, gateOn := range []bool{false, true} {
+		gateName := "gate=off"
+		if gateOn {
+			gateName = "gate=on"
+		}
+		b.Run(gateName, func(b *testing.B) {
+			for _, scenario := range scenarios {
+				b.Run(scenario.name, func(b *testing.B) {
+					// The cacher reads the gate at construction.
+					setStallResumeGate(b, gateOn)
+					var r slowWatcherResult
+					for i := 0; i < b.N; i++ {
+						r = runSlowWatcherScenario(b, registry, scenario)
+					}
+					b.ReportMetric(float64(r.percentile(0.5).Microseconds()), "p50-us")
+					b.ReportMetric(float64(r.percentile(0.9).Microseconds()), "p90-us")
+					b.ReportMetric(float64(r.percentile(0.99).Microseconds()), "p99-us")
+					b.ReportMetric(float64(r.percentile(1.0).Microseconds()), "max-us")
+					b.ReportMetric(float64(r.slowDispatches), "slow-dispatches")
+					b.ReportMetric(float64(r.terminated), "force-closed")
+					b.ReportMetric(float64(r.incomingHWM), "incoming-hwm")
+					if gateOn {
+						b.ReportMetric(r.stalls, "stalls")
+						b.ReportMetric(r.deferredEvents, "deferred-events")
+						b.ReportMetric(r.catchupRounds, "catchup-rounds")
+					}
+					b.Logf("%s: %d of %d dispatches above %v, %d watcher(s) force closed, incoming high water mark %d",
+						scenario.name, r.slowDispatches, r.allDispatches, slowDispatchGate, r.terminated, r.incomingHWM)
+				})
 			}
-			b.ReportMetric(float64(r.percentile(0.5).Microseconds()), "p50-us")
-			b.ReportMetric(float64(r.percentile(0.9).Microseconds()), "p90-us")
-			b.ReportMetric(float64(r.percentile(0.99).Microseconds()), "p99-us")
-			b.ReportMetric(float64(r.percentile(1.0).Microseconds()), "max-us")
-			b.ReportMetric(float64(r.slowDispatches), "slow-dispatches")
-			b.ReportMetric(float64(r.terminated), "force-closed")
-			b.ReportMetric(float64(r.incomingHWM), "incoming-hwm")
-			b.Logf("%s: %d of %d dispatches above %v, %d watcher(s) force closed, incoming high water mark %d",
-				scenario.name, r.slowDispatches, r.allDispatches, slowDispatchGate, r.terminated, r.incomingHWM)
 		})
 	}
 }
@@ -75,6 +100,16 @@ const (
 	// slowWatcherScenarioDuration gives 1000 samples at 100 events/s, enough
 	// to place p99 on a real sample rather than on the max.
 	slowWatcherScenarioDuration = 10 * time.Second
+	// slowWatcherReconnectEvery is slower than client-go, which re-watches
+	// almost immediately, so the reconnecting scenarios are conservative.
+	slowWatcherReconnectEvery = 500 * time.Millisecond
+	// slowWatcherBudgetWarmup lets the dispatch budget fill from its empty
+	// initial state (maxBudget / refreshPerSecond = 2s), as in a long-lived
+	// production cacher when a client wedges.
+	slowWatcherBudgetWarmup = 2500 * time.Millisecond
+	// slowWatcherDrainGrace outwaits a blocked send still sleeping on its
+	// budget timer at cacher stop, so its force close lands in this scenario.
+	slowWatcherDrainGrace = 2 * maxBudget
 	// slowDispatchGate is a bucket boundary of DispatchStageDuration.
 	slowDispatchGate = 5 * time.Millisecond
 )
@@ -82,6 +117,9 @@ const (
 type slowWatcherScenario struct {
 	name            string
 	eventsPerSecond int
+	companion       bool // a second watcher exists
+	drains          bool // the companion reads its result channel
+	reconnects      bool // the companion re-dials every slowWatcherReconnectEvery, one alive at a time
 }
 
 type slowWatcherResult struct {
@@ -90,6 +128,8 @@ type slowWatcherResult struct {
 	allDispatches   uint64
 	terminated      int
 	incomingHWM     int64
+	// Stall instruments, always zero with the gate off.
+	stalls, deferredEvents, catchupRounds float64
 }
 
 func (r slowWatcherResult) percentile(p float64) time.Duration {
@@ -112,16 +152,30 @@ func runSlowWatcherScenario(b *testing.B, registry compbasemetrics.KubeRegistry,
 	}
 	defer cacher.Stop()
 
+	time.Sleep(slowWatcherBudgetWarmup)
 	before := snapshotSlowWatcherMetrics(b, registry)
 
-	healthy, err := cacher.Watch(context.Background(), "/pods/ns", storage.ListOptions{
-		ResourceVersion: "100",
-		Predicate:       storage.Everything,
-	})
+	// The newest resourceVersion the injector has published. Companions
+	// (re)connect from here, with no history to replay.
+	var lastRV atomic.Int64
+	lastRV.Store(100)
+	newWatch := func() (watch.Interface, error) {
+		return cacher.Watch(context.Background(), "/pods/ns", storage.ListOptions{
+			ResourceVersion: fmt.Sprintf("%d", lastRV.Load()),
+			Predicate:       storage.Everything,
+		})
+	}
+
+	healthy, err := newWatch()
 	if err != nil {
 		b.Fatal(err)
 	}
 	defer healthy.Stop()
+
+	if scenario.companion {
+		stopCompanion := startSlowWatcherCompanion(b, scenario, newWatch)
+		defer stopCompanion()
+	}
 
 	injected := make([]time.Time, totalEvents)
 	stopInjector := make(chan struct{})
@@ -143,6 +197,7 @@ func runSlowWatcherScenario(b *testing.B, registry compbasemetrics.KubeRegistry,
 				Namespace:       "ns",
 				ResourceVersion: fmt.Sprintf("%d", 101+i),
 			})
+			lastRV.Store(int64(101 + i))
 		}
 	}()
 	// Runs before cacher.Stop (defers are LIFO): the reflector closes the
@@ -184,6 +239,7 @@ func runSlowWatcherScenario(b *testing.B, registry compbasemetrics.KubeRegistry,
 
 	injector.Wait()
 	cacher.Stop()
+	time.Sleep(slowWatcherDrainGrace)
 	// Deltas over this scenario only: the vectors are global and shared with other tests.
 	after := snapshotSlowWatcherMetrics(b, registry)
 	return slowWatcherResult{
@@ -192,6 +248,71 @@ func runSlowWatcherScenario(b *testing.B, registry compbasemetrics.KubeRegistry,
 		allDispatches:   after.allDispatches - before.allDispatches,
 		terminated:      after.terminated - before.terminated,
 		incomingHWM:     atomic.LoadInt64((*int64)(&cacher.incomingHWM)),
+		stalls:          after.stalls - before.stalls,
+		deferredEvents:  after.deferredEvents - before.deferredEvents,
+		catchupRounds:   after.catchupRounds - before.catchupRounds,
+	}
+}
+
+// startSlowWatcherCompanion opens the companion watcher and, for a
+// reconnecting scenario, re-dials it on a ticker so that exactly one
+// companion is alive at any moment. The returned func stops everything it
+// started.
+func startSlowWatcherCompanion(b *testing.B, scenario slowWatcherScenario, newWatch func() (watch.Interface, error)) func() {
+	var drainers sync.WaitGroup
+	maybeDrain := func(w watch.Interface) {
+		if !scenario.drains {
+			// A stalled companion never reads.
+			return
+		}
+		drainers.Add(1)
+		go func() {
+			defer drainers.Done()
+			for range w.ResultChan() {
+			}
+		}()
+	}
+
+	companion, err := newWatch()
+	if err != nil {
+		b.Fatal(err)
+	}
+	maybeDrain(companion)
+	if !scenario.reconnects {
+		return func() {
+			companion.Stop()
+			drainers.Wait()
+		}
+	}
+
+	done := make(chan struct{})
+	var reconnector sync.WaitGroup
+	reconnector.Add(1)
+	go func() {
+		defer reconnector.Done()
+		ticker := time.NewTicker(slowWatcherReconnectEvery)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				companion.Stop()
+				return
+			case <-ticker.C:
+				companion.Stop()
+				w, err := newWatch()
+				if err != nil {
+					// The cacher is shutting down; the next tick or done ends the loop.
+					continue
+				}
+				companion = w
+				maybeDrain(w)
+			}
+		}
+	}()
+	return func() {
+		close(done)
+		reconnector.Wait()
+		drainers.Wait()
 	}
 }
 
@@ -199,6 +320,8 @@ type slowWatcherMetrics struct {
 	slowDispatches uint64 // stage="total" observations above slowDispatchGate
 	allDispatches  uint64 // one per delivered event per watcher
 	terminated     int
+	// WatchCacheStallResume instruments.
+	stalls, deferredEvents, catchupRounds float64
 }
 
 func snapshotSlowWatcherMetrics(b *testing.B, registry compbasemetrics.KubeRegistry) slowWatcherMetrics {
@@ -228,9 +351,23 @@ func snapshotSlowWatcherMetrics(b *testing.B, registry compbasemetrics.KubeRegis
 			for _, m := range mf.GetMetric() {
 				s.terminated += int(m.GetCounter().GetValue())
 			}
+		case "apiserver_watch_cache_watcher_stalls_total":
+			s.stalls += sumCounters(mf)
+		case "apiserver_watch_cache_watcher_deferred_events_total":
+			s.deferredEvents += sumCounters(mf)
+		case "apiserver_watch_cache_watcher_catchup_rounds_total":
+			s.catchupRounds += sumCounters(mf)
 		}
 	}
 	return s
+}
+
+func sumCounters(mf *dto.MetricFamily) float64 {
+	var total float64
+	for _, m := range mf.GetMetric() {
+		total += m.GetCounter().GetValue()
+	}
+	return total
 }
 
 func hasMetricLabel(m *dto.Metric, name, value string) bool {
