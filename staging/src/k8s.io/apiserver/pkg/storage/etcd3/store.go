@@ -389,29 +389,7 @@ func (s *store) conditionalDelete(
 	for {
 		if preconditions != nil {
 			if err := preconditions.Check(key, origState.obj); err != nil {
-				if origStateIsCurrent {
-					return err
-				}
-
-				// It's possible we're working with stale data.
-				// Remember the revision of the potentially stale data and the resulting update error
-				cachedRev := origState.rev
-				cachedUpdateErr := err
-
-				// Actually fetch
-				origState, err = getCurrentState()
-				if err != nil {
-					return err
-				}
-				origStateIsCurrent = true
-
-				// it turns out our cached data was not stale, return the error
-				if cachedRev == origState.rev {
-					return cachedUpdateErr
-				}
-
-				// Retry
-				continue
+				return err
 			}
 		}
 		if err := validateDeletion(ctx, origState.obj); err != nil {
@@ -508,48 +486,21 @@ func (s *store) GuaranteedUpdate(
 	transformContext := authenticatedDataString(preparedKey)
 	for {
 		if err := preconditions.Check(preparedKey, origState.obj); err != nil {
-			// If our data is already up to date, return the error
-			if origStateIsCurrent {
-				return err
-			}
-
-			// It's possible we were working with stale data
-			// Actually fetch
-			origState, err = getCurrentState()
-			if err != nil {
-				return err
-			}
-			origStateIsCurrent = true
-			// Retry
-			continue
+			return err
 		}
 
 		ret, ttl, err := s.updateState(origState, tryUpdate)
 		if err != nil {
-			// If our data is already up to date, return the error
-			if origStateIsCurrent {
-				return err
-			}
-
 			// It's possible we were working with stale data
-			// Remember the revision of the potentially stale data and the resulting update error
-			cachedRev := origState.rev
-			cachedUpdateErr := err
-
-			// Actually fetch
-			origState, err = getCurrentState()
-			if err != nil {
-				return err
+			if !origStateIsCurrent && apierrors.IsConflict(err) {
+				origState, err = getCurrentState()
+				if err != nil {
+					return err
+				}
+				origStateIsCurrent = true
+				continue
 			}
-			origStateIsCurrent = true
-
-			// it turns out our cached data was not stale, return the error
-			if cachedRev == origState.rev {
-				return cachedUpdateErr
-			}
-
-			// Retry
-			continue
+			return err
 		}
 
 		span.AddEvent("About to Encode")
