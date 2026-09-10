@@ -22,23 +22,39 @@ import (
 	"k8s.io/apiserver/pkg/admission/initializer"
 	"k8s.io/apiserver/pkg/features"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	corev1listers "k8s.io/client-go/listers/core/v1"
 	policyloader "k8s.io/kubernetes/pkg/admission/plugin/policy/manifest/loader"
 	webhookloader "k8s.io/kubernetes/pkg/admission/plugin/webhook/manifest/loader"
+	podsecurityadmission "k8s.io/pod-security-admission/admission"
 )
 
 // TODO add a `WantsToRun` which takes a stopCh.  Might make it generic.
 
+// WantsStoragePodLister defines a function which sets a storage-backed PodLister for admission plugins that need it.
+type WantsStoragePodLister interface {
+	SetStoragePodLister(podsecurityadmission.PodLister)
+	admission.InitializationValidator
+}
+
+// WantsCoreV1PodLister defines a function which sets a storage-backed PodLister (corev1listers.PodLister) for admission plugins that need it.
+type WantsCoreV1PodLister interface {
+	SetCoreV1PodLister(corev1listers.PodLister)
+	admission.InitializationValidator
+}
+
 // PluginInitializer is used for initialization of the Kubernetes specific admission plugins.
 type PluginInitializer struct {
-	loaders *initializer.ManifestLoaders
+	loaders          *initializer.ManifestLoaders
+	storagePodLister *LazyPodLister
 }
 
 var _ admission.PluginInitializer = &PluginInitializer{}
 
 // NewPluginInitializer constructs new instance of PluginInitializer
-func NewPluginInitializer() *PluginInitializer {
+func NewPluginInitializer(storagePodLister *LazyPodLister) *PluginInitializer {
 	return &PluginInitializer{
-		loaders: newManifestLoaders(),
+		loaders:          newManifestLoaders(),
+		storagePodLister: storagePodLister,
 	}
 }
 
@@ -47,6 +63,14 @@ func NewPluginInitializer() *PluginInitializer {
 func (i *PluginInitializer) Initialize(plugin admission.Interface) {
 	if wants, ok := plugin.(initializer.WantsManifestLoaders); ok {
 		wants.SetManifestLoaders(i.loaders)
+	}
+	if i.storagePodLister != nil {
+		if wants, ok := plugin.(WantsStoragePodLister); ok {
+			wants.SetStoragePodLister(i.storagePodLister)
+		}
+		if wants, ok := plugin.(WantsCoreV1PodLister); ok {
+			wants.SetCoreV1PodLister(i.storagePodLister)
+		}
 	}
 }
 

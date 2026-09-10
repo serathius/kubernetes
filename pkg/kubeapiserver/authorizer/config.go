@@ -35,7 +35,9 @@ import (
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	versionedinformers "k8s.io/client-go/informers"
 	certinformersv1 "k8s.io/client-go/informers/certificates/v1"
+	corev1informers "k8s.io/client-go/informers/core/v1"
 	resourceinformers "k8s.io/client-go/informers/resource/v1"
+	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/kubernetes/pkg/auth/authorizer/abac"
 	"k8s.io/kubernetes/pkg/auth/nodeidentifier"
 	"k8s.io/kubernetes/pkg/features"
@@ -60,6 +62,7 @@ type Config struct {
 	WebhookRetryBackoff *wait.Backoff
 
 	VersionedInformerFactory versionedinformers.SharedInformerFactory
+	PodLister                corev1listers.PodLister
 
 	// Optional field, custom dial function used to connect to webhook
 	CustomDial utilnet.DialFunc
@@ -110,19 +113,23 @@ func (config Config) New(ctx context.Context, serverID string) (authorizer.Autho
 			if utilfeature.DefaultFeatureGate.Enabled(features.PodCertificateRequest) {
 				podCertificateRequestInformer = config.VersionedInformerFactory.Certificates().V1().PodCertificateRequests()
 			}
+			var podsInformer corev1informers.PodInformer
+			if config.PodLister == nil && config.VersionedInformerFactory != nil {
+				podsInformer = config.VersionedInformerFactory.Core().V1().Pods()
+			}
 			node.RegisterMetrics()
 			graph := node.NewGraph()
 			node.AddGraphEventHandlers(
 				ctx,
 				graph,
 				config.VersionedInformerFactory.Core().V1().Nodes(),
-				config.VersionedInformerFactory.Core().V1().Pods(),
+				podsInformer,
 				config.VersionedInformerFactory.Core().V1().PersistentVolumes(),
 				config.VersionedInformerFactory.Storage().V1().VolumeAttachments(),
 				slices, // Nil check in AddGraphEventHandlers can be removed when always creating this.
 				podCertificateRequestInformer,
 			)
-			r.nodeAuthorizer = node.NewAuthorizer(graph, nodeidentifier.NewDefaultNodeIdentifier(), bootstrappolicy.NodeRules())
+			r.nodeAuthorizer = node.NewAuthorizer(graph, nodeidentifier.NewDefaultNodeIdentifier(), bootstrappolicy.NodeRules(), config.PodLister)
 
 		case authzconfig.AuthorizerType(modes.ModeABAC):
 			var err error

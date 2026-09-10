@@ -139,6 +139,8 @@ type ServiceAccountAuthenticationOptions struct {
 	// OptionalTokenGetter is a function that returns a service account token getter.
 	// If not set, the default token getter will be used.
 	OptionalTokenGetter func(factory informers.SharedInformerFactory) serviceaccount.ServiceAccountTokenGetter
+	// PodLister is an optional pod lister. If set, it will be used instead of creating a pod informer.
+	PodLister v1listers.PodLister
 	// ExternalPublicKeysGetter gets set if `--service-account-signing-endpoint` is passed.
 	// ExternalPublicKeysGetter is mutually exclusive with KeyFiles.
 	ExternalPublicKeysGetter serviceaccount.PublicKeysGetter
@@ -716,11 +718,18 @@ func (o *BuiltInAuthenticationOptions) ApplyTo(
 			nodeLister = versionedInformer.Core().V1().Nodes().Lister()
 		}
 
+		var podLister v1listers.PodLister
+		if o.ServiceAccounts != nil && o.ServiceAccounts.PodLister != nil {
+			podLister = o.ServiceAccounts.PodLister
+		} else {
+			podLister = versionedInformer.Core().V1().Pods().Lister()
+		}
+
 		authenticatorConfig.ServiceAccountTokenGetter = serviceaccountcontroller.NewGetterFromClient(
 			extclient,
 			versionedInformer.Core().V1().Secrets().Lister(),
 			versionedInformer.Core().V1().ServiceAccounts().Lister(),
-			versionedInformer.Core().V1().Pods().Lister(),
+			podLister,
 			nodeLister,
 			versionedInformer.Admissionregistration().V1().ValidatingWebhookConfigurations().Lister(),
 			versionedInformer.Admissionregistration().V1().MutatingWebhookConfigurations().Lister(),

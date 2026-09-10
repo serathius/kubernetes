@@ -48,6 +48,7 @@ import (
 	"k8s.io/client-go/dynamic"
 	clientgoinformers "k8s.io/client-go/informers"
 	clientgoclientset "k8s.io/client-go/kubernetes"
+	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/keyutil"
 	basecompatibility "k8s.io/component-base/compatibility"
@@ -227,12 +228,17 @@ func BuildGenericConfig(
 	}
 
 	var enablesRBAC bool
+	var podLister corev1listers.PodLister
+	if s.Authentication.ServiceAccounts != nil {
+		podLister = s.Authentication.ServiceAccounts.PodLister
+	}
 	genericConfig.Authorization.Authorizer, genericConfig.RuleResolver, enablesRBAC, err = BuildAuthorizer(
 		ctx,
 		s,
 		genericConfig.EgressSelector,
 		genericConfig.APIServerID,
 		versionedInformers,
+		podLister,
 	)
 	if err != nil {
 		lastErr = fmt.Errorf("invalid authorization config: %w", err)
@@ -253,8 +259,8 @@ func BuildGenericConfig(
 }
 
 // BuildAuthorizer constructs the authorizer. If authorization is not set in s, it returns nil, nil, false, nil
-func BuildAuthorizer(ctx context.Context, s options.CompletedOptions, egressSelector *egressselector.EgressSelector, apiserverID string, versionedInformers clientgoinformers.SharedInformerFactory) (authorizer.Authorizer, authorizer.RuleResolver, bool, error) {
-	authorizationConfig, err := s.Authorization.ToAuthorizationConfig(versionedInformers)
+func BuildAuthorizer(ctx context.Context, s options.CompletedOptions, egressSelector *egressselector.EgressSelector, apiserverID string, versionedInformers clientgoinformers.SharedInformerFactory, podLister corev1listers.PodLister) (authorizer.Authorizer, authorizer.RuleResolver, bool, error) {
+	authorizationConfig, err := s.Authorization.ToAuthorizationConfig(versionedInformers, podLister)
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -378,6 +384,7 @@ func CreateConfig(
 		ExternalInformers:    versionedInformers,
 		LoopbackClientConfig: genericConfig.LoopbackClientConfig,
 		APIResourceConfig:    storageFactory.APIResourceConfigSource,
+		PodLister:            opts.Authentication.ServiceAccounts.PodLister,
 	}
 	genericInitializers, err := genericAdmissionConfig.New(proxyTransport, genericConfig.EgressSelector, serviceResolver, genericConfig.TracerProvider)
 	if err != nil {

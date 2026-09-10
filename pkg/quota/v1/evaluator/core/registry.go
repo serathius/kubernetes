@@ -43,7 +43,7 @@ var legacyObjectCountAliases = map[schema.GroupVersionResource]corev1.ResourceNa
 }
 
 // NewEvaluators returns the list of static evaluators that manage more than counts
-func NewEvaluators(f quota.ListerForResourceFunc, i informers.SharedInformerFactory, isEnabled func(schema.GroupVersionResource) bool) ([]quota.Evaluator, error) {
+func NewEvaluators(f quota.ListerForResourceFunc, i informers.SharedInformerFactory, isEnabled func(schema.GroupVersionResource) bool, podLister corev1listers.PodLister) ([]quota.Evaluator, error) {
 	if isEnabled == nil {
 		isEnabled = func(schema.GroupVersionResource) bool { return true }
 	}
@@ -61,10 +61,11 @@ func NewEvaluators(f quota.ListerForResourceFunc, i informers.SharedInformerFact
 	}
 	if isEnabled(resourcev1.SchemeGroupVersion.WithResource("resourceclaims")) && utilfeature.DefaultFeatureGate.Enabled(features.DynamicResourceAllocation) {
 		var claimGetter resourceClaimPodOwnerGetter
-		var podLister corev1listers.PodLister
 		var deviceClassMapping *extendedresourcecache.ExtendedResourceCache
 		if utilfeature.DefaultFeatureGate.Enabled(features.DRAExtendedResource) {
-			podLister = i.Core().V1().Pods().Lister()
+			if podLister == nil && i != nil {
+				podLister = i.Core().V1().Pods().Lister()
+			}
 			logger := klog.FromContext(context.Background())
 			deviceClassMapping = extendedresourcecache.NewExtendedResourceCache(logger)
 			if _, err := i.Resource().V1().DeviceClasses().Informer().AddEventHandler(deviceClassMapping); err != nil {

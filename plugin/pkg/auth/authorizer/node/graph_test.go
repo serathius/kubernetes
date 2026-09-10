@@ -189,7 +189,7 @@ func TestIndex(t *testing.T) {
 	g := NewGraph()
 	g.destinationEdgeThreshold = 3
 
-	a := NewAuthorizer(g, nil, nil)
+	a := NewAuthorizer(g, nil, nil, nil)
 
 	addPod := func(podNumber, nodeNumber int) {
 		t.Helper()

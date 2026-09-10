@@ -22,18 +22,24 @@ import (
 
 	"k8s.io/klog/v2"
 
+	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/selection"
 	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/apiserver/pkg/authorization/authorizer"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/component-base/featuregate"
+	"k8s.io/component-helpers/storage/ephemeral"
+	"k8s.io/dynamic-resource-allocation/resourceclaim"
 	certsapi "k8s.io/kubernetes/pkg/apis/certificates"
 	coordapi "k8s.io/kubernetes/pkg/apis/coordination"
 	api "k8s.io/kubernetes/pkg/apis/core"
 	resourceapi "k8s.io/kubernetes/pkg/apis/resource"
 	storageapi "k8s.io/kubernetes/pkg/apis/storage"
+	podutil "k8s.io/kubernetes/pkg/api/v1/pod"
 	"k8s.io/kubernetes/pkg/auth/nodeidentifier"
 	"k8s.io/kubernetes/pkg/features"
 	"k8s.io/kubernetes/plugin/pkg/auth/authorizer/rbac"
@@ -64,6 +70,7 @@ type NodeAuthorizer struct {
 	graph      *Graph
 	identifier nodeidentifier.NodeIdentifier
 	nodeRules  []rbacv1.PolicyRule
+	podLister  corev1listers.PodLister
 
 	// allows overriding for testing
 	features featuregate.FeatureGate
@@ -73,11 +80,12 @@ var _ = authorizer.Authorizer(&NodeAuthorizer{})
 var _ = authorizer.RuleResolver(&NodeAuthorizer{})
 
 // NewAuthorizer returns a new node authorizer
-func NewAuthorizer(graph *Graph, identifier nodeidentifier.NodeIdentifier, rules []rbacv1.PolicyRule) *NodeAuthorizer {
+func NewAuthorizer(graph *Graph, identifier nodeidentifier.NodeIdentifier, rules []rbacv1.PolicyRule, podLister corev1listers.PodLister) *NodeAuthorizer {
 	return &NodeAuthorizer{
 		graph:      graph,
 		identifier: identifier,
 		nodeRules:  rules,
+		podLister:  podLister,
 		features:   utilfeature.DefaultFeatureGate,
 	}
 }
@@ -507,8 +515,182 @@ func (r *NodeAuthorizer) authorizePod(nodeName string, attrs authorizer.Attribut
 	return authorizer.DecisionNoOpinion, "", nil
 }
 
+func isMirrorPod(pod *corev1.Pod) bool {
+	_, ok := pod.Annotations[corev1.MirrorPodAnnotationKey]
+	return ok
+}
+
+func podReferencesPVC(pod *corev1.Pod, pvcName string) bool {
+	for _, v := range pod.Spec.Volumes {
+		if v.PersistentVolumeClaim != nil && v.PersistentVolumeClaim.ClaimName == pvcName {
+			return true
+		}
+		if v.Ephemeral != nil && ephemeral.VolumeClaimName(pod, &v) == pvcName {
+			return true
+		}
+	}
+	return false
+}
+
 // hasPathFrom returns true if there is a directed path from the specified type/namespace/name to the specified Node
 func (r *NodeAuthorizer) hasPathFrom(nodeName string, startingType vertexType, startingNamespace, startingName string) (bool, error) {
+	if r.podLister != nil {
+		return r.hasPathFromWithPodLister(nodeName, startingType, startingNamespace, startingName)
+	}
+	return r.hasPathFromGraph(nodeName, startingType, startingNamespace, startingName)
+}
+
+func (r *NodeAuthorizer) hasPathFromWithPodLister(nodeName string, startingType vertexType, startingNamespace, startingName string) (bool, error) {
+	switch startingType {
+	case vaVertexType, sliceVertexType, pcrVertexType:
+		return r.hasPathFromGraph(nodeName, startingType, startingNamespace, startingName)
+
+	case podVertexType:
+		pod, err := r.podLister.Pods(startingNamespace).Get(startingName)
+		if err != nil {
+			return false, fmt.Errorf("node '%s' cannot get pod %s/%s: %w", nodeName, startingNamespace, startingName, err)
+		}
+		if pod.Spec.NodeName != nodeName {
+			return false, fmt.Errorf("node '%s' cannot get pod %s/%s bound to node '%s'", nodeName, startingNamespace, startingName, pod.Spec.NodeName)
+		}
+		return true, nil
+
+	case configMapVertexType:
+		pods, err := r.podLister.Pods(startingNamespace).List(labels.Everything())
+		if err != nil {
+			return false, err
+		}
+		for _, pod := range pods {
+			if pod.Spec.NodeName != nodeName || isMirrorPod(pod) {
+				continue
+			}
+			found := false
+			podutil.VisitPodConfigmapNames(pod, func(cm string) bool {
+				if cm == startingName {
+					found = true
+					return false
+				}
+				return true
+			})
+			if found {
+				return true, nil
+			}
+		}
+		return false, fmt.Errorf("node '%s' cannot get configmap %s/%s, no relationship to this object was found", nodeName, startingNamespace, startingName)
+
+	case serviceAccountVertexType:
+		pods, err := r.podLister.Pods(startingNamespace).List(labels.Everything())
+		if err != nil {
+			return false, err
+		}
+		for _, pod := range pods {
+			if pod.Spec.NodeName != nodeName || isMirrorPod(pod) {
+				continue
+			}
+			if pod.Spec.ServiceAccountName == startingName {
+				return true, nil
+			}
+		}
+		return false, fmt.Errorf("node '%s' cannot get serviceaccount %s/%s, no relationship to this object was found", nodeName, startingNamespace, startingName)
+
+	case resourceClaimVertexType:
+		pods, err := r.podLister.Pods(startingNamespace).List(labels.Everything())
+		if err != nil {
+			return false, err
+		}
+		for _, pod := range pods {
+			if pod.Spec.NodeName != nodeName || isMirrorPod(pod) {
+				continue
+			}
+			for _, podResourceClaim := range pod.Spec.ResourceClaims {
+				claimName, _, err := resourceclaim.Name(pod, &podResourceClaim)
+				if err == nil && claimName != nil && *claimName == startingName {
+					return true, nil
+				}
+			}
+			if pod.Status.ExtendedResourceClaimStatus != nil && pod.Status.ExtendedResourceClaimStatus.ResourceClaimName == startingName {
+				return true, nil
+			}
+		}
+		return false, fmt.Errorf("node '%s' cannot get resourceclaim %s/%s, no relationship to this object was found", nodeName, startingNamespace, startingName)
+
+	case pvcVertexType:
+		pods, err := r.podLister.Pods(startingNamespace).List(labels.Everything())
+		if err != nil {
+			return false, err
+		}
+		for _, pod := range pods {
+			if pod.Spec.NodeName != nodeName || isMirrorPod(pod) {
+				continue
+			}
+			if podReferencesPVC(pod, startingName) {
+				return true, nil
+			}
+		}
+		return false, fmt.Errorf("node '%s' cannot get pvc %s/%s, no relationship to this object was found", nodeName, startingNamespace, startingName)
+
+	case pvVertexType:
+		pvcs := r.graph.ReachablePVCsFromPV(startingName)
+		for _, pvc := range pvcs {
+			pods, err := r.podLister.Pods(pvc.Namespace).List(labels.Everything())
+			if err != nil {
+				continue
+			}
+			for _, pod := range pods {
+				if pod.Spec.NodeName != nodeName || isMirrorPod(pod) {
+					continue
+				}
+				if podReferencesPVC(pod, pvc.Name) {
+					return true, nil
+				}
+			}
+		}
+		return false, fmt.Errorf("node '%s' cannot get pv %s, no relationship to this object was found", nodeName, startingName)
+
+	case secretVertexType:
+		// Check direct pod secret
+		pods, err := r.podLister.Pods(startingNamespace).List(labels.Everything())
+		if err == nil {
+			for _, pod := range pods {
+				if pod.Spec.NodeName != nodeName || isMirrorPod(pod) {
+					continue
+				}
+				found := false
+				podutil.VisitPodSecretNames(pod, func(s string) bool {
+					if s == startingName {
+						found = true
+						return false
+					}
+					return true
+				})
+				if found {
+					return true, nil
+				}
+			}
+		}
+		// Check secret via PV -> PVC
+		pvcs := r.graph.ReachablePVCsFromSecret(startingNamespace, startingName)
+		for _, pvc := range pvcs {
+			pods, err := r.podLister.Pods(pvc.Namespace).List(labels.Everything())
+			if err != nil {
+				continue
+			}
+			for _, pod := range pods {
+				if pod.Spec.NodeName != nodeName || isMirrorPod(pod) {
+					continue
+				}
+				if podReferencesPVC(pod, pvc.Name) {
+					return true, nil
+				}
+			}
+		}
+		return false, fmt.Errorf("node '%s' cannot get secret %s/%s, no relationship to this object was found", nodeName, startingNamespace, startingName)
+	}
+
+	return false, fmt.Errorf("unknown vertex type %d", startingType)
+}
+
+func (r *NodeAuthorizer) hasPathFromGraph(nodeName string, startingType vertexType, startingNamespace, startingName string) (bool, error) {
 	r.graph.lock.RLock()
 	defer r.graph.lock.RUnlock()
 

@@ -82,26 +82,18 @@ func AddGraphEventHandlers(
 ) {
 	g := &graphPopulator{
 		graph:            graph,
-		podQueue:         newRateLimitingQueue("node_authorizer_pods"),
 		pvQueue:          newRateLimitingQueue("node_authorizer_persistentvolumes"),
 		attachmentQueue:  newRateLimitingQueue("node_authorizer_volumeattachments"),
-		podLister:        pods.Lister(),
 		pvLister:         pvs.Lister(),
 		attachmentLister: attachments.Lister(),
 	}
 
 	queues := []workqueue.TypedRateLimitingInterface[types.NamespacedName]{
-		g.podQueue, g.pvQueue, g.attachmentQueue,
+		g.pvQueue, g.attachmentQueue,
 	}
 	workers := []func(){
-		g.runPodWorker, g.runPVWorker, g.runAttachmentWorker,
+		g.runPVWorker, g.runAttachmentWorker,
 	}
-
-	podHandler, _ := pods.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    g.addPod,
-		UpdateFunc: g.updatePod,
-		DeleteFunc: g.deletePod,
-	})
 
 	pvsHandler, _ := pvs.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    g.addPV,
@@ -116,7 +108,20 @@ func AddGraphEventHandlers(
 	})
 
 	synced := []cache.InformerSynced{
-		podHandler.HasSynced, pvsHandler.HasSynced, attachHandler.HasSynced,
+		pvsHandler.HasSynced, attachHandler.HasSynced,
+	}
+
+	if pods != nil {
+		g.podQueue = newRateLimitingQueue("node_authorizer_pods")
+		g.podLister = pods.Lister()
+		queues = append(queues, g.podQueue)
+		workers = append(workers, g.runPodWorker)
+		podHandler, _ := pods.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+			AddFunc:    g.addPod,
+			UpdateFunc: g.updatePod,
+			DeleteFunc: g.deletePod,
+		})
+		synced = append(synced, podHandler.HasSynced)
 	}
 
 	if slices != nil {

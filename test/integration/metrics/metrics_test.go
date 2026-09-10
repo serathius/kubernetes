@@ -42,9 +42,11 @@ import (
 	restclient "k8s.io/client-go/rest"
 	featuregatetesting "k8s.io/component-base/featuregate/testing"
 	compbasemetrics "k8s.io/component-base/metrics"
+	_ "k8s.io/component-base/metrics/prometheus/clientgo"
 	"k8s.io/component-base/metrics/testutil"
 	kubeapiservertesting "k8s.io/kubernetes/cmd/kube-apiserver/app/testing"
 	"k8s.io/kubernetes/test/integration/framework"
+	"k8s.io/utils/ptr"
 )
 
 func scrapeMetrics(s *kubeapiservertesting.TestServer) (testutil.Metrics, error) {
@@ -733,4 +735,106 @@ func parseMetric(r io.Reader, name string) (*dto.MetricFamily, error) {
 		}
 	}
 	return nil, fmt.Errorf("Metric not found %q", name)
+}
+
+func TestNoPodInformerMetric(t *testing.T) {
+	flags := []string{
+		"--authorization-mode=Node,RBAC",
+		"--enable-admission-plugins=NodeRestriction,PodSecurity",
+		"--endpoint-reconciler-type=none",
+	}
+	s := kubeapiservertesting.StartTestServerOrDie(t, nil, flags, framework.SharedEtcd())
+	defer s.TearDownFn()
+
+	client := clientset.NewForConfigOrDie(s.ClientConfig)
+
+	// Create restricted namespace to exercise PodSecurity admission plugin
+	ns := &v1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "restricted-ns",
+			Labels: map[string]string{
+				"pod-security.kubernetes.io/enforce": "restricted",
+			},
+		},
+	}
+	if _, err := client.CoreV1().Namespaces().Create(context.TODO(), ns, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("unexpected error creating restricted namespace: %v", err)
+	}
+
+	for _, n := range []string{"restricted-ns", metav1.NamespaceDefault} {
+		sa := &v1.ServiceAccount{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "default",
+				Namespace: n,
+			},
+		}
+		if _, err := client.CoreV1().ServiceAccounts(n).Create(context.TODO(), sa, metav1.CreateOptions{}); err != nil {
+			t.Fatalf("unexpected error creating serviceaccount in %s: %v", n, err)
+		}
+	}
+
+	// Create a privileged pod in restricted namespace - must be rejected by PodSecurity admission
+	privilegedPod := &v1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "priv-pod",
+			Namespace: "restricted-ns",
+		},
+		Spec: v1.PodSpec{
+			Containers: []v1.Container{
+				{
+					Name:  "test-container",
+					Image: "image",
+					SecurityContext: &v1.SecurityContext{
+						Privileged: ptr.To(true),
+					},
+				},
+			},
+		},
+	}
+	if _, err := client.CoreV1().Pods("restricted-ns").Create(context.TODO(), privilegedPod, metav1.CreateOptions{}); err == nil {
+		t.Fatalf("expected error creating privileged pod in restricted namespace, got nil")
+	}
+
+	// Create a valid non-privileged pod in default namespace
+	pod := &v1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-pod",
+			Namespace: metav1.NamespaceDefault,
+		},
+		Spec: v1.PodSpec{
+			Containers: []v1.Container{
+				{
+					Name:  "test-container",
+					Image: "image",
+				},
+			},
+		},
+	}
+	if _, err := client.CoreV1().Pods(metav1.NamespaceDefault).Create(context.TODO(), pod, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("unexpected error creating pod: %v", err)
+	}
+	if _, err := client.CoreV1().Pods(metav1.NamespaceDefault).Get(context.TODO(), "test-pod", metav1.GetOptions{}); err != nil {
+		t.Fatalf("unexpected error getting pod: %v", err)
+	}
+	if _, err := client.CoreV1().Pods(metav1.NamespaceDefault).List(context.TODO(), metav1.ListOptions{}); err != nil {
+		t.Fatalf("unexpected error listing pods: %v", err)
+	}
+
+	metrics, err := scrapeMetrics(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	samples, ok := metrics["informer_store_resource_version"]
+	if !ok {
+		t.Logf("informer_store_resource_version metric not exposed at all")
+		return
+	}
+
+	for _, sample := range samples {
+		t.Logf("found informer_store_resource_version sample: %v = %v", sample.Metric, sample.Value)
+		if sample.Metric["resource"] == "pods" {
+			t.Errorf("found informer_store_resource_version for pods: %v", sample.Metric)
+		}
+	}
 }

@@ -65,6 +65,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/apiserver/pkg/endpoints/discovery"
+	genericregistry "k8s.io/apiserver/pkg/registry/generic/registry"
 	genericapiserver "k8s.io/apiserver/pkg/server"
 	serverstorage "k8s.io/apiserver/pkg/server/storage"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
@@ -83,6 +84,7 @@ import (
 	"k8s.io/kubernetes/pkg/controlplane/controller/kubernetesservice"
 	"k8s.io/kubernetes/pkg/controlplane/reconcilers"
 	"k8s.io/kubernetes/pkg/features"
+	kubeapiserveradmission "k8s.io/kubernetes/pkg/kubeapiserver/admission"
 	kubeoptions "k8s.io/kubernetes/pkg/kubeapiserver/options"
 	kubeletclient "k8s.io/kubernetes/pkg/kubelet/client"
 
@@ -180,6 +182,9 @@ type Extra struct {
 	// RepairServicesInterval interval used by the repair loops for
 	// the Services NodePort and ClusterIP resources
 	RepairServicesInterval time.Duration
+
+	// StoragePodLister is used to bind the storage-backed pod lister once pod storage is initialized.
+	StoragePodLister *kubeapiserveradmission.LazyPodLister
 }
 
 // Config defines configuration for the master
@@ -394,8 +399,16 @@ func (c CompletedConfig) New(delegationTarget genericapiserver.DelegationTarget)
 }
 
 func (c CompletedConfig) StorageProviders(client *kubernetes.Clientset) ([]controlplaneapiserver.RESTStorageProvider, error) {
+	var podStoreNotifier func(store *genericregistry.Store)
+	if c.Extra.StoragePodLister != nil {
+		podStoreNotifier = func(store *genericregistry.Store) {
+			c.Extra.StoragePodLister.SetDelegate(kubeapiserveradmission.NewStoragePodLister(store))
+		}
+	}
+
 	legacyRESTStorageProvider, err := corerest.New(corerest.Config{
-		GenericConfig: *c.ControlPlane.NewCoreGenericConfig(),
+		GenericConfig:    *c.ControlPlane.NewCoreGenericConfig(),
+		PodStoreNotifier: podStoreNotifier,
 		Proxy: corerest.ProxyConfig{
 			Transport:           c.ControlPlane.Extra.ProxyTransport,
 			KubeletClientConfig: c.Extra.KubeletClientConfig,

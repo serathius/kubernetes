@@ -220,8 +220,19 @@ func CreateKubeAPIServerConfig(
 	// global stuff
 	capabilities.Setup(opts.AllowPrivileged, opts.MaxConnectionBytesPerSec)
 
+	lazyPodLister := kubeapiserveradmission.NewLazyPodLister()
+	if opts.Authentication != nil && opts.Authentication.ServiceAccounts != nil {
+		if lazy, ok := opts.Authentication.ServiceAccounts.PodLister.(*kubeapiserveradmission.LazyPodLister); ok {
+			lazyPodLister = lazy
+		} else if opts.Authentication.ServiceAccounts.PodLister == nil {
+			opts.Authentication.ServiceAccounts.PodLister = lazyPodLister
+		}
+	}
+
 	// additional admission initializers
-	kubeAdmissionConfig := &kubeapiserveradmission.Config{}
+	kubeAdmissionConfig := &kubeapiserveradmission.Config{
+		StoragePodLister: lazyPodLister,
+	}
 	kubeInitializers, err := kubeAdmissionConfig.New()
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to create admission plugin initializer: %w", err)
@@ -244,6 +255,7 @@ func CreateKubeAPIServerConfig(
 	config := &controlplane.Config{
 		ControlPlane: *controlplaneConfig,
 		Extra: controlplane.Extra{
+			StoragePodLister:    lazyPodLister,
 			KubeletClientConfig: opts.KubeletConfig,
 
 			ServiceIPRange:          opts.PrimaryServiceClusterIPRange,
