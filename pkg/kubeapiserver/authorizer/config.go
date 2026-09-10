@@ -107,17 +107,17 @@ func (config Config) New(ctx context.Context, serverID string) (authorizer.Autho
 			}
 			node.RegisterMetrics()
 			graph := node.NewGraph()
+			podsLister := config.VersionedInformerFactory.Core().V1().Pods().Lister()
 			node.AddGraphEventHandlers(
 				ctx,
 				graph,
 				config.VersionedInformerFactory.Core().V1().Nodes(),
-				config.VersionedInformerFactory.Core().V1().Pods(),
 				config.VersionedInformerFactory.Core().V1().PersistentVolumes(),
 				config.VersionedInformerFactory.Storage().V1().VolumeAttachments(),
 				config.VersionedInformerFactory.Resource().V1().ResourceSlices(),
 				podCertificateRequestInformer,
 			)
-			r.nodeAuthorizer = node.NewAuthorizer(graph, nodeidentifier.NewDefaultNodeIdentifier(), bootstrappolicy.NodeRules())
+			r.nodeAuthorizer = node.NewAuthorizer(graph, nodeidentifier.NewDefaultNodeIdentifier(), bootstrappolicy.NodeRules(), podsLister)
 
 		case authzconfig.AuthorizerType(modes.ModeABAC):
 			var err error

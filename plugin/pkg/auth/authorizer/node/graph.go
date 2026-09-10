@@ -23,12 +23,11 @@ import (
 
 	certsv1 "k8s.io/api/certificates/v1"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/component-helpers/storage/ephemeral"
-	"k8s.io/dynamic-resource-allocation/resourceclaim"
+	"k8s.io/apimachinery/pkg/types"
 	pvutil "k8s.io/kubernetes/pkg/api/v1/persistentvolume"
-	podutil "k8s.io/kubernetes/pkg/api/v1/pod"
 	"k8s.io/kubernetes/third_party/forked/gonum/graph"
 	"k8s.io/kubernetes/third_party/forked/gonum/graph/simple"
+	"k8s.io/kubernetes/third_party/forked/gonum/graph/traverse"
 )
 
 // namedVertex implements graph.Node and remembers the type, namespace, and name of its related API object
@@ -349,92 +348,6 @@ func (g *Graph) recomputeDestinationIndexLocked(n graph.Node) {
 	g.destinationEdgeIndex[n.ID()] = index
 }
 
-// AddPod should only be called once spec.NodeName is populated.
-// It sets up edges for the following relationships (which are immutable for a pod once bound to a node):
-//
-//	pod       -> node
-//	secret    -> pod
-//	configmap -> pod
-//	pvc       -> pod
-//	svcacct   -> pod
-func (g *Graph) AddPod(pod *corev1.Pod) {
-	start := time.Now()
-	defer func() {
-		graphActionsDuration.WithLabelValues("AddPod").Observe(time.Since(start).Seconds())
-	}()
-	g.lock.Lock()
-	defer g.lock.Unlock()
-
-	g.deleteVertexLocked(podVertexType, pod.Namespace, pod.Name)
-	podVertex := g.getOrCreateVertexLocked(podVertexType, pod.Namespace, pod.Name)
-	nodeVertex := g.getOrCreateVertexLocked(nodeVertexType, "", pod.Spec.NodeName)
-	// Edge adds must be handled by addEdgeLocked instead of direct g.graph.SetEdge calls.
-	g.addEdgeLocked(podVertex, nodeVertex, nodeVertex)
-
-	// Short-circuit adding edges to other resources for mirror pods.
-	// A node must never be able to create a pod that grants them permissions on other API objects.
-	// The NodeRestriction admission plugin prevents creation of such pods, but short-circuiting here gives us defense in depth.
-	if _, isMirrorPod := pod.Annotations[corev1.MirrorPodAnnotationKey]; isMirrorPod {
-		return
-	}
-
-	// The pod unconditionally gets access to the pod's service account.  In the
-	// future, this access could be restricted based on whether or not the pod
-	// actually mounts a service account token, or has a podcertificate volume.
-	if len(pod.Spec.ServiceAccountName) > 0 {
-		serviceAccountVertex := g.getOrCreateVertexLocked(serviceAccountVertexType, pod.Namespace, pod.Spec.ServiceAccountName)
-		// Edge adds must be handled by addEdgeLocked instead of direct g.graph.SetEdge calls.
-		g.addEdgeLocked(serviceAccountVertex, podVertex, nodeVertex)
-	}
-
-	podutil.VisitPodSecretNames(pod, func(secret string) bool {
-		secretVertex := g.getOrCreateVertexLocked(secretVertexType, pod.Namespace, secret)
-		// Edge adds must be handled by addEdgeLocked instead of direct g.graph.SetEdge calls.
-		g.addEdgeLocked(secretVertex, podVertex, nodeVertex)
-		return true
-	})
-
-	podutil.VisitPodConfigmapNames(pod, func(configmap string) bool {
-		configmapVertex := g.getOrCreateVertexLocked(configMapVertexType, pod.Namespace, configmap)
-		// Edge adds must be handled by addEdgeLocked instead of direct g.graph.SetEdge calls.
-		g.addEdgeLocked(configmapVertex, podVertex, nodeVertex)
-		return true
-	})
-
-	for _, v := range pod.Spec.Volumes {
-		claimName := ""
-		if v.PersistentVolumeClaim != nil {
-			claimName = v.PersistentVolumeClaim.ClaimName
-		} else if v.Ephemeral != nil {
-			claimName = ephemeral.VolumeClaimName(pod, &v)
-		}
-		if claimName != "" {
-			pvcVertex := g.getOrCreateVertexLocked(pvcVertexType, pod.Namespace, claimName)
-			// Edge adds must be handled by addEdgeLocked instead of direct g.graph.SetEdge calls.
-			g.addEdgeLocked(pvcVertex, podVertex, nodeVertex)
-		}
-	}
-
-	for _, podResourceClaim := range pod.Spec.ResourceClaims {
-		claimName, _, err := resourceclaim.Name(pod, &podResourceClaim)
-		// Do we have a valid claim name? If yes, add an edge that grants
-		// kubelet access to that claim. An error indicates that a claim
-		// still needs to be created, nil that intentionally no claim
-		// was created and never will be because it isn't needed.
-		if err == nil && claimName != nil {
-			claimVertex := g.getOrCreateVertexLocked(resourceClaimVertexType, pod.Namespace, *claimName)
-			// Edge adds must be handled by addEdgeLocked instead of direct g.graph.SetEdge calls.
-			g.addEdgeLocked(claimVertex, podVertex, nodeVertex)
-		}
-	}
-
-	if pod.Status.ExtendedResourceClaimStatus != nil && len(pod.Status.ExtendedResourceClaimStatus.ResourceClaimName) > 0 {
-		claimVertex := g.getOrCreateVertexLocked(resourceClaimVertexType, pod.Namespace, pod.Status.ExtendedResourceClaimStatus.ResourceClaimName)
-		// Edge adds must be handled by addEdgeLocked instead of direct g.graph.SetEdge calls.
-		g.addEdgeLocked(claimVertex, podVertex, nodeVertex)
-	}
-}
-
 // Must be called under a write lock.
 // All edge adds must be handled by that method rather than by calling
 // g.graph.SetEdge directly.
@@ -455,16 +368,6 @@ func (g *Graph) addEdgeLocked(from, to, destination *namedVertex) {
 		panic(fmt.Sprintf("vertex of type %q must have destination edges only", vertexTypes[from.vertexType]))
 	}
 	g.graph.SetEdge(simple.Edge{F: from, T: to})
-}
-
-func (g *Graph) DeletePod(name, namespace string) {
-	start := time.Now()
-	defer func() {
-		graphActionsDuration.WithLabelValues("DeletePod").Observe(time.Since(start).Seconds())
-	}()
-	g.lock.Lock()
-	defer g.lock.Unlock()
-	g.deleteVertexLocked(podVertexType, namespace, name)
 }
 
 // AddPodCertificateRequest adds a PodCertificateRequest to the graph.
@@ -609,4 +512,49 @@ func (g *Graph) DeleteResourceSlice(sliceName string) {
 	g.lock.Lock()
 	defer g.lock.Unlock()
 	g.deleteVertexLocked(sliceVertexType, "", sliceName)
+}
+
+// ReachablePVCsFromSecret returns a list of PVCs (namespace and name) that are reachable from the secret in the graph.
+func (g *Graph) ReachablePVCsFromSecret(secretNamespace, secretName string) []types.NamespacedName {
+	g.lock.RLock()
+	defer g.lock.RUnlock()
+
+	secretVertex, exists := g.getVertexRLocked(secretVertexType, secretNamespace, secretName)
+	if !exists {
+		return nil
+	}
+
+	var pvcs []types.NamespacedName
+	traversal := &traverse.VisitingDepthFirst{
+		EdgeFilter: func(edge graph.Edge) bool {
+			return true
+		},
+	}
+	traversal.Walk(g.graph, secretVertex, func(n graph.Node) bool {
+		if v, ok := n.(*namedVertex); ok && v.vertexType == pvcVertexType {
+			pvcs = append(pvcs, types.NamespacedName{Namespace: v.namespace, Name: v.name})
+		}
+		return false
+	})
+	return pvcs
+}
+
+// ReachablePVCsFromPV returns a list of PVCs (namespace and name) that are reachable from the PV in the graph.
+func (g *Graph) ReachablePVCsFromPV(pvName string) []types.NamespacedName {
+	g.lock.RLock()
+	defer g.lock.RUnlock()
+
+	pvVertex, exists := g.getVertexRLocked(pvVertexType, "", pvName)
+	if !exists {
+		return nil
+	}
+
+	var pvcs []types.NamespacedName
+	g.graph.VisitFrom(pvVertex, func(neighbor graph.Node) bool {
+		if v, ok := neighbor.(*namedVertex); ok && v.vertexType == pvcVertexType {
+			pvcs = append(pvcs, types.NamespacedName{Namespace: v.namespace, Name: v.name})
+		}
+		return true
+	})
+	return pvcs
 }

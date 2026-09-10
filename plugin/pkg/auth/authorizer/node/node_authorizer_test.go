@@ -67,10 +67,10 @@ func TestNodeAuthorizer(t *testing.T) {
 		podCertificateRequestsPerPod:                2,
 	}
 	nodes, pods, pvs, attachments, slices, pcrs := generate(opts)
-	populate(g, nodes, pods, pvs, attachments, slices, pcrs)
+	podLister := populate(g, nodes, pods, pvs, attachments, slices, pcrs)
 
 	identifier := nodeidentifier.NewDefaultNodeIdentifier()
-	authz := NewAuthorizer(g, identifier, bootstrappolicy.NodeRules())
+	authz := NewAuthorizer(g, identifier, bootstrappolicy.NodeRules(), podLister)
 
 	node0 := &user.DefaultInfo{Name: "system:node:node0", Groups: []string{"system:nodes"}}
 
@@ -916,14 +916,13 @@ func TestNodeAuthorizer(t *testing.T) {
 func TestNodeAuthorizerSharedResources(t *testing.T) {
 	g := NewGraph()
 	g.destinationEdgeThreshold = 1
+	p := newTestGraphPopulator(g)
 	identifier := nodeidentifier.NewDefaultNodeIdentifier()
-	authz := NewAuthorizer(g, identifier, bootstrappolicy.NodeRules())
+	authz := NewAuthorizer(g, identifier, bootstrappolicy.NodeRules(), p.podLister)
 
 	node1 := &user.DefaultInfo{Name: "system:node:node1", Groups: []string{"system:nodes"}}
 	node2 := &user.DefaultInfo{Name: "system:node:node2", Groups: []string{"system:nodes"}}
 	node3 := &user.DefaultInfo{Name: "system:node:node3", Groups: []string{"system:nodes"}}
-
-	p := newTestGraphPopulator(g)
 
 	p.addPod(&corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "pod1-node1", Namespace: "ns1", UID: types.UID("uid1")},
@@ -1032,19 +1031,15 @@ func TestNodeAuthorizerSharedResources(t *testing.T) {
 }
 
 type testGraphPopulator struct {
-	*graphPopulator
-	indexer cache.Indexer
+	indexer   cache.Indexer
+	podLister corev1listers.PodLister
 }
 
-func newTestGraphPopulator(g *Graph) *testGraphPopulator {
+func newTestGraphPopulator(_ *Graph) *testGraphPopulator {
 	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
 	return &testGraphPopulator{
-		graphPopulator: &graphPopulator{
-			graph:     g,
-			podQueue:  newRateLimitingQueue("test_node_authorizer_pod_populator"),
-			podLister: corev1listers.NewPodLister(indexer),
-		},
-		indexer: indexer,
+		indexer:   indexer,
+		podLister: corev1listers.NewPodLister(indexer),
 	}
 }
 
@@ -1052,29 +1047,20 @@ func (p *testGraphPopulator) addPod(pod *corev1.Pod) {
 	if err := p.indexer.Add(pod); err != nil {
 		panic(err)
 	}
-	p.graphPopulator.addPod(pod)
-	p.drainQueue()
 }
 
-func (p *testGraphPopulator) updatePod(oldPod, newPod *corev1.Pod) {
-	if err := p.indexer.Add(newPod); err != nil {
+func (p *testGraphPopulator) updatePod(_, newPod *corev1.Pod) {
+	if err := p.indexer.Update(newPod); err != nil {
 		panic(err)
-	}
-	p.graphPopulator.updatePod(oldPod, newPod)
-	p.drainQueue()
-}
-
-func (p *testGraphPopulator) drainQueue() {
-	for p.podQueue.Len() > 0 {
-		processNextWorkItem(p.podQueue, p.processPodKey)
 	}
 }
 
 func TestNodeAuthorizerAddEphemeralContainers(t *testing.T) {
 	g := NewGraph()
 	g.destinationEdgeThreshold = 1
+	p := newTestGraphPopulator(g)
 	identifier := nodeidentifier.NewDefaultNodeIdentifier()
-	authz := NewAuthorizer(g, identifier, bootstrappolicy.NodeRules())
+	authz := NewAuthorizer(g, identifier, bootstrappolicy.NodeRules(), p.podLister)
 
 	node1 := &user.DefaultInfo{Name: "system:node:node1", Groups: []string{"system:nodes"}}
 	pod := &corev1.Pod{
@@ -1130,7 +1116,6 @@ func TestNodeAuthorizerAddEphemeralContainers(t *testing.T) {
 			},
 		},
 	}
-	p := newTestGraphPopulator(g)
 	p.addPod(pod)
 
 	testcases := []struct {
@@ -1197,8 +1182,9 @@ func TestNodeAuthorizerAddEphemeralContainers(t *testing.T) {
 // to the authorization graph.
 func TestNodeAuthorizerUpdateExtendedResourceClaim(t *testing.T) {
 	g := NewGraph()
+	p := newTestGraphPopulator(g)
 	identifier := nodeidentifier.NewDefaultNodeIdentifier()
-	authz := NewAuthorizer(g, identifier, bootstrappolicy.NodeRules())
+	authz := NewAuthorizer(g, identifier, bootstrappolicy.NodeRules(), p.podLister)
 
 	node1 := &user.DefaultInfo{Name: "system:node:node1", Groups: []string{"system:nodes"}}
 
@@ -1229,7 +1215,6 @@ func TestNodeAuthorizerUpdateExtendedResourceClaim(t *testing.T) {
 		},
 	}
 
-	p := newTestGraphPopulator(g)
 	p.addPod(pod)
 
 	// Before the scheduler swaps the synthesized claim name, extended-claim-1
@@ -1431,7 +1416,7 @@ func BenchmarkWriteIndexMaintenance(b *testing.B) {
 	b.SetParallelism(100)
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			g.AddPod(pods[0])
+			g.AddPV(pvs[0])
 		}
 	})
 }
@@ -1448,24 +1433,22 @@ func BenchmarkUnauthorizedRequests(b *testing.B) {
 		sharedConfigMapsPerPod: 1,
 	}
 	nodes, pods, pvs, attachments, slices, pcrs := generate(opts)
+	nsName := pods[0].Namespace
 
-	// Create an additional Node that doesn't have access to a shared ConfigMap
-	// that all the other Nodes are authorized to read.
+	additionalNode := &user.DefaultInfo{Name: "system:node:nodeX", Groups: []string{"system:nodes"}}
 	additionalNodeName := "nodeX"
-	nsName := "ns0"
-	additionalNode := &user.DefaultInfo{Name: fmt.Sprintf("system:node:%s", additionalNodeName), Groups: []string{"system:nodes"}}
-	pod := &corev1.Pod{}
-	pod.Name = "pod-X"
-	pod.Namespace = nsName
+	nodes = append(nodes, &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: additionalNodeName}})
+	pod := pods[0].DeepCopy()
+	pod.Name = "podX"
 	pod.Spec.NodeName = additionalNodeName
 	pod.Spec.ServiceAccountName = "svcacct-X"
 	pods = append(pods, pod)
 
 	g := NewGraph()
-	populate(g, nodes, pods, pvs, attachments, slices, pcrs)
+	podLister := populate(g, nodes, pods, pvs, attachments, slices, pcrs)
 
 	identifier := nodeidentifier.NewDefaultNodeIdentifier()
-	authz := NewAuthorizer(g, identifier, bootstrappolicy.NodeRules())
+	authz := NewAuthorizer(g, identifier, bootstrappolicy.NodeRules(), podLister)
 
 	attrs := authorizer.AttributesRecord{User: additionalNode, ResourceRequest: true, Verb: "get", Resource: "configmaps", Name: "configmap0-shared", Namespace: nsName}
 
@@ -1500,10 +1483,10 @@ func BenchmarkAuthorization(b *testing.B) {
 		uniquePVCsPerPod:       1,
 	}
 	nodes, pods, pvs, attachments, slices, pcrs := generate(opts)
-	populate(g, nodes, pods, pvs, attachments, slices, pcrs)
+	podLister := populate(g, nodes, pods, pvs, attachments, slices, pcrs)
 
 	identifier := nodeidentifier.NewDefaultNodeIdentifier()
-	authz := NewAuthorizer(g, identifier, bootstrappolicy.NodeRules())
+	authz := NewAuthorizer(g, identifier, bootstrappolicy.NodeRules(), podLister)
 
 	node0 := &user.DefaultInfo{Name: "system:node:node0", Groups: []string{"system:nodes"}}
 
@@ -1565,8 +1548,6 @@ func BenchmarkAuthorization(b *testing.B) {
 		},
 	}
 
-	podToAdd, _, _ := generatePod("testwrite", "ns0", "node0", "default", opts, rand.Perm)
-
 	b.ResetTimer()
 	for _, testWriteContention := range []bool{false, true} {
 
@@ -1590,7 +1571,7 @@ func BenchmarkAuthorization(b *testing.B) {
 				for shouldWrite == 1 {
 					go func() {
 						start := time.Now()
-						authz.graph.AddPod(podToAdd)
+						authz.graph.AddPV(pvs[0])
 						diff := time.Since(start)
 						atomic.AddInt64(&writes, 1)
 						switch {
@@ -1649,11 +1630,14 @@ func BenchmarkAuthorization(b *testing.B) {
 	}
 }
 
-func populate(graph *Graph, nodes []*corev1.Node, pods []*corev1.Pod, pvs []*corev1.PersistentVolume, attachments []*storagev1.VolumeAttachment, slices []*resourceapi.ResourceSlice, pcrs []*certsv1.PodCertificateRequest) {
+func populate(graph *Graph, nodes []*corev1.Node, pods []*corev1.Pod, pvs []*corev1.PersistentVolume, attachments []*storagev1.VolumeAttachment, slices []*resourceapi.ResourceSlice, pcrs []*certsv1.PodCertificateRequest) corev1listers.PodLister {
 	p := &graphPopulator{}
 	p.graph = graph
+	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
 	for _, pod := range pods {
-		p.processAddOrUpdatePod(pod)
+		if err := indexer.Add(pod); err != nil {
+			panic(err)
+		}
 	}
 	for _, pv := range pvs {
 		p.processAddOrUpdatePV(pv)
@@ -1667,6 +1651,7 @@ func populate(graph *Graph, nodes []*corev1.Node, pods []*corev1.Pod, pvs []*cor
 	for _, pcr := range pcrs {
 		p.processAddPCR(pcr)
 	}
+	return corev1listers.NewPodLister(indexer)
 }
 
 func randomSubset(a, b int, randPerm func(int) []int) []int {

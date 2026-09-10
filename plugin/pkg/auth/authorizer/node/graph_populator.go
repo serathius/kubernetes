@@ -40,7 +40,6 @@ import (
 	storagev1listers "k8s.io/client-go/listers/storage/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
-	"k8s.io/dynamic-resource-allocation/resourceclaim"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
 )
@@ -48,13 +47,11 @@ import (
 type graphPopulator struct {
 	graph *Graph
 
-	podQueue        workqueue.TypedRateLimitingInterface[types.NamespacedName]
 	pvQueue         workqueue.TypedRateLimitingInterface[types.NamespacedName]
 	attachmentQueue workqueue.TypedRateLimitingInterface[types.NamespacedName]
 	sliceQueue      workqueue.TypedRateLimitingInterface[types.NamespacedName]
 	pcrQueue        workqueue.TypedRateLimitingInterface[types.NamespacedName]
 
-	podLister        corev1listers.PodLister
 	pvLister         corev1listers.PersistentVolumeLister
 	attachmentLister storagev1listers.VolumeAttachmentLister
 	sliceLister      resourcev1listers.ResourceSliceLister
@@ -74,7 +71,6 @@ func AddGraphEventHandlers(
 	ctx context.Context,
 	graph *Graph,
 	nodes corev1informers.NodeInformer,
-	pods corev1informers.PodInformer,
 	pvs corev1informers.PersistentVolumeInformer,
 	attachments storageinformers.VolumeAttachmentInformer,
 	slices resourceinformers.ResourceSliceInformer,
@@ -82,28 +78,20 @@ func AddGraphEventHandlers(
 ) {
 	g := &graphPopulator{
 		graph:            graph,
-		podQueue:         newRateLimitingQueue("node_authorizer_pods"),
 		pvQueue:          newRateLimitingQueue("node_authorizer_persistentvolumes"),
 		attachmentQueue:  newRateLimitingQueue("node_authorizer_volumeattachments"),
 		sliceQueue:       newRateLimitingQueue("node_authorizer_resourceslices"),
-		podLister:        pods.Lister(),
 		pvLister:         pvs.Lister(),
 		attachmentLister: attachments.Lister(),
 		sliceLister:      slices.Lister(),
 	}
 
 	queues := []workqueue.TypedRateLimitingInterface[types.NamespacedName]{
-		g.podQueue, g.pvQueue, g.attachmentQueue, g.sliceQueue,
+		g.pvQueue, g.attachmentQueue, g.sliceQueue,
 	}
 	workers := []func(){
-		g.runPodWorker, g.runPVWorker, g.runAttachmentWorker, g.runSliceWorker,
+		g.runPVWorker, g.runAttachmentWorker, g.runSliceWorker,
 	}
-
-	podHandler, _ := pods.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    g.addPod,
-		UpdateFunc: g.updatePod,
-		DeleteFunc: g.deletePod,
-	})
 
 	pvsHandler, _ := pvs.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    g.addPV,
@@ -124,7 +112,7 @@ func AddGraphEventHandlers(
 	})
 
 	synced := []cache.InformerSynced{
-		podHandler.HasSynced, pvsHandler.HasSynced, attachHandler.HasSynced, sliceHandler.HasSynced,
+		pvsHandler.HasSynced, attachHandler.HasSynced, sliceHandler.HasSynced,
 	}
 
 	if pcrs != nil {
@@ -152,54 +140,6 @@ func AddGraphEventHandlers(
 	}
 
 	go cache.WaitForNamedCacheSync("node_authorizer", ctx.Done(), synced...)
-}
-
-func (g *graphPopulator) addPod(obj interface{}) {
-	g.updatePod(nil, obj)
-}
-
-func (g *graphPopulator) updatePod(oldObj, obj interface{}) {
-	pod, ok := obj.(*corev1.Pod)
-	if !ok {
-		klog.Infof("unexpected type %T", obj)
-		return
-	}
-	if len(pod.Spec.NodeName) == 0 {
-		// No node assigned
-		klog.V(5).Infof("updatePod %s/%s, no node", pod.Namespace, pod.Name)
-		return
-	}
-	if oldPod, ok := oldObj.(*corev1.Pod); ok && oldPod != nil {
-		// Ephemeral containers can add new secret or config map references to the pod.
-		hasNewEphemeralContainers := len(pod.Spec.EphemeralContainers) > len(oldPod.Spec.EphemeralContainers)
-		if (pod.Spec.NodeName == oldPod.Spec.NodeName) && (pod.UID == oldPod.UID) &&
-			!hasNewEphemeralContainers &&
-			resourceclaim.PodStatusEqual(oldPod.Status.ResourceClaimStatuses, pod.Status.ResourceClaimStatuses) &&
-			resourceclaim.PodExtendedStatusEqual(oldPod.Status.ExtendedResourceClaimStatus, pod.Status.ExtendedResourceClaimStatus) {
-			// Node and uid are unchanged, all object references in the pod spec are immutable respectively unmodified (claim statuses).
-			klog.V(5).Infof("updatePod %s/%s, node unchanged", pod.Namespace, pod.Name)
-			return
-		}
-	}
-
-	g.podQueue.Add(types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name})
-}
-
-func (g *graphPopulator) deletePod(obj interface{}) {
-	if tombstone, ok := obj.(cache.DeletedFinalStateUnknown); ok {
-		obj = tombstone.Obj
-	}
-	pod, ok := obj.(*corev1.Pod)
-	if !ok {
-		klog.Infof("unexpected type %T", obj)
-		return
-	}
-	if len(pod.Spec.NodeName) == 0 {
-		klog.V(5).Infof("deletePod %s/%s, no node", pod.Namespace, pod.Name)
-		return
-	}
-
-	g.podQueue.Add(types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name})
 }
 
 func (g *graphPopulator) addPV(obj interface{}) {
@@ -324,23 +264,6 @@ func processNextWorkItem(queue workqueue.TypedRateLimitingInterface[types.Namesp
 	return true
 }
 
-func (g *graphPopulator) runPodWorker() {
-	runWorker(g.podQueue, g.processPodKey)
-}
-
-func (g *graphPopulator) processPodKey(key types.NamespacedName) error {
-	pod, err := g.podLister.Pods(key.Namespace).Get(key.Name)
-	if err != nil {
-		if errors.IsNotFound(err) {
-			g.processDeletePod(key.Name, key.Namespace)
-			return nil
-		}
-		return err
-	}
-	g.processAddOrUpdatePod(pod)
-	return nil
-}
-
 func (g *graphPopulator) runPVWorker() {
 	runWorker(g.pvQueue, g.processPVKey)
 }
@@ -410,20 +333,6 @@ func (g *graphPopulator) processPCRKey(key types.NamespacedName) error {
 	}
 	g.processAddPCR(pcr)
 	return nil
-}
-
-func (g *graphPopulator) processDeletePod(name, namespace string) {
-	klog.V(4).Infof("deletePod %s/%s", namespace, name)
-	startTime := time.Now()
-	g.graph.DeletePod(name, namespace)
-	klog.V(5).Infof("deletePod %s/%s completed in %v", namespace, name, time.Since(startTime))
-}
-
-func (g *graphPopulator) processAddOrUpdatePod(pod *corev1.Pod) {
-	klog.V(4).Infof("updatePod %s/%s for node %s", pod.Namespace, pod.Name, pod.Spec.NodeName)
-	startTime := time.Now()
-	g.graph.AddPod(pod)
-	klog.V(5).Infof("updatePod %s/%s for node %s completed in %v", pod.Namespace, pod.Name, pod.Spec.NodeName, time.Since(startTime))
 }
 
 func (g *graphPopulator) processDeletePV(name string) {
