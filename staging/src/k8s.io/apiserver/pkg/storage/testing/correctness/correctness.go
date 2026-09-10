@@ -20,12 +20,15 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apiserver/pkg/apis/example"
 	"k8s.io/apiserver/pkg/storage"
 )
@@ -256,10 +259,25 @@ func correctnessTestSteps() []testStep {
 }
 
 // RunTestCorrectness executes the operations from the sequential storage model against real storage
-// and validates that every transition matches the StorageModel specification.
+// and validates that every transition matches the StorageModel specification and watch guarantees.
 func RunTestCorrectness(ctx context.Context, t *testing.T, store storage.Interface, storagePrefix string) {
 	model := NewEmptyModel(storagePrefix)
 
+	// Start background watchers to validate watch stream guarantees against real storage.
+	wAll, err := NewWatchRecorder(ctx, store, "/pods/", storage.ListOptions{ResourceVersion: "1"})
+	require.NoError(t, err)
+	defer wAll.Stop()
+
+	predPod1 := CreatePodPredicate(nil, fields.OneTermEqualSelector("metadata.name", "pod1"))
+	wPod1, err := NewWatchRecorder(ctx, store, "/pods/", storage.ListOptions{ResourceVersion: "1", Predicate: predPod1})
+	require.NoError(t, err)
+	defer wPod1.Stop()
+
+	wFrom2, err := NewWatchRecorder(ctx, store, "/pods/", storage.ListOptions{ResourceVersion: "2"})
+	require.NoError(t, err)
+	defer wFrom2.Stop()
+
+	var executedOps []Operation
 	for _, step := range correctnessTestSteps() {
 		out := &example.Pod{}
 		var err error
@@ -278,6 +296,11 @@ func RunTestCorrectness(ctx context.Context, t *testing.T, store storage.Interfa
 			respObj = out
 		}
 		resp := Response{Object: respObj, Err: err}
+		executedOps = append(executedOps, Operation{
+			Request:  step.Request,
+			Response: resp,
+		})
+
 		ok, next := model.Step(step.Request, resp)
 		if respObj != nil {
 			acc, _ := meta.Accessor(respObj)
@@ -288,6 +311,20 @@ func RunTestCorrectness(ctx context.Context, t *testing.T, store storage.Interfa
 		require.True(t, ok, "step %s failed to match model state transition: req=%+v resp=%+v", step.Name, step.Request, resp)
 		model = next
 	}
+
+	// Wait for watchers to observe all expected mutating events.
+	_ = wait.PollUntilContextTimeout(ctx, 10*time.Millisecond, 2*time.Second, true, func(ctx context.Context) (bool, error) {
+		return len(wAll.Events()) >= 4 && len(wPod1.Events()) >= 2 && len(wFrom2.Events()) >= 3, nil
+	})
+
+	wAll.Stop()
+	wPod1.Stop()
+	wFrom2.Stop()
+
+	history := NewWatchHistory(executedOps, store.Versioner())
+	ValidateWatchGuarantees(t, store.Versioner(), history, wAll.RecordedWatch("watch-all", "/pods/"))
+	ValidateWatchGuarantees(t, store.Versioner(), history, wPod1.RecordedWatch("watch-pod1", "/pods/"))
+	ValidateWatchGuarantees(t, store.Versioner(), history, wFrom2.RecordedWatch("watch-from-2", "/pods/"))
 }
 
 func newTestPod(name, namespace string, uid types.UID, rv string) *example.Pod {
