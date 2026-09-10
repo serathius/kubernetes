@@ -20,10 +20,12 @@ import (
 	"k8s.io/apiserver/pkg/admission"
 )
 
-// Config holds the configuration needed to for initialize the admission plugins
-type Config struct{}
+// Config holds the configuration needed for initializing the admission plugins
+type Config struct {
+	StoragePodLister *LazyPodLister
+}
 
 // New sets up the plugins and admission start hooks needed for admission
 func (c *Config) New() ([]admission.PluginInitializer, error) {
-	return []admission.PluginInitializer{NewPluginInitializer()}, nil
+	return []admission.PluginInitializer{NewPluginInitializer(c.StoragePodLister)}, nil
 }

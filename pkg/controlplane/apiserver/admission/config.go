@@ -27,6 +27,7 @@ import (
 	"k8s.io/apiserver/pkg/server/storage"
 	"k8s.io/apiserver/pkg/util/webhook"
 	externalinformers "k8s.io/client-go/informers"
+	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/rest"
 	"k8s.io/kubernetes/pkg/kubeapiserver/admission/exclusion"
 	quotainstall "k8s.io/kubernetes/pkg/quota/v1/install"
@@ -37,6 +38,7 @@ type Config struct {
 	LoopbackClientConfig *rest.Config
 	ExternalInformers    externalinformers.SharedInformerFactory
 	APIResourceConfig    storage.APIResourceConfigSource
+	PodLister            corev1listers.PodLister
 }
 
 // New sets up the plugins and admission start hooks needed for admission
@@ -44,7 +46,7 @@ func (c *Config) New(proxyTransport *http.Transport, egressSelector *egressselec
 	webhookAuthResolverWrapper := webhook.NewDefaultAuthenticationInfoResolverWrapper(proxyTransport, egressSelector, c.LoopbackClientConfig, tp)
 	webhookPluginInitializer := webhookinit.NewPluginInitializer(webhookAuthResolverWrapper, serviceResolver)
 
-	quotaConfiguration, err := quotainstall.NewQuotaConfigurationForAdmission(c.ExternalInformers, c.APIResourceConfig)
+	quotaConfiguration, err := quotainstall.NewQuotaConfigurationForAdmission(c.ExternalInformers, c.APIResourceConfig, c.PodLister)
 	if err != nil {
 		return nil, err
 	}

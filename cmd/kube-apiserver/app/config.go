@@ -28,6 +28,7 @@ import (
 	"k8s.io/kubernetes/pkg/controlplane"
 	controlplaneapiserver "k8s.io/kubernetes/pkg/controlplane/apiserver"
 	generatedopenapi "k8s.io/kubernetes/pkg/generated/openapi"
+	kubeapiserveradmission "k8s.io/kubernetes/pkg/kubeapiserver/admission"
 )
 
 type Config struct {
@@ -74,6 +75,11 @@ func (c *Config) Complete() (CompletedConfig, error) {
 func NewConfig(opts options.CompletedOptions) (*Config, error) {
 	c := &Config{
 		Options: opts,
+	}
+
+	lazyPodLister := kubeapiserveradmission.NewLazyPodLister()
+	if opts.Authentication != nil && opts.Authentication.ServiceAccounts != nil && opts.Authentication.ServiceAccounts.PodLister == nil {
+		opts.Authentication.ServiceAccounts.PodLister = lazyPodLister
 	}
 
 	genericConfig, versionedInformers, storageFactory, err := controlplaneapiserver.BuildGenericConfig(

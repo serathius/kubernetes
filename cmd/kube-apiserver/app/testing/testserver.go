@@ -35,6 +35,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -55,12 +56,14 @@ import (
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/client-go/kubernetes"
 	restclient "k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/cert"
 	"k8s.io/client-go/util/keyutil"
 	basecompatibility "k8s.io/component-base/compatibility"
 	"k8s.io/component-base/featuregate"
 	featuregatetesting "k8s.io/component-base/featuregate/testing"
 	logsapi "k8s.io/component-base/logs/api/v1"
+	_ "k8s.io/component-base/metrics/prometheus/clientgo"
 	zpagesfeatures "k8s.io/component-base/zpages/features"
 	"k8s.io/klog/v2"
 	"k8s.io/kube-aggregator/pkg/apiserver"
@@ -157,6 +160,8 @@ func NewDefaultTestServerOptions() *TestServerInstanceOptions {
 	}
 }
 
+var testServerInformerCount atomic.Uint64
+
 // StartTestServer starts a etcd server and kube-apiserver. A rest client config and a tear-down func,
 // and location of the tmpdir are returned.
 //
@@ -239,6 +244,11 @@ func StartTestServer(t ktesting.TB, instanceOptions *TestServerInstanceOptions, 
 	}
 
 	s := options.NewServerRunOptions()
+	informerName, err := cache.NewInformerName(fmt.Sprintf("kube-apiserver-%d", testServerInformerCount.Add(1)))
+	if err != nil {
+		return result, err
+	}
+	s.InformerName = informerName
 	if !effectiveVersion.BinaryVersion().EqualTo(effectiveVersion.EmulationVersion()) {
 		// Allow new APIs because features might be enabled explicitly which depend
 		// some API which gets disabled when emulating versions.
@@ -561,6 +571,9 @@ func StartTestServer(t ktesting.TB, instanceOptions *TestServerInstanceOptions, 
 	var tearDownOnce sync.Once
 	tearDownAll := func(cause error) {
 		defer func() {
+			if s.InformerName != nil {
+				s.InformerName.Release()
+			}
 			if err := etcdClient.Close(); err != nil {
 				tCtx.Errorf("Failed to close etcd client: %v", err)
 			}

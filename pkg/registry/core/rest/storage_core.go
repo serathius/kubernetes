@@ -30,6 +30,7 @@ import (
 	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/apiserver/pkg/authorization/authorizer"
 	"k8s.io/apiserver/pkg/registry/generic"
+	genericregistry "k8s.io/apiserver/pkg/registry/generic/registry"
 	"k8s.io/apiserver/pkg/registry/rest"
 	genericapiserver "k8s.io/apiserver/pkg/server"
 	serverstorage "k8s.io/apiserver/pkg/server/storage"
@@ -77,6 +78,9 @@ type Config struct {
 
 	EndpointSliceGetter proxy.EndpointSliceGetter
 	Authorizer          authorizer.Authorizer
+
+	// PodStoreNotifier is invoked with the pod storage store once initialized.
+	PodStoreNotifier func(store *genericregistry.Store)
 }
 
 type ProxyConfig struct {
@@ -205,6 +209,10 @@ func (p *legacyProvider) NewRESTStorage(apiResourceConfigSource serverstorage.AP
 	)
 	if err != nil {
 		return genericapiserver.APIGroupInfo{}, err
+	}
+
+	if p.PodStoreNotifier != nil {
+		p.PodStoreNotifier(podStorage.Pod.Store)
 	}
 
 	serviceRESTStorage, serviceStatusStorage, serviceRESTProxy, err := servicestore.NewREST(

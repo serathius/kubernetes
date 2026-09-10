@@ -48,6 +48,7 @@ import (
 	"k8s.io/kubernetes/pkg/apis/apps"
 	"k8s.io/kubernetes/pkg/apis/batch"
 	"k8s.io/kubernetes/pkg/apis/core"
+	kubeapiserveradmission "k8s.io/kubernetes/pkg/kubeapiserver/admission"
 	podsecurityadmission "k8s.io/pod-security-admission/admission"
 	podsecurityconfigloader "k8s.io/pod-security-admission/admission/api/load"
 	podsecurityadmissionapi "k8s.io/pod-security-admission/api"
@@ -72,9 +73,11 @@ type Plugin struct {
 	inspectedEffectiveVersion bool
 	emulationVersion          *podsecurityadmissionapi.Version
 
-	client          kubernetes.Interface
-	namespaceLister corev1listers.NamespaceLister
-	podLister       corev1listers.PodLister
+	client           kubernetes.Interface
+	informerFactory  informers.SharedInformerFactory
+	namespaceLister  corev1listers.NamespaceLister
+	podLister        corev1listers.PodLister
+	storagePodLister podsecurityadmission.PodLister
 
 	delegate *podsecurityadmission.Admission
 }
@@ -82,6 +85,7 @@ type Plugin struct {
 var _ admission.ValidationInterface = &Plugin{}
 var _ genericadmissioninit.WantsExternalKubeInformerFactory = &Plugin{}
 var _ genericadmissioninit.WantsExternalKubeClientSet = &Plugin{}
+var _ kubeapiserveradmission.WantsStoragePodLister = &Plugin{}
 
 var (
 	defaultRecorder     *metrics.PrometheusRecorder
@@ -114,11 +118,17 @@ func newPlugin(reader io.Reader) (*Plugin, error) {
 	}, nil
 }
 
+// SetStoragePodLister sets the storage-backed pod lister.
+func (p *Plugin) SetStoragePodLister(lister podsecurityadmission.PodLister) {
+	p.storagePodLister = lister
+	p.updateDelegate()
+}
+
 // SetExternalKubeInformerFactory registers an informer
 func (p *Plugin) SetExternalKubeInformerFactory(f informers.SharedInformerFactory) {
+	p.informerFactory = f
 	namespaceInformer := f.Core().V1().Namespaces()
 	p.namespaceLister = namespaceInformer.Lister()
-	p.podLister = f.Core().V1().Pods().Lister()
 	p.SetReadyFunc(namespaceInformer.Informer().HasSynced)
 	p.updateDelegate()
 }
@@ -134,7 +144,7 @@ func (p *Plugin) updateDelegate() {
 	if p.namespaceLister == nil {
 		return
 	}
-	if p.podLister == nil {
+	if p.podLister == nil && p.storagePodLister == nil {
 		return
 	}
 	if p.client == nil {
@@ -144,7 +154,11 @@ func (p *Plugin) updateDelegate() {
 		return
 	}
 	if p.delegate.PodLister == nil {
-		p.delegate.PodLister = podsecurityadmission.PodListerFromInformer(p.podLister)
+		if p.storagePodLister != nil {
+			p.delegate.PodLister = p.storagePodLister
+		} else if p.podLister != nil {
+			p.delegate.PodLister = podsecurityadmission.PodListerFromInformer(p.podLister)
+		}
 	}
 	if p.delegate.NamespaceGetter == nil {
 		p.delegate.NamespaceGetter = podsecurityadmission.NamespaceGetterFromListerAndClient(p.namespaceLister, p.client)
@@ -171,6 +185,10 @@ func (p *Plugin) InspectEffectiveVersion(version compatibility.EffectiveVersion)
 
 // ValidateInitialization ensures all required options are set
 func (p *Plugin) ValidateInitialization() error {
+	if p.storagePodLister == nil && p.podLister == nil && p.informerFactory != nil {
+		p.podLister = p.informerFactory.Core().V1().Pods().Lister()
+		p.updateDelegate()
+	}
 	if !p.inspectedEffectiveVersion {
 		return fmt.Errorf("%s did not see effective version", PluginName)
 	}

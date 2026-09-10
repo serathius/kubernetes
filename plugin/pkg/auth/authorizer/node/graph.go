@@ -23,12 +23,14 @@ import (
 
 	certsv1 "k8s.io/api/certificates/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/component-helpers/storage/ephemeral"
 	"k8s.io/dynamic-resource-allocation/resourceclaim"
 	pvutil "k8s.io/kubernetes/pkg/api/v1/persistentvolume"
 	podutil "k8s.io/kubernetes/pkg/api/v1/pod"
 	"k8s.io/kubernetes/third_party/forked/gonum/graph"
 	"k8s.io/kubernetes/third_party/forked/gonum/graph/simple"
+	"k8s.io/kubernetes/third_party/forked/gonum/graph/traverse"
 )
 
 // namedVertex implements graph.Node and remembers the type, namespace, and name of its related API object
@@ -609,4 +611,49 @@ func (g *Graph) DeleteResourceSlice(sliceName string) {
 	g.lock.Lock()
 	defer g.lock.Unlock()
 	g.deleteVertexLocked(sliceVertexType, "", sliceName)
+}
+
+// ReachablePVCsFromSecret returns a list of PVCs (namespace and name) that are reachable from the secret in the graph.
+func (g *Graph) ReachablePVCsFromSecret(secretNamespace, secretName string) []types.NamespacedName {
+	g.lock.RLock()
+	defer g.lock.RUnlock()
+
+	secretVertex, exists := g.getVertexRLocked(secretVertexType, secretNamespace, secretName)
+	if !exists {
+		return nil
+	}
+
+	var pvcs []types.NamespacedName
+	traversal := &traverse.VisitingDepthFirst{
+		EdgeFilter: func(edge graph.Edge) bool {
+			return true
+		},
+	}
+	traversal.Walk(g.graph, secretVertex, func(n graph.Node) bool {
+		if v, ok := n.(*namedVertex); ok && v.vertexType == pvcVertexType {
+			pvcs = append(pvcs, types.NamespacedName{Namespace: v.namespace, Name: v.name})
+		}
+		return false
+	})
+	return pvcs
+}
+
+// ReachablePVCsFromPV returns a list of PVCs (namespace and name) that are reachable from the PV in the graph.
+func (g *Graph) ReachablePVCsFromPV(pvName string) []types.NamespacedName {
+	g.lock.RLock()
+	defer g.lock.RUnlock()
+
+	pvVertex, exists := g.getVertexRLocked(pvVertexType, "", pvName)
+	if !exists {
+		return nil
+	}
+
+	var pvcs []types.NamespacedName
+	g.graph.VisitFrom(pvVertex, func(neighbor graph.Node) bool {
+		if v, ok := neighbor.(*namedVertex); ok && v.vertexType == pvcVertexType {
+			pvcs = append(pvcs, types.NamespacedName{Namespace: v.namespace, Name: v.name})
+		}
+		return true
+	})
+	return pvcs
 }

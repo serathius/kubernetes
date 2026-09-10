@@ -70,7 +70,7 @@ func TestNodeAuthorizer(t *testing.T) {
 	populate(g, nodes, pods, pvs, attachments, slices, pcrs)
 
 	identifier := nodeidentifier.NewDefaultNodeIdentifier()
-	authz := NewAuthorizer(g, identifier, bootstrappolicy.NodeRules())
+	authz := NewAuthorizer(g, identifier, bootstrappolicy.NodeRules(), nil)
 
 	node0 := &user.DefaultInfo{Name: "system:node:node0", Groups: []string{"system:nodes"}}
 
@@ -917,7 +917,7 @@ func TestNodeAuthorizerSharedResources(t *testing.T) {
 	g := NewGraph()
 	g.destinationEdgeThreshold = 1
 	identifier := nodeidentifier.NewDefaultNodeIdentifier()
-	authz := NewAuthorizer(g, identifier, bootstrappolicy.NodeRules())
+	authz := NewAuthorizer(g, identifier, bootstrappolicy.NodeRules(), nil)
 
 	node1 := &user.DefaultInfo{Name: "system:node:node1", Groups: []string{"system:nodes"}}
 	node2 := &user.DefaultInfo{Name: "system:node:node2", Groups: []string{"system:nodes"}}
@@ -1074,7 +1074,7 @@ func TestNodeAuthorizerAddEphemeralContainers(t *testing.T) {
 	g := NewGraph()
 	g.destinationEdgeThreshold = 1
 	identifier := nodeidentifier.NewDefaultNodeIdentifier()
-	authz := NewAuthorizer(g, identifier, bootstrappolicy.NodeRules())
+	authz := NewAuthorizer(g, identifier, bootstrappolicy.NodeRules(), nil)
 
 	node1 := &user.DefaultInfo{Name: "system:node:node1", Groups: []string{"system:nodes"}}
 	pod := &corev1.Pod{
@@ -1198,7 +1198,7 @@ func TestNodeAuthorizerAddEphemeralContainers(t *testing.T) {
 func TestNodeAuthorizerUpdateExtendedResourceClaim(t *testing.T) {
 	g := NewGraph()
 	identifier := nodeidentifier.NewDefaultNodeIdentifier()
-	authz := NewAuthorizer(g, identifier, bootstrappolicy.NodeRules())
+	authz := NewAuthorizer(g, identifier, bootstrappolicy.NodeRules(), nil)
 
 	node1 := &user.DefaultInfo{Name: "system:node:node1", Groups: []string{"system:nodes"}}
 
@@ -1465,7 +1465,7 @@ func BenchmarkUnauthorizedRequests(b *testing.B) {
 	populate(g, nodes, pods, pvs, attachments, slices, pcrs)
 
 	identifier := nodeidentifier.NewDefaultNodeIdentifier()
-	authz := NewAuthorizer(g, identifier, bootstrappolicy.NodeRules())
+	authz := NewAuthorizer(g, identifier, bootstrappolicy.NodeRules(), nil)
 
 	attrs := authorizer.AttributesRecord{User: additionalNode, ResourceRequest: true, Verb: "get", Resource: "configmaps", Name: "configmap0-shared", Namespace: nsName}
 
@@ -1503,7 +1503,7 @@ func BenchmarkAuthorization(b *testing.B) {
 	populate(g, nodes, pods, pvs, attachments, slices, pcrs)
 
 	identifier := nodeidentifier.NewDefaultNodeIdentifier()
-	authz := NewAuthorizer(g, identifier, bootstrappolicy.NodeRules())
+	authz := NewAuthorizer(g, identifier, bootstrappolicy.NodeRules(), nil)
 
 	node0 := &user.DefaultInfo{Name: "system:node:node0", Groups: []string{"system:nodes"}}
 

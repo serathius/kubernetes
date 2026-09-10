@@ -54,6 +54,7 @@ import (
 	"k8s.io/kubernetes/pkg/apis/storage"
 	"k8s.io/kubernetes/pkg/auth/nodeidentifier"
 	"k8s.io/kubernetes/pkg/features"
+	kubeapiserveradmission "k8s.io/kubernetes/pkg/kubeapiserver/admission"
 )
 
 // PluginName is a string with the name of the plugin
@@ -86,6 +87,7 @@ type Plugin struct {
 	pvcGetter            corev1lister.PersistentVolumeClaimLister
 	pvGetter             corev1lister.PersistentVolumeLister
 	csiTranslator        csitrans.CSITranslator
+	informerFactory      informers.SharedInformerFactory
 
 	authz authorizer.UnconditionalAuthorizer
 
@@ -103,6 +105,7 @@ var (
 	_ apiserveradmission.WantsExternalKubeInformerFactory = &Plugin{}
 	_ apiserveradmission.WantsFeatures                    = &Plugin{}
 	_ apiserveradmission.WantsUnconditionalAuthorizer     = &Plugin{}
+	_ kubeapiserveradmission.WantsCoreV1PodLister         = &Plugin{}
 )
 
 // InspectFeatureGates allows setting bools without taking a dep on a global variable
@@ -116,9 +119,14 @@ func (p *Plugin) InspectFeatureGates(featureGates featuregate.FeatureGate) {
 	p.inspectedFeatureGates = true
 }
 
+// SetCoreV1PodLister sets the pod lister for the plugin.
+func (p *Plugin) SetCoreV1PodLister(lister corev1lister.PodLister) {
+	p.podsGetter = lister
+}
+
 // SetExternalKubeInformerFactory registers an informer factory into Plugin
 func (p *Plugin) SetExternalKubeInformerFactory(f informers.SharedInformerFactory) {
-	p.podsGetter = f.Core().V1().Pods().Lister()
+	p.informerFactory = f
 	p.nodesGetter = f.Core().V1().Nodes().Lister()
 	if p.serviceAccountNodeAudienceRestriction {
 		p.csiDriverGetter = f.Storage().V1().CSIDrivers().Lister()
@@ -133,6 +141,9 @@ func (p *Plugin) SetExternalKubeInformerFactory(f informers.SharedInformerFactor
 func (p *Plugin) ValidateInitialization() error {
 	if p.nodeIdentifier == nil {
 		return fmt.Errorf("%s requires a node identifier", PluginName)
+	}
+	if p.podsGetter == nil && p.informerFactory != nil {
+		p.podsGetter = p.informerFactory.Core().V1().Pods().Lister()
 	}
 	if p.podsGetter == nil {
 		return fmt.Errorf("%s requires a pod getter", PluginName)
