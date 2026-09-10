@@ -46,6 +46,7 @@ import (
 	"k8s.io/kubernetes/pkg/controlplane/controller/leaderelection"
 	"k8s.io/kubernetes/pkg/controlplane/controller/legacytokentracking"
 	"k8s.io/kubernetes/pkg/controlplane/controller/systemnamespaces"
+	"k8s.io/kubernetes/pkg/kubeapiserver/direct"
 	"k8s.io/kubernetes/pkg/routes"
 	"k8s.io/kubernetes/pkg/serviceaccount"
 )
@@ -95,6 +96,8 @@ func (c completedConfig) New(name string, delegationTarget genericapiserver.Dele
 	if err != nil {
 		return nil, err
 	}
+
+	direct.SetHandler(c.VersionedInformers, generic.Handler, generic.LoopbackClientConfig)
 
 	if c.EnableLogsSupport {
 		routes.Logs{}.Install(generic.Handler.GoRestfulContainer)

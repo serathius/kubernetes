@@ -35,6 +35,7 @@ import (
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	versionedinformers "k8s.io/client-go/informers"
 	certinformersv1 "k8s.io/client-go/informers/certificates/v1"
+	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/kubernetes/pkg/auth/authorizer/abac"
 	"k8s.io/kubernetes/pkg/auth/nodeidentifier"
 	"k8s.io/kubernetes/pkg/features"
@@ -105,19 +106,23 @@ func (config Config) New(ctx context.Context, serverID string) (authorizer.Autho
 			if utilfeature.DefaultFeatureGate.Enabled(features.PodCertificateRequest) {
 				podCertificateRequestInformer = config.VersionedInformerFactory.Certificates().V1().PodCertificateRequests()
 			}
+			var podLister corev1listers.PodLister
+			if config.VersionedInformerFactory != nil {
+				podLister = config.VersionedInformerFactory.Core().V1().Pods().Lister()
+			}
 			node.RegisterMetrics()
 			graph := node.NewGraph()
 			node.AddGraphEventHandlers(
 				ctx,
 				graph,
 				config.VersionedInformerFactory.Core().V1().Nodes(),
-				config.VersionedInformerFactory.Core().V1().Pods(),
+				nil,
 				config.VersionedInformerFactory.Core().V1().PersistentVolumes(),
 				config.VersionedInformerFactory.Storage().V1().VolumeAttachments(),
 				config.VersionedInformerFactory.Resource().V1().ResourceSlices(),
 				podCertificateRequestInformer,
 			)
-			r.nodeAuthorizer = node.NewAuthorizer(graph, nodeidentifier.NewDefaultNodeIdentifier(), bootstrappolicy.NodeRules())
+			r.nodeAuthorizer = node.NewAuthorizer(graph, nodeidentifier.NewDefaultNodeIdentifier(), bootstrappolicy.NodeRules(), podLister)
 
 		case authzconfig.AuthorizerType(modes.ModeABAC):
 			var err error

@@ -37,6 +37,7 @@ import (
 	"k8s.io/apiserver/pkg/endpoints/handlers/negotiation"
 	"k8s.io/apiserver/pkg/endpoints/metrics"
 	"k8s.io/apiserver/pkg/endpoints/request"
+	"k8s.io/apiserver/pkg/endpoints/responsewriter"
 	"k8s.io/apiserver/pkg/registry/rest"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/apiserver/pkg/util/flushwriter"
@@ -295,6 +296,39 @@ func (w *deferredResponseWriter) Close() (err error) {
 	return err
 }
 
+// ObjectResponseWriter is an optional interface that an in-process http.ResponseWriter
+// can implement to receive the negotiated versioned runtime.Object directly in memory,
+// bypassing wire serialization and deserialization while still executing the full
+// apiserver HTTP handler chain.
+type ObjectResponseWriter interface {
+	http.ResponseWriter
+	WriteObject(statusCode int, object runtime.Object)
+}
+
+type objectCapturingEncoder struct {
+	obj runtime.Object
+}
+
+func (e *objectCapturingEncoder) Encode(obj runtime.Object, _ io.Writer) error {
+	e.obj = obj
+	return nil
+}
+
+func (e *objectCapturingEncoder) Identifier() runtime.Identifier {
+	return "object-capturing-encoder"
+}
+
+func convertObjectForVersion(s runtime.NegotiatedSerializer, gv schema.GroupVersion, object runtime.Object) (runtime.Object, error) {
+	if co, ok := object.(runtime.CacheableObject); ok {
+		object = co.GetObject()
+	}
+	capture := &objectCapturingEncoder{}
+	if err := s.EncoderForVersion(capture, gv).Encode(object, io.Discard); err != nil {
+		return nil, err
+	}
+	return capture.obj, nil
+}
+
 // WriteObjectNegotiated renders an object in the content type negotiated by the client.
 func WriteObjectNegotiated(s runtime.NegotiatedSerializer, restrictions negotiation.EndpointRestrictions, gv schema.GroupVersion, w http.ResponseWriter, req *http.Request, statusCode int, object runtime.Object, listGVKInContentType bool) {
 	stream, ok := object.(rest.ResourceStreamer)
@@ -320,6 +354,31 @@ func WriteObjectNegotiated(s runtime.NegotiatedSerializer, restrictions negotiat
 	}
 
 	audit.LogResponseObject(req.Context(), object, gv, s)
+
+	if objWriter, ok := responsewriter.GetOriginal(w).(ObjectResponseWriter); ok {
+		var out runtime.Object
+		request.TrackSerializeResponseObjectLatency(req.Context(), func() {
+			out, err = convertObjectForVersion(s, gv, object)
+		})
+		if err != nil {
+			status := ErrorToAPIStatus(err)
+			if statusCode >= http.StatusOK && statusCode < http.StatusBadRequest {
+				statusCode = int(status.Code)
+			}
+			w.Header().Set("Content-Type", serializer.MediaType)
+			w.WriteHeader(statusCode)
+			objWriter.WriteObject(statusCode, status)
+			return
+		}
+		if listGVKInContentType {
+			w.Header().Set("Content-Type", generateMediaTypeWithGVK(serializer.MediaType, mediaType.Convert))
+		} else {
+			w.Header().Set("Content-Type", serializer.MediaType)
+		}
+		w.WriteHeader(statusCode)
+		objWriter.WriteObject(statusCode, out)
+		return
+	}
 
 	var encoder runtime.Encoder
 	if utilfeature.DefaultFeatureGate.Enabled(features.CBORServingAndStorage) {
