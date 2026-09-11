@@ -14021,7 +14021,15 @@ func TestValidatePodUpdate(t *testing.T) {
 		err  string
 		opts PodValidationOptions
 	}{
-		{new: *podtest.MakePod(""), old: *podtest.MakePod(""), err: "", test: "nothing"}, {
+		{new: *podtest.MakePod(""), old: *podtest.MakePod(""), err: "", test: "nothing"},
+		{
+			new:  *podtest.MakePod("foo", func(p *core.Pod) { p.Generation = 2 }),
+			old:  *podtest.MakePod("foo", func(p *core.Pod) { p.Generation = 2 }),
+			err:  "",
+			opts: PodValidationOptions{ResourceIsPod: true},
+			test: "unchanged generation skips spec equality",
+		},
+		{
 			new:  *podtest.MakePod("foo"),
 			old:  *podtest.MakePod("bar"),
 			err:  "metadata.name",

@@ -1211,3 +1211,50 @@ func TestInline(t *testing.T) {
 		})
 	}
 }
+
+func TestFromUnstructuredWithValidationNestedTracking(t *testing.T) {
+	type Inner struct {
+		Field1 string `json:"field1"`
+		Field2 int    `json:"field2"`
+	}
+	type Outer struct {
+		Inner  Inner  `json:"inner"`
+		Field3 string `json:"field3"`
+	}
+
+	validData := map[string]interface{}{
+		"inner": map[string]interface{}{
+			"field1": "val1",
+			"field2": int64(42),
+		},
+		"field3": "val3",
+	}
+
+	var validObj Outer
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructuredWithValidation(validData, &validObj, true); err != nil {
+		t.Fatalf("unexpected error for valid data: %v", err)
+	}
+	if validObj.Inner.Field1 != "val1" || validObj.Inner.Field2 != 42 || validObj.Field3 != "val3" {
+		t.Fatalf("unexpected decoded object: %#v", validObj)
+	}
+
+	invalidData := map[string]interface{}{
+		"inner": map[string]interface{}{
+			"field1":        "val1",
+			"field2":        int64(42),
+			"unknown_inner": "bad",
+		},
+		"field3":        "val3",
+		"unknown_outer": "bad",
+	}
+
+	var invalidObj Outer
+	err := runtime.DefaultUnstructuredConverter.FromUnstructuredWithValidation(invalidData, &invalidObj, true)
+	if err == nil {
+		t.Fatalf("expected error for unknown fields, got nil")
+	}
+	errStr := err.Error()
+	if !strings.Contains(errStr, "unknown_inner") || !strings.Contains(errStr, "unknown_outer") {
+		t.Fatalf("expected error to contain both unknown_inner and unknown_outer, got: %s", errStr)
+	}
+}

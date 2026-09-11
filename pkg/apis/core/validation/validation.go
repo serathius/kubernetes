@@ -5907,8 +5907,13 @@ func ValidatePodUpdate(newPod, oldPod *core.Pod, opts PodValidationOptions) fiel
 	// Allow only deletions to schedulingGates updates.
 	allErrs = append(allErrs, validateOnlyDeletedSchedulingGates(newPod.Spec.SchedulingGates, oldPod.Spec.SchedulingGates, specPath.Child("schedulingGates"))...)
 
-	// the last thing to check is pod spec equality.  If the pod specs are equal, then we can simply return the errors we have
+	// the last thing to check is pod spec equality. If the pod specs are equal, then we can simply return the errors we have
 	// so far and save the cost of a deep copy.
+	// PrepareForUpdate already checked semantic equality to bump Generation; if Generation is non-zero and unchanged,
+	// the specs are guaranteed to be equal.
+	if opts.ResourceIsPod && newPod.Generation != 0 && newPod.Generation == oldPod.Generation {
+		return allErrs
+	}
 	if apiequality.Semantic.DeepEqual(newPod.Spec, oldPod.Spec) {
 		return allErrs
 	}
