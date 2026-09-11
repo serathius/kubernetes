@@ -66,3 +66,53 @@ apiserver_storage_list_total{group="apps",index="f:spec.nodeName",resource="depl
 		t.Fatal(err)
 	}
 }
+
+func TestRecordStorageUpdateMetrics(t *testing.T) {
+	registry := k8smetrics.NewKubeRegistry()
+	defer registry.Reset()
+
+	registry.MustRegister(updateAttempts)
+	registry.MustRegister(updateConflicts)
+
+	groupResource := schema.GroupResource{Group: "", Resource: "pods"}
+
+	RecordStorageUpdateAttempts(groupResource, StorageBackendEtcd, StatusSuccess, 1)
+	RecordStorageUpdateAttempts(groupResource, StorageBackendEtcd, StatusSuccess, 2)
+	RecordStorageUpdateAttempts(groupResource, StorageBackendWatchCache, StatusSuccess, 1)
+	RecordStorageUpdateConflict(groupResource, StorageBackendEtcd)
+	RecordStorageUpdateConflict(groupResource, StorageBackendWatchCache)
+
+	expected := `# HELP apiserver_storage_update_attempts [ALPHA] Number of attempts made to complete a GuaranteedUpdate operation in storage.
+# TYPE apiserver_storage_update_attempts histogram
+apiserver_storage_update_attempts_bucket{group="",resource="pods",status="success",storage="etcd",le="1"} 1
+apiserver_storage_update_attempts_bucket{group="",resource="pods",status="success",storage="etcd",le="2"} 2
+apiserver_storage_update_attempts_bucket{group="",resource="pods",status="success",storage="etcd",le="3"} 2
+apiserver_storage_update_attempts_bucket{group="",resource="pods",status="success",storage="etcd",le="4"} 2
+apiserver_storage_update_attempts_bucket{group="",resource="pods",status="success",storage="etcd",le="5"} 2
+apiserver_storage_update_attempts_bucket{group="",resource="pods",status="success",storage="etcd",le="10"} 2
+apiserver_storage_update_attempts_bucket{group="",resource="pods",status="success",storage="etcd",le="+Inf"} 2
+apiserver_storage_update_attempts_sum{group="",resource="pods",status="success",storage="etcd"} 3
+apiserver_storage_update_attempts_count{group="",resource="pods",status="success",storage="etcd"} 2
+apiserver_storage_update_attempts_bucket{group="",resource="pods",status="success",storage="watchcache",le="1"} 1
+apiserver_storage_update_attempts_bucket{group="",resource="pods",status="success",storage="watchcache",le="2"} 1
+apiserver_storage_update_attempts_bucket{group="",resource="pods",status="success",storage="watchcache",le="3"} 1
+apiserver_storage_update_attempts_bucket{group="",resource="pods",status="success",storage="watchcache",le="4"} 1
+apiserver_storage_update_attempts_bucket{group="",resource="pods",status="success",storage="watchcache",le="5"} 1
+apiserver_storage_update_attempts_bucket{group="",resource="pods",status="success",storage="watchcache",le="10"} 1
+apiserver_storage_update_attempts_bucket{group="",resource="pods",status="success",storage="watchcache",le="+Inf"} 1
+apiserver_storage_update_attempts_sum{group="",resource="pods",status="success",storage="watchcache"} 1
+apiserver_storage_update_attempts_count{group="",resource="pods",status="success",storage="watchcache"} 1
+# HELP apiserver_storage_update_conflicts_total [ALPHA] Number of optimistic concurrency update conflicts encountered in storage.
+# TYPE apiserver_storage_update_conflicts_total counter
+apiserver_storage_update_conflicts_total{group="",resource="pods",storage="etcd"} 1
+apiserver_storage_update_conflicts_total{group="",resource="pods",storage="watchcache"} 1
+`
+
+	if err := testutil.GatherAndCompare(registry, strings.NewReader(expected),
+		"apiserver_storage_update_attempts",
+		"apiserver_storage_update_conflicts_total",
+	); err != nil {
+		t.Fatal(err)
+	}
+}
+

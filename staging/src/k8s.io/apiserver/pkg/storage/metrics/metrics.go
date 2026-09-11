@@ -27,6 +27,10 @@ import (
 const (
 	StorageBackendEtcd       = "etcd"
 	StorageBackendWatchCache = "watchcache"
+
+	StatusSuccess  = "success"
+	StatusConflict = "conflict"
+	StatusError    = "error"
 )
 
 var (
@@ -62,16 +66,35 @@ var (
 		},
 		[]string{"group", "resource", "storage"},
 	)
+	updateAttempts = compbasemetrics.NewHistogramVec(
+		&compbasemetrics.HistogramOpts{
+			Name:           "apiserver_storage_update_attempts",
+			Help:           "Number of attempts made to complete a GuaranteedUpdate operation in storage.",
+			Buckets:        []float64{1, 2, 3, 4, 5, 10},
+			StabilityLevel: compbasemetrics.ALPHA,
+		},
+		[]string{"group", "resource", "storage", "status"},
+	)
+	updateConflicts = compbasemetrics.NewCounterVec(
+		&compbasemetrics.CounterOpts{
+			Name:           "apiserver_storage_update_conflicts_total",
+			Help:           "Number of optimistic concurrency update conflicts encountered in storage.",
+			StabilityLevel: compbasemetrics.ALPHA,
+		},
+		[]string{"group", "resource", "storage"},
+	)
 	registerMetrics sync.Once
 )
 
-// Register registers storage LIST metrics.
+// Register registers storage LIST and update metrics.
 func Register() {
 	registerMetrics.Do(func() {
 		legacyregistry.MustRegister(listStorageCount)
 		legacyregistry.MustRegister(listStorageNumFetched)
 		legacyregistry.MustRegister(listStorageNumSelectorEvals)
 		legacyregistry.MustRegister(listStorageNumReturned)
+		legacyregistry.MustRegister(updateAttempts)
+		legacyregistry.MustRegister(updateConflicts)
 	})
 }
 
@@ -81,4 +104,14 @@ func RecordStorageListMetrics(groupResource schema.GroupResource, storageBackend
 	listStorageNumFetched.WithLabelValues(groupResource.Group, groupResource.Resource, storageBackend, index).Add(float64(numFetched))
 	listStorageNumSelectorEvals.WithLabelValues(groupResource.Group, groupResource.Resource, storageBackend).Add(float64(numEvald))
 	listStorageNumReturned.WithLabelValues(groupResource.Group, groupResource.Resource, storageBackend).Add(float64(numReturned))
+}
+
+// RecordStorageUpdateAttempts notes the number of attempts and final status for a GuaranteedUpdate operation.
+func RecordStorageUpdateAttempts(groupResource schema.GroupResource, storageBackend, status string, attempts int) {
+	updateAttempts.WithLabelValues(groupResource.Group, groupResource.Resource, storageBackend, status).Observe(float64(attempts))
+}
+
+// RecordStorageUpdateConflict notes an optimistic concurrency conflict encountered in a storage update operation.
+func RecordStorageUpdateConflict(groupResource schema.GroupResource, storageBackend string) {
+	updateConflicts.WithLabelValues(groupResource.Group, groupResource.Resource, storageBackend).Inc()
 }

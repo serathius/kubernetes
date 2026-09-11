@@ -251,6 +251,11 @@ type Interface interface {
 		ctx context.Context, key string, destination runtime.Object, ignoreNotFound bool,
 		preconditions *Preconditions, tryUpdate UpdateFunc, cachedExistingObject runtime.Object) error
 
+	// GuaranteedUpdateRetry is same as GuaranteedUpdate but allows to disable retry logic.
+	GuaranteedUpdateRetry(
+		ctx context.Context, key string, destination runtime.Object, ignoreNotFound bool,
+		preconditions *Preconditions, tryUpdate UpdateFunc, cachedExistingObject runtime.Object, retry bool) error
+
 	// Stats returns storage stats.
 	Stats(ctx context.Context) (Stats, error)
 

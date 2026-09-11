@@ -18,6 +18,7 @@ package cacher
 
 import (
 	"context"
+	stderrors "errors"
 	"sync"
 
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -29,6 +30,7 @@ import (
 	"k8s.io/apiserver/pkg/storage/cacher/delegator"
 	"k8s.io/apiserver/pkg/storage/cacher/metrics"
 	"k8s.io/apiserver/pkg/storage/cacher/store"
+	storagemetrics "k8s.io/apiserver/pkg/storage/metrics"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/klog/v2"
 )
@@ -190,19 +192,78 @@ func shouldDelegateListOnNotReadyCache(opts storage.ListOptions) bool {
 	return noLabelSelector && noFieldSelector && hasLimit
 }
 
-func (c *CacheDelegator) GuaranteedUpdate(ctx context.Context, key string, destination runtime.Object, ignoreNotFound bool, preconditions *storage.Preconditions, tryUpdate storage.UpdateFunc, cachedExistingObject runtime.Object) error {
-	// Ignore the suggestion and try to pass down the current version of the object
-	// read from cache.
+func (c *CacheDelegator) GuaranteedUpdate(ctx context.Context, key string, destination runtime.Object, ignoreNotFound bool, preconditions *storage.Preconditions, tryUpdate storage.UpdateFunc, cachedExistingObject runtime.Object) (err error) {
+	return c.GuaranteedUpdateRetry(ctx, key, destination, ignoreNotFound, preconditions, tryUpdate, cachedExistingObject, true)
+}
+
+func (c *CacheDelegator) GuaranteedUpdateRetry(ctx context.Context, key string, destination runtime.Object, ignoreNotFound bool, preconditions *storage.Preconditions, tryUpdate storage.UpdateFunc, cachedExistingObject runtime.Object, retry bool) (err error) {
+	attempts := 0
+	defer func() {
+		if attempts > 0 {
+			status := storagemetrics.StatusSuccess
+			if err != nil {
+				if storage.IsConflict(err) {
+					status = storagemetrics.StatusConflict
+				} else {
+					status = storagemetrics.StatusError
+				}
+			}
+			storagemetrics.RecordStorageUpdateAttempts(c.cacher.groupResource, storagemetrics.StorageBackendWatchCache, status, attempts)
+		}
+	}()
+
+	var currObj runtime.Object
+	var currObjectRV uint64
+
 	if elem, exists, err := c.cacher.watchCache.storage.GetByKey(key); err != nil {
 		klog.Errorf("GetByKey returned error: %v", err)
 	} else if exists {
-		// DeepCopy the object since we modify resource version when serializing the
-		// current object.
-		currObj := elem.(*store.Element).Object.DeepCopyObject()
-		return c.storage.GuaranteedUpdate(ctx, key, destination, ignoreNotFound, preconditions, tryUpdate, currObj)
+		currObj = elem.(*store.Element).Object.DeepCopyObject()
+		currObjectRV, err = c.cacher.versioner.ObjectResourceVersion(currObj)
+		if err != nil {
+			return err
+		}
 	}
-	// If we couldn't get the object, fallback to no-suggestion.
-	return c.storage.GuaranteedUpdate(ctx, key, destination, ignoreNotFound, preconditions, tryUpdate, nil)
+
+	for {
+		attempts++
+		err = c.storage.GuaranteedUpdateRetry(ctx, key, destination, ignoreNotFound, preconditions, tryUpdate, currObj, false)
+		if err == nil {
+			return nil
+		}
+		if !storage.IsConflict(err) {
+			return err
+		}
+		storagemetrics.RecordStorageUpdateConflict(c.cacher.groupResource, storagemetrics.StorageBackendWatchCache)
+		if !retry {
+			return err
+		}
+
+		var storageErr *storage.StorageError
+		if !stderrors.As(err, &storageErr) || storageErr.ResourceVersion <= 0 {
+			return err
+		}
+
+		elem, exists, _, err := c.cacher.watchCache.WaitUntilFreshAndGet(ctx, uint64(storageErr.ResourceVersion), key)
+		if err != nil {
+			return err
+		}
+		if !exists || currObjectRV == 0 {
+			currObj = nil
+		} else {
+			newObject := elem.(*store.Element).Object
+			newObjectRV, err := c.cacher.versioner.ObjectResourceVersion(newObject)
+			if err != nil {
+				return err
+			}
+			if newObjectRV <= currObjectRV {
+				currObj = nil
+			} else {
+				currObj = newObject.DeepCopyObject()
+				currObjectRV = newObjectRV
+			}
+		}
+	}
 }
 
 func (c *CacheDelegator) Stats(ctx context.Context) (storage.Stats, error) {

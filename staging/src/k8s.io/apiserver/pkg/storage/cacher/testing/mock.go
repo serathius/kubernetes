@@ -115,6 +115,9 @@ func (d *MockStorage) GetList(ctx context.Context, resPrefix string, opts storag
 func (d *MockStorage) GuaranteedUpdate(_ context.Context, _ string, _ runtime.Object, _ bool, _ *storage.Preconditions, _ storage.UpdateFunc, _ runtime.Object) error {
 	return fmt.Errorf("unimplemented")
 }
+func (d *MockStorage) GuaranteedUpdateRetry(_ context.Context, _ string, _ runtime.Object, _ bool, _ *storage.Preconditions, _ storage.UpdateFunc, _ runtime.Object, _ bool) error {
+	return fmt.Errorf("unimplemented")
+}
 func (d *MockStorage) Stats(_ context.Context) (storage.Stats, error) {
 	return storage.Stats{}, fmt.Errorf("unimplemented")
 }

@@ -48,6 +48,7 @@ import (
 	"k8s.io/apiserver/pkg/storage"
 	"k8s.io/apiserver/pkg/storage/etcd3/metrics"
 	etcdfeature "k8s.io/apiserver/pkg/storage/feature"
+	storagemetrics "k8s.io/apiserver/pkg/storage/metrics"
 	"k8s.io/apiserver/pkg/storage/value"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/component-base/tracing"
@@ -476,7 +477,29 @@ func (s *store) conditionalDelete(
 // GuaranteedUpdate implements storage.Interface.GuaranteedUpdate.
 func (s *store) GuaranteedUpdate(
 	ctx context.Context, key string, destination runtime.Object, ignoreNotFound bool,
-	preconditions *storage.Preconditions, tryUpdate storage.UpdateFunc, cachedExistingObject runtime.Object) error {
+	preconditions *storage.Preconditions, tryUpdate storage.UpdateFunc, cachedExistingObject runtime.Object) (err error) {
+	return s.GuaranteedUpdateRetry(ctx, key, destination, ignoreNotFound, preconditions, tryUpdate, cachedExistingObject, true)
+}
+
+// GuaranteedUpdate implements storage.Interface.GuaranteedUpdate.
+func (s *store) GuaranteedUpdateRetry(
+	ctx context.Context, key string, destination runtime.Object, ignoreNotFound bool,
+	preconditions *storage.Preconditions, tryUpdate storage.UpdateFunc, cachedExistingObject runtime.Object, retry bool) (err error) {
+	attempts := 0
+	defer func() {
+		if attempts > 0 {
+			status := storagemetrics.StatusSuccess
+			if err != nil {
+				if storage.IsConflict(err) {
+					status = storagemetrics.StatusConflict
+				} else {
+					status = storagemetrics.StatusError
+				}
+			}
+			storagemetrics.RecordStorageUpdateAttempts(s.groupResource, storagemetrics.StorageBackendEtcd, status, attempts)
+		}
+	}()
+
 	preparedKey, err := s.prepareKey(key, false)
 	if err != nil {
 		return err
@@ -511,6 +534,7 @@ func (s *store) GuaranteedUpdate(
 
 	transformContext := authenticatedDataString(preparedKey)
 	for {
+		attempts++
 		if err := preconditions.Check(preparedKey, origState.obj); err != nil {
 			// If our data is already up to date, return the error
 			if origStateIsCurrent {
@@ -608,7 +632,7 @@ func (s *store) GuaranteedUpdate(
 		startTime := time.Now()
 
 		txnResp, err := s.client.Kubernetes.OptimisticPut(ctx, preparedKey, newData, origState.rev, kubernetes.PutOptions{
-			GetOnFailure: true,
+			GetOnFailure: retry,
 			LeaseID:      lease,
 		})
 		metrics.RecordEtcdRequest("update", s.groupResource, err, startTime)
@@ -619,6 +643,10 @@ func (s *store) GuaranteedUpdate(
 		span.AddEvent("Txn call completed")
 		span.AddEvent("Transaction committed")
 		if !txnResp.Succeeded {
+			storagemetrics.RecordStorageUpdateConflict(s.groupResource, storagemetrics.StorageBackendEtcd)
+			if !retry {
+				return storage.NewResourceVersionConflictsError(preparedKey, txnResp.Revision)
+			}
 			klog.V(4).Infof("GuaranteedUpdate of %s failed because of a conflict, going to retry", preparedKey)
 			origState, err = s.getState(ctx, txnResp.KV, txnResp.Revision, preparedKey, v, ignoreNotFound, false)
 			if err != nil {
