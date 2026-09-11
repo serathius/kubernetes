@@ -18,6 +18,8 @@ package cacher
 
 import (
 	"context"
+	stderrors "errors"
+	"fmt"
 	"sync"
 
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -29,6 +31,7 @@ import (
 	"k8s.io/apiserver/pkg/storage/cacher/delegator"
 	"k8s.io/apiserver/pkg/storage/cacher/metrics"
 	"k8s.io/apiserver/pkg/storage/cacher/store"
+	storagemetrics "k8s.io/apiserver/pkg/storage/metrics"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/klog/v2"
 )
@@ -190,19 +193,77 @@ func shouldDelegateListOnNotReadyCache(opts storage.ListOptions) bool {
 	return noLabelSelector && noFieldSelector && hasLimit
 }
 
-func (c *CacheDelegator) GuaranteedUpdate(ctx context.Context, key string, destination runtime.Object, ignoreNotFound bool, preconditions *storage.Preconditions, tryUpdate storage.UpdateFunc, cachedExistingObject runtime.Object) error {
-	// Ignore the suggestion and try to pass down the current version of the object
-	// read from cache.
+const maxUpdateRetries = 3
+
+func (c *CacheDelegator) GuaranteedUpdate(ctx context.Context, key string, destination runtime.Object, ignoreNotFound bool, preconditions *storage.Preconditions, tryUpdate storage.UpdateFunc, cachedExistingObject runtime.Object) (err error) {
+	attempts := 0
+	defer func() {
+		if attempts > 0 {
+			status := storagemetrics.StatusSuccess
+			if err != nil {
+				if storage.IsConflict(err) {
+					status = storagemetrics.StatusConflict
+				} else {
+					status = storagemetrics.StatusError
+				}
+			}
+			storagemetrics.RecordStorageUpdateAttempts(c.cacher.groupResource, storagemetrics.StorageBackendWatchCache, status, attempts)
+		}
+	}()
+
+	var currObj runtime.Object
 	if elem, exists, err := c.cacher.watchCache.storage.GetByKey(key); err != nil {
 		klog.Errorf("GetByKey returned error: %v", err)
 	} else if exists {
-		// DeepCopy the object since we modify resource version when serializing the
-		// current object.
-		currObj := elem.(*store.Element).Object.DeepCopyObject()
-		return c.storage.GuaranteedUpdate(ctx, key, destination, ignoreNotFound, preconditions, tryUpdate, currObj)
+		// Avoid modifying the cached instance during serialization in the storage layer.
+		currObj = elem.(*store.Element).Object.DeepCopyObject()
+	} else if cachedExistingObject != nil {
+		currObj = cachedExistingObject.DeepCopyObject()
 	}
-	// If we couldn't get the object, fallback to no-suggestion.
-	return c.storage.GuaranteedUpdate(ctx, key, destination, ignoreNotFound, preconditions, tryUpdate, nil)
+
+	for {
+		attempts++
+		err = c.storage.GuaranteedUpdate(ctx, key, destination, ignoreNotFound, preconditions, tryUpdate, currObj)
+		if err == nil {
+			return nil
+		}
+		if !storage.IsConflict(err) {
+			return err
+		}
+		storagemetrics.RecordStorageUpdateConflict(c.cacher.groupResource, storagemetrics.StorageBackendWatchCache)
+		if attempts > maxUpdateRetries {
+			return err
+		}
+
+		var storageErr *storage.StorageError
+		if !stderrors.As(err, &storageErr) || storageErr.ResourceVersion <= 0 {
+			return err
+		}
+
+		targetRV := uint64(storageErr.ResourceVersion)
+		klog.V(4).Infof("GuaranteedUpdate of %s conflicted, waiting for watch cache to reach revision %d (attempt %d)", key, targetRV, attempts)
+		// Wait until watch cache catches up to the etcd transaction revision to avoid reading payload from etcd.
+		obj, exists, _, waitErr := c.cacher.watchCache.WaitUntilFreshAndGet(ctx, targetRV, key)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if waitErr != nil {
+			klog.V(4).Infof("WaitUntilFreshAndGet failed for %s at revision %d: %v", key, targetRV, waitErr)
+			return err
+		}
+		if !exists {
+			if !ignoreNotFound {
+				return storage.NewKeyNotFoundError(key, int64(targetRV))
+			}
+			currObj = nil
+		} else {
+			elem, ok := obj.(*store.Element)
+			if !ok {
+				return fmt.Errorf("non *store.Element returned from storage: %v", obj)
+			}
+			currObj = elem.Object.DeepCopyObject()
+		}
+	}
 }
 
 func (c *CacheDelegator) Stats(ctx context.Context) (storage.Stats, error) {

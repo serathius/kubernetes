@@ -624,8 +624,9 @@ func (s *store) GuaranteedUpdate(
 
 		startTime := time.Now()
 
+		getOnFailure := cachedExistingObject == nil
 		txnResp, err := s.client.Kubernetes.OptimisticPut(ctx, preparedKey, newData, origState.rev, kubernetes.PutOptions{
-			GetOnFailure: true,
+			GetOnFailure: getOnFailure,
 			LeaseID:      lease,
 		})
 		metrics.RecordEtcdRequest("update", s.groupResource, err, startTime)
@@ -637,6 +638,13 @@ func (s *store) GuaranteedUpdate(
 		span.AddEvent("Transaction committed")
 		if !txnResp.Succeeded {
 			storagemetrics.RecordStorageUpdateConflict(s.groupResource, storagemetrics.StorageBackendEtcd)
+			if cachedExistingObject != nil {
+				rev := txnResp.Revision
+				if rev <= 0 {
+					rev = origState.rev
+				}
+				return storage.NewResourceVersionConflictsError(preparedKey, rev)
+			}
 			klog.V(4).Infof("GuaranteedUpdate of %s failed because of a conflict, going to retry", preparedKey)
 			origState, err = s.getState(ctx, txnResp.KV, txnResp.Revision, preparedKey, v, ignoreNotFound, false)
 			if err != nil {
