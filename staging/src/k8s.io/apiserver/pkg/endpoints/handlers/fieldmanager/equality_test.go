@@ -16,7 +16,12 @@ limitations under the License.
 
 package fieldmanager
 
-import "testing"
+import (
+	"testing"
+	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
 
 func TestEqualIgnoringFieldValueAtPath(t *testing.T) {
 	cases := []struct {
@@ -196,3 +201,29 @@ func TestEqualIgnoringFieldValueAtPath(t *testing.T) {
 		})
 	}
 }
+
+func TestManagedFieldsEqualIgnoringTimestamp(t *testing.T) {
+	t1 := metav1.Now()
+	t2 := metav1.NewTime(t1.Add(10 * time.Second))
+	entry1 := metav1.ManagedFieldsEntry{
+		Manager:    "manager-1",
+		Operation:  metav1.ManagedFieldsOperationApply,
+		APIVersion: "v1",
+		FieldsType: "FieldsV1",
+		FieldsV1:   &metav1.FieldsV1{Raw: []byte(`{"f:spec":{}}`)},
+		Time:       &t1,
+	}
+	entry2 := entry1
+	entry2.Time = &t2
+
+	if !managedFieldsEqualIgnoringTimestamp([]metav1.ManagedFieldsEntry{entry1}, []metav1.ManagedFieldsEntry{entry2}) {
+		t.Errorf("expected entries differing only by timestamp to be equal")
+	}
+
+	entry3 := entry2
+	entry3.FieldsV1 = &metav1.FieldsV1{Raw: []byte(`{"f:spec":{"f:replicas":{}}}`)}
+	if managedFieldsEqualIgnoringTimestamp([]metav1.ManagedFieldsEntry{entry1}, []metav1.ManagedFieldsEntry{entry3}) {
+		t.Errorf("expected entries with different FieldsV1 bytes to be unequal")
+	}
+}
+

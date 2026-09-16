@@ -17,10 +17,10 @@ limitations under the License.
 package fieldmanager
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
-	"reflect"
 	"strconv"
 	"sync"
 	"time"
@@ -34,6 +34,35 @@ import (
 	"k8s.io/apiserver/pkg/endpoints/metrics"
 	"k8s.io/klog/v2"
 )
+
+func managedFieldsEntryEqualIgnoringTimestamp(a, b *metav1.ManagedFieldsEntry) bool {
+	if a.Manager != b.Manager ||
+		a.Operation != b.Operation ||
+		a.APIVersion != b.APIVersion ||
+		a.FieldsType != b.FieldsType ||
+		a.Subresource != b.Subresource {
+		return false
+	}
+	if a.FieldsV1 == nil || b.FieldsV1 == nil {
+		return a.FieldsV1 == b.FieldsV1
+	}
+	if (a.FieldsV1.Raw == nil) != (b.FieldsV1.Raw == nil) {
+		return false
+	}
+	return bytes.Equal(a.FieldsV1.Raw, b.FieldsV1.Raw)
+}
+
+func managedFieldsEqualIgnoringTimestamp(a, b []metav1.ManagedFieldsEntry) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if !managedFieldsEntryEqualIgnoringTimestamp(&a[i], &b[i]) {
+			return false
+		}
+	}
+	return true
+}
 
 var (
 	avoidTimestampEqualities     conversion.Equalities
@@ -56,14 +85,12 @@ func getAvoidTimestampEqualities() conversion.Equalities {
 			func(a, b metav1.ManagedFieldsEntry) bool {
 				// Two objects' managed fields are equivalent if, ignoring timestamp,
 				//	the objects are deeply equal.
-				a.Time = nil
-				b.Time = nil
-				return reflect.DeepEqual(a, b)
+				return managedFieldsEntryEqualIgnoringTimestamp(&a, &b)
 			},
 			func(a, b unstructured.Unstructured) bool {
 				// Check if the managed fields are equal by converting to structured types and leveraging the above
 				// function, then, ignoring the managed fields, equality check the rest of the unstructured data.
-				if !avoidTimestampEqualities.DeepEqual(a.GetManagedFields(), b.GetManagedFields()) {
+				if !managedFieldsEqualIgnoringTimestamp(a.GetManagedFields(), b.GetManagedFields()) {
 					return false
 				}
 				return equalIgnoringValueAtPath(a.Object, b.Object, []string{"metadata", "managedFields"})
@@ -200,7 +227,7 @@ func IgnoreManagedFieldsTimestampsTransformer(
 	// This condition ensures the managed fields are always compared first. If
 	//	this check fails, the if statement will short circuit. If the check
 	// 	succeeds the slow path is taken which compares entire objects.
-	if !eqFn(oldManagedFields, newManagedFields) {
+	if !managedFieldsEqualIgnoringTimestamp(oldManagedFields, newManagedFields) {
 		return newObj, nil
 	}
 
