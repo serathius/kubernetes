@@ -17,10 +17,13 @@ limitations under the License.
 package fieldmanager
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"slices"
 
 	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/managedfields"
 	"k8s.io/apiserver/pkg/admission"
 	"k8s.io/apiserver/pkg/warning"
@@ -66,19 +69,52 @@ func (admit *managedFieldsValidatingAdmissionController) Admit(ctx context.Conte
 		// just call the wrapped admission
 		return mutationInterface.Admit(ctx, a, o)
 	}
-	managedFieldsBeforeAdmission := objectMeta.GetManagedFields()
+	origSlice := objectMeta.GetManagedFields()
+	var stackBuf [16]metav1.ManagedFieldsEntry
+	var managedFieldsBeforeAdmission []metav1.ManagedFieldsEntry
+	if len(origSlice) <= len(stackBuf) {
+		managedFieldsBeforeAdmission = stackBuf[:len(origSlice)]
+		copy(managedFieldsBeforeAdmission, origSlice)
+	} else {
+		managedFieldsBeforeAdmission = slices.Clone(origSlice)
+	}
 	if err := mutationInterface.Admit(ctx, a, o); err != nil {
 		return err
 	}
 	managedFieldsAfterAdmission := objectMeta.GetManagedFields()
-	if err := managedfields.ValidateManagedFields(managedFieldsAfterAdmission); err != nil {
-		objectMeta.SetManagedFields(managedFieldsBeforeAdmission)
-		warning.AddWarning(ctx, "",
-			fmt.Sprintf(InvalidManagedFieldsAfterMutatingAdmissionWarningFormat,
-				err.Error()),
-		)
+	if !managedFieldsEqual(managedFieldsBeforeAdmission, managedFieldsAfterAdmission) {
+		if err := managedfields.ValidateManagedFields(managedFieldsAfterAdmission); err != nil {
+			objectMeta.SetManagedFields(slices.Clone(managedFieldsBeforeAdmission))
+			warning.AddWarning(ctx, "",
+				fmt.Sprintf(InvalidManagedFieldsAfterMutatingAdmissionWarningFormat,
+					err.Error()),
+			)
+		}
 	}
 	return nil
+}
+
+func managedFieldsEqual(a, b []metav1.ManagedFieldsEntry) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Manager != b[i].Manager ||
+			a[i].Operation != b[i].Operation ||
+			a[i].APIVersion != b[i].APIVersion ||
+			a[i].FieldsType != b[i].FieldsType ||
+			a[i].Subresource != b[i].Subresource ||
+			!a[i].Time.Equal(b[i].Time) {
+			return false
+		}
+		if (a[i].FieldsV1 == nil) != (b[i].FieldsV1 == nil) {
+			return false
+		}
+		if a[i].FieldsV1 != nil && !bytes.Equal(a[i].FieldsV1.Raw, b[i].FieldsV1.Raw) {
+			return false
+		}
+	}
+	return true
 }
 
 // Validate calls the wrapped admission.Interface if aplicable
