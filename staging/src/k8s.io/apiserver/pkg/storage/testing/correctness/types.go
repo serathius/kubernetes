@@ -148,4 +148,8 @@ type WatchResponse struct {
 type RecordedWatch struct {
 	Request  WatchRequest
 	Response WatchResponse
+	// Truncated reports that the session was cut short by the caller (typically
+	// workload shutdown) rather than reaching its own stop condition. Such a
+	// session may legitimately observe no events, so coverage metrics exclude it.
+	Truncated bool
 }

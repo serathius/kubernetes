@@ -1,0 +1,16 @@
+diff --git a/staging/src/k8s.io/apiserver/pkg/storage/etcd3/store.go b/staging/src/k8s.io/apiserver/pkg/storage/etcd3/store.go
+index 070cb3fb9c0..e33cc41b768 100644
+--- a/staging/src/k8s.io/apiserver/pkg/storage/etcd3/store.go
++++ b/staging/src/k8s.io/apiserver/pkg/storage/etcd3/store.go
+@@ -454,7 +454,10 @@ func (s *store) conditionalDelete(
+ 		}
+ 		if !txnResp.Succeeded {
+ 			klog.V(4).Infof("deletion of %s failed because of a conflict, going to retry", key)
+-			origState, err = s.getState(ctx, txnResp.KV, txnResp.Revision, key, v, false, expectTransformOrDecodeError)
++			// BUG INJECTION: ignoreNotFound=true on the conflict refetch, so a key
++			// that vanished between the suggestion and the delete yields an empty
++			// origState instead of NotFound, and the retry reports success.
++			origState, err = s.getState(ctx, txnResp.KV, txnResp.Revision, key, v, true, expectTransformOrDecodeError)
+ 			if err != nil {
+ 				return err
+ 			}

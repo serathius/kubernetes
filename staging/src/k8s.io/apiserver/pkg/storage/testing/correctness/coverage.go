@@ -39,8 +39,11 @@ type Percentiles struct {
 // WatchCoverage captures aggregate metrics and distribution of recorded watch sessions.
 type WatchCoverage struct {
 	TotalWatches     int
+	CompletedWatches int
+	TruncatedWatches int
 	ZeroEventWatches int
-	ZeroEventRatio   float64
+	// ZeroEventRatio is relative to CompletedWatches, not TotalWatches.
+	ZeroEventRatio float64
 
 	TotalEvents  int
 	EventsByType map[watch.EventType]int
@@ -69,8 +72,13 @@ func ComputeWatchCoverage(watches []RecordedWatch) WatchCoverage {
 		eventCounts[i] = cnt
 		cov.TotalEvents += cnt
 
-		if cnt == 0 {
-			cov.ZeroEventWatches++
+		if rw.Truncated {
+			cov.TruncatedWatches++
+		} else {
+			cov.CompletedWatches++
+			if cnt == 0 {
+				cov.ZeroEventWatches++
+			}
 		}
 
 		for _, ev := range rw.Response.Events {
@@ -98,7 +106,9 @@ func ComputeWatchCoverage(watches []RecordedWatch) WatchCoverage {
 		}
 	}
 
-	cov.ZeroEventRatio = float64(cov.ZeroEventWatches) / float64(cov.TotalWatches)
+	if cov.CompletedWatches > 0 {
+		cov.ZeroEventRatio = float64(cov.ZeroEventWatches) / float64(cov.CompletedWatches)
+	}
 	cov.EventsPerWatch = computePercentiles(eventCounts)
 	return cov
 }
@@ -136,8 +146,8 @@ func computePercentiles(values []int) Percentiles {
 // Summary returns a formatted human-readable summary of watch coverage metrics.
 func (c WatchCoverage) Summary() string {
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Total Watches: %d (Zero-event: %d [%.2f%%])\n",
-		c.TotalWatches, c.ZeroEventWatches, c.ZeroEventRatio*100))
+	sb.WriteString(fmt.Sprintf("Total Watches: %d (Truncated: %d, Zero-event: %d/%d [%.2f%%])\n",
+		c.TotalWatches, c.TruncatedWatches, c.ZeroEventWatches, c.CompletedWatches, c.ZeroEventRatio*100))
 	sb.WriteString(fmt.Sprintf("Total Events: %d (Added: %d, Modified: %d, Deleted: %d, Bookmarks: %d, Errors: %d)\n",
 		c.TotalEvents, c.EventsByType[watch.Added], c.EventsByType[watch.Modified],
 		c.EventsByType[watch.Deleted], c.EventsByType[watch.Bookmark], c.EventsByType[watch.Error]))

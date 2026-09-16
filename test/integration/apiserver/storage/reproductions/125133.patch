@@ -1,0 +1,19 @@
+diff --git a/staging/src/k8s.io/apiserver/pkg/storage/cacher/cacher.go b/staging/src/k8s.io/apiserver/pkg/storage/cacher/cacher.go
+index 9df8cdd9e34..6b7c64bd3b2 100644
+--- a/staging/src/k8s.io/apiserver/pkg/storage/cacher/cacher.go
++++ b/staging/src/k8s.io/apiserver/pkg/storage/cacher/cacher.go
+@@ -1126,12 +1126,8 @@ func (c *Cacher) startDispatching(event *watchCacheEvent) {
+ 			c.watchersBuffer = append(c.watchersBuffer, watcher)
+ 		}
+ 	}
+-	if len(name) > 0 {
+-		// cluster-wide watchers scoped by name
+-		for _, watcher := range c.watchers.allWatchers[namespacedName{name: name}] {
+-			c.watchersBuffer = append(c.watchersBuffer, watcher)
+-		}
+-	}
++	// BUG REVERT (#125133-class): cluster-wide watchers scoped by name are never
++	// added to the dispatch buffer, so they receive no events at all.
+ 	// cluster-wide watchers unscoped by name
+ 	for _, watcher := range c.watchers.allWatchers[namespacedName{}] {
+ 		c.watchersBuffer = append(c.watchersBuffer, watcher)

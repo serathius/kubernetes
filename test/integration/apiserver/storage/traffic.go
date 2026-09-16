@@ -227,10 +227,12 @@ func runWatchSession(ctx context.Context, store storage.Interface, req correctne
 	defer ticker.Stop()
 
 	done := false
+	truncated := false
 	for !done {
 		select {
 		case <-ctx.Done():
 			done = true
+			truncated = true
 		case <-timer.C:
 			done = true
 		case <-ticker.C:
@@ -241,7 +243,9 @@ func runWatchSession(ctx context.Context, store storage.Interface, req correctne
 	}
 
 	rec.Stop()
-	return rec.RecordedWatch(), nil
+	recorded := rec.RecordedWatch()
+	recorded.Truncated = truncated
+	return recorded, nil
 }
 
 func randomRequest(keys []types.NamespacedName, ops []ChoiceWeight[RequestType], cached runtime.Object) *correctness.Request {

@@ -215,6 +215,32 @@ test-integration:
 	KUBE_TEST_ARGS='$(value KUBE_TEST_ARGS)' hack/make-rules/test-integration.sh $(WHAT)
 endif
 
+define TEST_CORRECTNESS_REPRODUCTION_HELP_INFO
+# Reproduce a historical storage correctness bug by reverting its fix, running the
+# correctness suite, and restoring the tree afterwards.
+#
+# The suite is expected to fail while the fix is reverted, so this target succeeds
+# when the bug is detected and fails when it is not.
+#
+# Args:
+#   ISSUE: Issue number of the reproduction to run.  Patches live in
+#     test/integration/apiserver/storage/reproductions.
+#   COUNT: Number of times to repeat the suite.  Defaults to 1.  Useful for
+#     reproductions that are not deterministic.
+#
+# Example:
+#   make test-correctness-reproduction ISSUE=58545
+#   make test-correctness-reproduction ISSUE=58545 COUNT=5
+endef
+.PHONY: test-correctness-reproduction
+ifeq ($(PRINT_HELP),y)
+test-correctness-reproduction:
+	echo "$$TEST_CORRECTNESS_REPRODUCTION_HELP_INFO"
+else
+test-correctness-reproduction:
+	ISSUE='$(value ISSUE)' COUNT='$(value COUNT)' hack/make-rules/test-correctness-reproduction.sh
+endif
+
 define TEST_E2E_NODE_HELP_INFO
 # Build and run node end-to-end tests.
 #

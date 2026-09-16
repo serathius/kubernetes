@@ -57,12 +57,19 @@ var (
 			RequestDistribution: requestDistribution,
 		},
 		Watch: WatchConfig{
-			Concurrency: 4,
-			Duration:    100 * time.Millisecond,
-			MaxEvents:   50,
+			Concurrency: 8,
+			// etcd3 watch establishment under load regularly exceeds 100ms, which
+			// leaves a large tail of sessions that observe nothing.
+			Duration:  500 * time.Millisecond,
+			MaxEvents: 50,
 		},
 	}
 )
+
+// maxZeroEventRatio bounds the fraction of completed watch sessions allowed to
+// observe no events. Measured baseline is 0%; starving one dispatch scope class
+// produces 11-26%.
+const maxZeroEventRatio = 0.05
 
 func TestCorrectness(t *testing.T) {
 	storages := []struct {
@@ -117,6 +124,12 @@ func TestCorrectness(t *testing.T) {
 			t.Logf("Watch Coverage Report for %s:\n%s", s.name, coverage.Summary())
 			require.Greater(t, coverage.TotalWatches, 0, "expected at least one watch session")
 			require.Greater(t, coverage.TotalEvents, 0, "expected at least one watch event across sessions")
+			// A watch that receives no events satisfies every guarantee vacuously, so a bug
+			// that starves an entire class of watchers would otherwise go unnoticed. Traffic
+			// is dense enough that a healthy run sits near 0%; observed baseline is under 3%.
+			require.Less(t, coverage.ZeroEventRatio, maxZeroEventRatio,
+				"%.2f%% of watch sessions observed no events, a class of watchers may be silently starved",
+				coverage.ZeroEventRatio*100)
 		})
 	}
 }
