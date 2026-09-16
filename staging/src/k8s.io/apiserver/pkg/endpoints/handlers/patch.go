@@ -468,13 +468,15 @@ func (p *smpPatcher) applyPatchToCurrentObject(requestContext context.Context, c
 	if err := strategicPatchObject(requestContext, p.defaulter, currentVersionedObject, p.patchBytes, versionedObjToUpdate, p.schemaReferenceObj, p.validationDirective); err != nil {
 		return nil, err
 	}
+	currentVersionedObject.GetObjectKind().SetGroupVersionKind(p.kind)
+	versionedObjToUpdate.GetObjectKind().SetGroupVersionKind(p.kind)
+	versionedObjToUpdate = p.fieldManager.UpdateNoErrors(currentVersionedObject, versionedObjToUpdate, managerOrUserAgent(p.options.FieldManager, p.userAgent))
+
 	// Convert the object back to the hub version
 	newObj, err := p.unsafeConvertor.ConvertToVersion(versionedObjToUpdate, p.hubGroupVersion)
 	if err != nil {
 		return nil, err
 	}
-
-	newObj = p.fieldManager.UpdateNoErrors(currentObject, newObj, managerOrUserAgent(p.options.FieldManager, p.userAgent))
 	return newObj, nil
 }
 

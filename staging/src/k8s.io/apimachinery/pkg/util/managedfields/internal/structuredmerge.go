@@ -182,6 +182,9 @@ func (f *structuredMergeManager) Apply(liveObj, patchObj runtime.Object, managed
 }
 
 func (f *structuredMergeManager) toVersioned(obj runtime.Object) (runtime.Object, error) {
+	if obj.GetObjectKind().GroupVersionKind().GroupVersion() == f.groupVersion {
+		return obj, nil
+	}
 	return f.objectConverter.ConvertToVersion(obj, f.groupVersion)
 }
 
