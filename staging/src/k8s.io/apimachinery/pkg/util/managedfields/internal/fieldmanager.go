@@ -101,11 +101,12 @@ func decodeLiveOrNew(liveObj, newObj runtime.Object, ignoreManagedFieldsFromRequ
 	// If the managed field is empty or we failed to decode it,
 	// let's try the live object. This is to prevent clients who
 	// don't understand managedFields from deleting it accidentally.
-	managed, err := DecodeManagedFields(newAccessor.GetManagedFields())
-	if err != nil || len(managed.Fields()) == 0 {
-		return emptyManagedFieldsOnErr(DecodeManagedFields(liveAccessor.GetManagedFields()))
+	if newManagedFields := newAccessor.GetManagedFields(); len(newManagedFields) > 0 {
+		if managed, err := DecodeManagedFields(newManagedFields); err == nil && len(managed.Fields()) > 0 {
+			return managed, nil
+		}
 	}
-	return managed, nil
+	return emptyManagedFieldsOnErr(DecodeManagedFields(liveAccessor.GetManagedFields()))
 }
 
 func emptyManagedFieldsOnErr(managed Managed, err error) (Managed, error) {

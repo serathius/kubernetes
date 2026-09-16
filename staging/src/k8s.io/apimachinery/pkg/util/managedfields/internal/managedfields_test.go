@@ -518,3 +518,46 @@ func parseTimeOrPanic(s string) *metav1.Time {
 	}
 	return &metav1.Time{Time: t.UTC()}
 }
+
+func TestEncodeManagedFieldsReusesUnchangedRawBytes(t *testing.T) {
+	rawA := []byte(`{"f:fieldA":{}}`)
+	rawB := []byte(`{"f:fieldB":{}}`)
+	input := []metav1.ManagedFieldsEntry{
+		{
+			Manager:    "manager-a",
+			Operation:  metav1.ManagedFieldsOperationUpdate,
+			APIVersion: "v1",
+			FieldsType: "FieldsV1",
+			FieldsV1:   &metav1.FieldsV1{Raw: rawA},
+		},
+		{
+			Manager:    "manager-b",
+			Operation:  metav1.ManagedFieldsOperationApply,
+			APIVersion: "v1",
+			FieldsType: "FieldsV1",
+			FieldsV1:   &metav1.FieldsV1{Raw: rawB},
+		},
+	}
+
+	decoded, err := DecodeManagedFields(input)
+	if err != nil {
+		t.Fatalf("unexpected error decoding managed fields: %v", err)
+	}
+
+	encoded, err := encodeManagedFields(decoded)
+	if err != nil {
+		t.Fatalf("unexpected error encoding managed fields: %v", err)
+	}
+
+	if len(encoded) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(encoded))
+	}
+	// Apply sorts before Update
+	if &encoded[0].FieldsV1.Raw[0] != &rawB[0] {
+		t.Errorf("expected manager-b FieldsV1.Raw slice header to reuse original buffer")
+	}
+	if &encoded[1].FieldsV1.Raw[0] != &rawA[0] {
+		t.Errorf("expected manager-a FieldsV1.Raw slice header to reuse original buffer")
+	}
+}
+

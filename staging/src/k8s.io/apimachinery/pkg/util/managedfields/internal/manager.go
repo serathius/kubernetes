@@ -30,6 +30,9 @@ type Managed interface {
 
 	// Times gets the timestamps associated with each operation.
 	Times() map[string]*metav1.Time
+
+	// Originals gets the original wire entries decoded from the object.
+	Originals() map[string]originalManagedEntry
 }
 
 // Manager updates the managed fields and merges applied configurations.

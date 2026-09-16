@@ -44,23 +44,33 @@ func NewBuildManagerInfoManager(f Manager, gv schema.GroupVersion, subresource s
 
 // Update implements Manager.
 func (f *buildManagerInfoManager) Update(liveObj, newObj runtime.Object, managed Managed, manager string) (runtime.Object, Managed, error) {
-	manager, err := f.buildManagerInfo(manager, metav1.ManagedFieldsOperationUpdate)
+	manager, managerInfo, err := f.buildManagerInfo(manager, metav1.ManagedFieldsOperationUpdate)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to build manager identifier: %v", err)
+	}
+	if originals := managed.Originals(); originals != nil {
+		if _, ok := originals[manager]; !ok {
+			originals[manager] = originalManagedEntry{entry: managerInfo}
+		}
 	}
 	return f.fieldManager.Update(liveObj, newObj, managed, manager)
 }
 
 // Apply implements Manager.
 func (f *buildManagerInfoManager) Apply(liveObj, appliedObj runtime.Object, managed Managed, manager string, force bool) (runtime.Object, Managed, error) {
-	manager, err := f.buildManagerInfo(manager, metav1.ManagedFieldsOperationApply)
+	manager, managerInfo, err := f.buildManagerInfo(manager, metav1.ManagedFieldsOperationApply)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to build manager identifier: %v", err)
+	}
+	if originals := managed.Originals(); originals != nil {
+		if _, ok := originals[manager]; !ok {
+			originals[manager] = originalManagedEntry{entry: managerInfo}
+		}
 	}
 	return f.fieldManager.Apply(liveObj, appliedObj, managed, manager, force)
 }
 
-func (f *buildManagerInfoManager) buildManagerInfo(prefix string, operation metav1.ManagedFieldsOperationType) (string, error) {
+func (f *buildManagerInfoManager) buildManagerInfo(prefix string, operation metav1.ManagedFieldsOperationType) (string, metav1.ManagedFieldsEntry, error) {
 	managerInfo := metav1.ManagedFieldsEntry{
 		Manager:     prefix,
 		Operation:   operation,
@@ -70,5 +80,6 @@ func (f *buildManagerInfoManager) buildManagerInfo(prefix string, operation meta
 	if managerInfo.Manager == "" {
 		managerInfo.Manager = "unknown"
 	}
-	return BuildManagerIdentifier(&managerInfo)
+	manager, err := BuildManagerIdentifier(&managerInfo)
+	return manager, managerInfo, err
 }

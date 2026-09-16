@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 
 	"sigs.k8s.io/structured-merge-diff/v7/fieldpath"
 
@@ -28,6 +29,13 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
+// originalManagedEntry retains the wire ManagedFieldsEntry and decoded fieldpath.Set
+// so unchanged sets can reuse their existing FieldsV1 raw bytes without re-encoding.
+type originalManagedEntry struct {
+	entry metav1.ManagedFieldsEntry
+	set   *fieldpath.Set
+}
+
 // ManagedInterface groups a fieldpath.ManagedFields together with the timestamps associated with each operation.
 type ManagedInterface interface {
 	// Fields gets the fieldpath.ManagedFields.
@@ -35,11 +43,15 @@ type ManagedInterface interface {
 
 	// Times gets the timestamps associated with each operation.
 	Times() map[string]*metav1.Time
+
+	// Originals gets the original wire entries decoded from the object.
+	Originals() map[string]originalManagedEntry
 }
 
 type managedStruct struct {
-	fields fieldpath.ManagedFields
-	times  map[string]*metav1.Time
+	fields    fieldpath.ManagedFields
+	times     map[string]*metav1.Time
+	originals map[string]originalManagedEntry
 }
 
 var _ ManagedInterface = &managedStruct{}
@@ -54,6 +66,11 @@ func (m *managedStruct) Times() map[string]*metav1.Time {
 	return m.times
 }
 
+// Originals implements ManagedInterface.
+func (m *managedStruct) Originals() map[string]originalManagedEntry {
+	return m.originals
+}
+
 // NewEmptyManaged creates an empty ManagedInterface.
 func NewEmptyManaged() ManagedInterface {
 	return NewManaged(fieldpath.ManagedFields{}, map[string]*metav1.Time{})
@@ -62,8 +79,21 @@ func NewEmptyManaged() ManagedInterface {
 // NewManaged creates a ManagedInterface from a fieldpath.ManagedFields and the timestamps associated with each operation.
 func NewManaged(f fieldpath.ManagedFields, t map[string]*metav1.Time) ManagedInterface {
 	return &managedStruct{
-		fields: f,
-		times:  t,
+		fields:    f,
+		times:     t,
+		originals: map[string]originalManagedEntry{},
+	}
+}
+
+// NewManagedWithOriginals creates a ManagedInterface preserving the original decoded entries.
+func NewManagedWithOriginals(f fieldpath.ManagedFields, t map[string]*metav1.Time, originals map[string]originalManagedEntry) ManagedInterface {
+	if originals == nil {
+		originals = map[string]originalManagedEntry{}
+	}
+	return &managedStruct{
+		fields:    f,
+		times:     t,
+		originals: originals,
 	}
 }
 
@@ -97,9 +127,11 @@ func EncodeObjectManagedFields(obj runtime.Object, managed ManagedInterface) err
 // DecodeManagedFields converts ManagedFields from the wire format (api format)
 // to the format used by sigs.k8s.io/structured-merge-diff
 func DecodeManagedFields(encodedManagedFields []metav1.ManagedFieldsEntry) (ManagedInterface, error) {
-	managed := managedStruct{}
-	managed.fields = make(fieldpath.ManagedFields, len(encodedManagedFields))
-	managed.times = make(map[string]*metav1.Time, len(encodedManagedFields))
+	managed := managedStruct{
+		fields:    make(fieldpath.ManagedFields, len(encodedManagedFields)),
+		times:     make(map[string]*metav1.Time, len(encodedManagedFields)),
+		originals: make(map[string]originalManagedEntry, len(encodedManagedFields)),
+	}
 
 	for i, encodedVersionedSet := range encodedManagedFields {
 		switch encodedVersionedSet.Operation {
@@ -122,17 +154,80 @@ func DecodeManagedFields(encodedManagedFields []metav1.ManagedFieldsEntry) (Mana
 		if err != nil {
 			return nil, fmt.Errorf("error decoding manager from %v: %v", encodedVersionedSet, err)
 		}
-		managed.fields[manager], err = decodeVersionedSet(&encodedVersionedSet)
+		vs, err := decodeVersionedSet(&encodedVersionedSet)
 		if err != nil {
 			return nil, fmt.Errorf("error decoding versioned set from %v: %v", encodedVersionedSet, err)
 		}
+		managed.fields[manager] = vs
 		managed.times[manager] = encodedVersionedSet.Time
+		managed.originals[manager] = originalManagedEntry{
+			entry: encodedVersionedSet,
+			set:   vs.Set(),
+		}
 	}
 	return &managed, nil
 }
 
+func isSimpleJSONString(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c < 0x20 || c == '"' || c == '\\' || c == '<' || c == '>' || c == '&' {
+			return false
+		}
+	}
+	return true
+}
+
 // BuildManagerIdentifier creates a manager identifier string from a ManagedFieldsEntry
 func BuildManagerIdentifier(encodedManager *metav1.ManagedFieldsEntry) (manager string, err error) {
+	apiVersion := encodedManager.APIVersion
+	if encodedManager.Operation == metav1.ManagedFieldsOperationApply {
+		apiVersion = ""
+	}
+	if isSimpleJSONString(encodedManager.Manager) &&
+		isSimpleJSONString(string(encodedManager.Operation)) &&
+		isSimpleJSONString(apiVersion) &&
+		isSimpleJSONString(encodedManager.Subresource) {
+		var b strings.Builder
+		b.Grow(32 + len(encodedManager.Manager) + len(encodedManager.Operation) + len(apiVersion) + len(encodedManager.Subresource))
+		b.WriteByte('{')
+		wroteField := false
+		if encodedManager.Manager != "" {
+			b.WriteString(`"manager":"`)
+			b.WriteString(encodedManager.Manager)
+			b.WriteByte('"')
+			wroteField = true
+		}
+		if encodedManager.Operation != "" {
+			if wroteField {
+				b.WriteByte(',')
+			}
+			b.WriteString(`"operation":"`)
+			b.WriteString(string(encodedManager.Operation))
+			b.WriteByte('"')
+			wroteField = true
+		}
+		if apiVersion != "" {
+			if wroteField {
+				b.WriteByte(',')
+			}
+			b.WriteString(`"apiVersion":"`)
+			b.WriteString(apiVersion)
+			b.WriteByte('"')
+			wroteField = true
+		}
+		if encodedManager.Subresource != "" {
+			if wroteField {
+				b.WriteByte(',')
+			}
+			b.WriteString(`"subresource":"`)
+			b.WriteString(encodedManager.Subresource)
+			b.WriteByte('"')
+		}
+		b.WriteByte('}')
+		return b.String(), nil
+	}
+
 	encodedManagerCopy := *encodedManager
 
 	// Never include fields type in the manager identifier
@@ -177,9 +272,35 @@ func encodeManagedFields(managed ManagedInterface) (encodedManagedFields []metav
 	if len(managed.Fields()) == 0 {
 		return nil, nil
 	}
-	encodedManagedFields = []metav1.ManagedFieldsEntry{}
-	for manager := range managed.Fields() {
-		versionedSet := managed.Fields()[manager]
+	encodedManagedFields = make([]metav1.ManagedFieldsEntry, 0, len(managed.Fields()))
+	originals := managed.Originals()
+	for manager, versionedSet := range managed.Fields() {
+		if orig, ok := originals[manager]; ok {
+			v := metav1.ManagedFieldsEntry{
+				Manager:     orig.entry.Manager,
+				Operation:   orig.entry.Operation,
+				APIVersion:  string(versionedSet.APIVersion()),
+				FieldsType:  "FieldsV1",
+				Subresource: orig.entry.Subresource,
+			}
+			if versionedSet.Applied() {
+				v.Operation = metav1.ManagedFieldsOperationApply
+			}
+			if t, hasTime := managed.Times()[manager]; hasTime {
+				v.Time = t
+			}
+			if orig.set != nil && orig.entry.FieldsV1 != nil && (versionedSet.Set() == orig.set || versionedSet.Set().Equals(orig.set)) {
+				v.FieldsV1 = orig.entry.FieldsV1
+			} else {
+				fields, err := SetToFields(*versionedSet.Set())
+				if err != nil {
+					return nil, fmt.Errorf("error encoding versioned set for %v: %v", manager, err)
+				}
+				v.FieldsV1 = &fields
+			}
+			encodedManagedFields = append(encodedManagedFields, v)
+			continue
+		}
 		v, err := encodeManagerVersionedSet(manager, versionedSet)
 		if err != nil {
 			return nil, fmt.Errorf("error encoding versioned set for %v: %v", manager, err)

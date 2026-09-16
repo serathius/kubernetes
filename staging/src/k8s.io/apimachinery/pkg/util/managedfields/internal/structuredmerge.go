@@ -112,7 +112,7 @@ func (f *structuredMergeManager) Update(liveObj, newObj runtime.Object, managed 
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to update ManagedFields (%v): %v", objectGVKNN(newObjVersioned), err)
 	}
-	managed = NewManaged(managedFields, managed.Times())
+	managed = NewManagedWithOriginals(managedFields, managed.Times(), managed.Originals())
 
 	return newObj, managed, nil
 }
@@ -157,7 +157,7 @@ func (f *structuredMergeManager) Apply(liveObj, patchObj runtime.Object, managed
 	if err != nil {
 		return nil, nil, err
 	}
-	managed = NewManaged(managedFields, managed.Times())
+	managed = NewManagedWithOriginals(managedFields, managed.Times(), managed.Originals())
 
 	if newObjTyped == nil {
 		return nil, managed, nil
