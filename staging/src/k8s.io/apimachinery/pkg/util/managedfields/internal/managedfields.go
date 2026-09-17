@@ -168,7 +168,20 @@ func decodeVersionedSet(encodedVersionedSet *metav1.ManagedFieldsEntry) (version
 	if err != nil {
 		return nil, fmt.Errorf("error decoding set: %v", err)
 	}
-	return fieldpath.NewVersionedSet(&set, fieldpath.APIVersion(encodedVersionedSet.APIVersion), encodedVersionedSet.Operation == metav1.ManagedFieldsOperationApply), nil
+	decoded := fieldpath.NewVersionedSet(&set, fieldpath.APIVersion(encodedVersionedSet.APIVersion), encodedVersionedSet.Operation == metav1.ManagedFieldsOperationApply)
+	return &decodedVersionedSet{VersionedSet: decoded, encoded: fields}, nil
+}
+
+// decodedVersionedSet is a VersionedSet that remembers the encoding it was decoded from.
+//
+// Operations only ever replace the VersionedSet of the managers whose field set they
+// actually change, so a set that is still wrapped when it is encoded again is known to be
+// byte for byte identical to what was decoded, and serializing it again would be wasted
+// work. That matters because every request re-encodes the field sets of all managers of an
+// object, which for objects with several managers dwarfs the size of the change itself.
+type decodedVersionedSet struct {
+	fieldpath.VersionedSet
+	encoded metav1.FieldsV1
 }
 
 // encodeManagedFields converts ManagedFields from the format used by
@@ -239,6 +252,13 @@ func encodeManagerVersionedSet(manager string, versionedSet fieldpath.VersionedS
 		encodedVersionedSet.Operation = metav1.ManagedFieldsOperationApply
 	}
 	encodedVersionedSet.FieldsType = "FieldsV1"
+	if decoded, ok := versionedSet.(*decodedVersionedSet); ok {
+		// Untouched by this operation: reuse the encoding it was decoded from. The bytes
+		// are never mutated in place, so sharing them is safe.
+		fields := decoded.encoded
+		encodedVersionedSet.FieldsV1 = &fields
+		return encodedVersionedSet, nil
+	}
 	fields, err := SetToFields(*versionedSet.Set())
 	if err != nil {
 		return nil, fmt.Errorf("error encoding set: %v", err)

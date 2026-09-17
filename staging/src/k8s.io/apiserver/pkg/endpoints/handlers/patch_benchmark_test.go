@@ -48,7 +48,7 @@ func initBenchmarkScheme() *runtime.Scheme {
 	return s
 }
 
-func newBenchmarkFieldManager(b *testing.B, scheme *runtime.Scheme) *managedfields.FieldManager {
+func newBenchmarkFieldManager(b testing.TB, scheme *runtime.Scheme) *managedfields.FieldManager {
 	b.Helper()
 	gvk := corev1.SchemeGroupVersion.WithKind("Pod")
 	resetFields := fieldpath.NewExcludeFilterSetMap(map[fieldpath.APIVersion]*fieldpath.Set{
@@ -70,7 +70,7 @@ func newBenchmarkFieldManager(b *testing.B, scheme *runtime.Scheme) *managedfiel
 	return fm
 }
 
-func loadBenchmarkPod(b *testing.B, scheme *runtime.Scheme, fm *managedfields.FieldManager) *corev1.Pod {
+func loadBenchmarkPod(b testing.TB, scheme *runtime.Scheme, fm *managedfields.FieldManager) *corev1.Pod {
 	b.Helper()
 	data, err := os.ReadFile("testdata/pod_30KB.yaml")
 	if err != nil {
@@ -126,7 +126,7 @@ var (
 	benchLivePod *corev1.Pod
 )
 
-func initBenchmarkFixtures(b *testing.B) (*runtime.Scheme, *managedfields.FieldManager, *corev1.Pod) {
+func initBenchmarkFixtures(b testing.TB) (*runtime.Scheme, *managedfields.FieldManager, *corev1.Pod) {
 	b.Helper()
 	benchOnce.Do(func() {
 		benchScheme = initBenchmarkScheme()

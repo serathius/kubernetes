@@ -465,7 +465,8 @@ func (p *smpPatcher) applyPatchToCurrentObject(requestContext context.Context, c
 	if err != nil {
 		return nil, err
 	}
-	if err := strategicPatchObject(requestContext, p.defaulter, currentVersionedObject, p.patchBytes, versionedObjToUpdate, p.schemaReferenceObj, p.validationDirective); err != nil {
+	metadataOnly, err := strategicPatchObjectWithScope(requestContext, p.defaulter, currentVersionedObject, p.patchBytes, versionedObjToUpdate, p.schemaReferenceObj, p.validationDirective)
+	if err != nil {
 		return nil, err
 	}
 	// Convert the object back to the hub version
@@ -474,7 +475,13 @@ func (p *smpPatcher) applyPatchToCurrentObject(requestContext context.Context, c
 		return nil, err
 	}
 
-	newObj = p.fieldManager.UpdateNoErrors(currentObject, newObj, managerOrUserAgent(p.options.FieldManager, p.userAgent))
+	manager := managerOrUserAgent(p.options.FieldManager, p.userAgent)
+	if metadataOnly {
+		if scoped, ok := updateMetadataScopedManagedFields(p.fieldManager, currentObject, newObj, manager); ok {
+			return scoped, nil
+		}
+	}
+	newObj = p.fieldManager.UpdateNoErrors(currentObject, newObj, manager)
 	return newObj, nil
 }
 
@@ -562,28 +569,52 @@ func strategicPatchObject(
 	schemaReferenceObj runtime.Object,
 	validationDirective string,
 ) error {
-	originalObjMap, err := runtime.DefaultUnstructuredConverter.ToUnstructured(originalObject)
-	if err != nil {
-		return err
-	}
+	_, err := strategicPatchObjectWithScope(requestContext, defaulter, originalObject, patchBytes, objToUpdate, schemaReferenceObj, validationDirective)
+	return err
+}
 
+// strategicPatchObjectWithScope is strategicPatchObject, additionally reporting whether the
+// patch was applied to the metadata subtree only, which lets the caller skip work that is
+// provably a no-op for the rest of the object.
+func strategicPatchObjectWithScope(
+	requestContext context.Context,
+	defaulter runtime.ObjectDefaulter,
+	originalObject runtime.Object,
+	patchBytes []byte,
+	objToUpdate runtime.Object,
+	schemaReferenceObj runtime.Object,
+	validationDirective string,
+) (metadataOnly bool, err error) {
 	patchMap := make(map[string]interface{})
 	var strictErrs []error
 	if validationDirective == metav1.FieldValidationWarn || validationDirective == metav1.FieldValidationStrict {
 		strictErrs, err = kjson.UnmarshalStrict(patchBytes, &patchMap)
 		if err != nil {
-			return errors.NewBadRequest(err.Error())
+			return false, errors.NewBadRequest(err.Error())
 		}
 	} else {
 		if err = kjson.UnmarshalCaseSensitivePreserveInts(patchBytes, &patchMap); err != nil {
-			return errors.NewBadRequest(err.Error())
+			return false, errors.NewBadRequest(err.Error())
 		}
 	}
 
-	if err := applyPatchToObject(requestContext, defaulter, originalObjMap, patchMap, objToUpdate, schemaReferenceObj, strictErrs, validationDirective); err != nil {
-		return err
+	// A patch that can only touch metadata does not need the rest of the object to make a
+	// round trip through unstructured, which dominates the cost of patching objects with a
+	// large spec or status.
+	if metadataPatch, ok := metadataOnlyPatchMap(patchMap); ok && supportsMetadataOnlyPatch(originalObject, objToUpdate) {
+		err := applyMetadataPatchToObject(requestContext, defaulter, originalObject, patchMap, metadataPatch, objToUpdate, strictErrs, validationDirective)
+		return err == nil, err
 	}
-	return nil
+
+	originalObjMap, err := runtime.DefaultUnstructuredConverter.ToUnstructured(originalObject)
+	if err != nil {
+		return false, err
+	}
+
+	if err := applyPatchToObject(requestContext, defaulter, originalObjMap, patchMap, objToUpdate, schemaReferenceObj, strictErrs, validationDirective); err != nil {
+		return false, err
+	}
+	return false, nil
 }
 
 // applyPatch is called every time GuaranteedUpdate asks for the updated object,
@@ -769,7 +800,22 @@ func applyPatchToObject(
 	// Rather than serialize the patched map to JSON, then decode it to an object, we go directly from a map to an object
 	converter := runtime.DefaultUnstructuredConverter
 	returnUnknownFields := validationDirective == metav1.FieldValidationWarn || validationDirective == metav1.FieldValidationStrict
-	if err := converter.FromUnstructuredWithValidation(patchedObjMap, objToUpdate, returnUnknownFields); err != nil {
+	err = converter.FromUnstructuredWithValidation(patchedObjMap, objToUpdate, returnUnknownFields)
+	if err := handlePatchDecodingErrors(requestContext, err, patchMap, strictErrs, validationDirective); err != nil {
+		return err
+	}
+
+	// Decoding from JSON to a versioned object would apply defaults, so we do the same here
+	defaulter.Default(objToUpdate)
+
+	return nil
+}
+
+// handlePatchDecodingErrors turns the error returned by decoding a patched object, together
+// with the strict errors collected while decoding the patch itself, into the API error (or
+// the request warnings) mandated by the field validation directive.
+func handlePatchDecodingErrors(requestContext context.Context, err error, patchMap map[string]interface{}, strictErrs []error, validationDirective string) error {
+	if err != nil {
 		strictError, isStrictError := runtime.AsStrictDecodingError(err)
 		switch {
 		case !isStrictError:
@@ -798,10 +844,6 @@ func applyPatchToObject(
 			})
 		}
 	}
-
-	// Decoding from JSON to a versioned object would apply defaults, so we do the same here
-	defaulter.Default(objToUpdate)
-
 	return nil
 }
 
