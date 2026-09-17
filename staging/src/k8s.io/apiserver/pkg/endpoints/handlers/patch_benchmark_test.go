@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -28,6 +29,8 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/serializer/protobuf"
+	"k8s.io/apimachinery/pkg/runtime/serializer/versioning"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/managedfields"
 	"k8s.io/apimachinery/pkg/util/yaml"
@@ -136,8 +139,60 @@ func initBenchmarkFixtures(b testing.TB) (*runtime.Scheme, *managedfields.FieldM
 	return benchScheme, benchFM, benchLivePod.DeepCopy()
 }
 
+// benchConflictMode describes what the competing writer did between our read and
+// our write. It matters because ownership transfer, not the retry itself, is what
+// forces the field manager to rebuild and re-serialize a manager's field set.
+type benchConflictMode int
+
+const (
+	// conflictDisjoint models the common case: another actor (e.g. the kubelet
+	// writing status) committed first but touched nothing we own.
+	conflictDisjoint benchConflictMode = iota
+	// conflictContended models another manager owning the very label we patch, so
+	// every attempt steals ownership back from it.
+	conflictContended
+)
+
+// benchRestPatcher stands in for the registry Store plus etcd3 GuaranteedUpdate.
+// The retry loop is the point: everything inside it (patch, admission, validation,
+// encode) is paid once per lost optimistic transaction, so the per-request cost
+// scales with contention, not just with object size.
 type benchRestPatcher struct {
-	livePod *corev1.Pod
+	livePod   *corev1.Pod
+	liveBytes []byte
+	codec     runtime.Codec
+	conflicts int
+
+	// lastEncoded keeps the serialized candidate reachable so the encode cost is
+	// attributed to the benchmark rather than optimized away.
+	lastEncoded []byte
+}
+
+func newBenchRestPatcher(b testing.TB, scheme *runtime.Scheme, fm *managedfields.FieldManager, livePod *corev1.Pod, conflicts int, mode benchConflictMode) *benchRestPatcher {
+	b.Helper()
+	if mode == conflictContended {
+		livePod = contendLabelOwnership(b, fm, livePod)
+	}
+	s := protobuf.NewSerializer(scheme, scheme)
+	codec := versioning.NewDefaultingCodecForScheme(scheme, s, s, corev1.SchemeGroupVersion, corev1.SchemeGroupVersion)
+	data, err := runtime.Encode(codec, livePod)
+	if err != nil {
+		b.Fatalf("failed to encode live pod: %v", err)
+	}
+	return &benchRestPatcher{livePod: livePod, liveBytes: data, codec: codec, conflicts: conflicts}
+}
+
+// contendLabelOwnership hands the label the benchmark patches to another manager,
+// so that applying the patch has to take ownership back on every attempt.
+func contendLabelOwnership(b testing.TB, fm *managedfields.FieldManager, livePod *corev1.Pod) *corev1.Pod {
+	b.Helper()
+	contended := livePod.DeepCopy()
+	contended.Labels["bench-updated"] = "owned-by-clusterloader2"
+	obj, err := fm.Update(livePod, contended, "clusterloader2")
+	if err != nil {
+		b.Fatalf("failed to contend label ownership: %v", err)
+	}
+	return obj.(*corev1.Pod)
 }
 
 func (r *benchRestPatcher) New() runtime.Object {
@@ -149,29 +204,90 @@ func (r *benchRestPatcher) Get(ctx context.Context, name string, options *metav1
 }
 
 func (r *benchRestPatcher) Update(ctx context.Context, name string, objInfo rest.UpdatedObjectInfo, createValidation rest.ValidateObjectFunc, updateValidation rest.ValidateObjectUpdateFunc, forceAllowCreate bool, options *metav1.UpdateOptions) (runtime.Object, bool, error) {
-	// Cacher/storage deep-copies the cached live object before passing it to Store.Update
+	// Cacher/storage deep-copies the cached live object before passing it to Store.Update.
+	// Only the first attempt is served from the cache; retries re-read from etcd.
 	existing := r.livePod.DeepCopy()
 
-	obj, err := objInfo.UpdatedObject(ctx, existing)
-	if err != nil {
-		return nil, false, err
-	}
-
-	obj, err = fieldmanager.IgnoreManagedFieldsTimestampsTransformer(ctx, obj, existing)
-	if err != nil {
-		return nil, false, err
-	}
-
-	if updateValidation != nil {
-		if err := updateValidation(ctx, obj.DeepCopyObject(), existing.DeepCopyObject()); err != nil {
+	for attempt := 0; ; attempt++ {
+		obj, err := objInfo.UpdatedObject(ctx, existing)
+		if err != nil {
 			return nil, false, err
 		}
-	}
 
-	return obj, false, nil
+		obj, err = fieldmanager.IgnoreManagedFieldsTimestampsTransformer(ctx, obj, existing)
+		if err != nil {
+			return nil, false, err
+		}
+
+		if updateValidation != nil {
+			if err := updateValidation(ctx, obj.DeepCopyObject(), existing.DeepCopyObject()); err != nil {
+				return nil, false, err
+			}
+		}
+
+		// The candidate is serialized before the transaction is attempted, so a
+		// losing attempt pays for the encode too.
+		r.lastEncoded, err = runtime.Encode(r.codec, obj)
+		if err != nil {
+			return nil, false, err
+		}
+		if attempt >= r.conflicts {
+			return obj, false, nil
+		}
+
+		// Lost the compare-and-swap: etcd returns the current value, which the
+		// storage layer decodes from protobuf before re-running the closure.
+		decoded, err := runtime.Decode(r.codec, r.liveBytes)
+		if err != nil {
+			return nil, false, err
+		}
+		existing = decoded.(*corev1.Pod)
+		existing.ResourceVersion = strconv.Itoa(101 + attempt)
+	}
 }
 
+// benchAdmission stands in for the apiserver's admission chain: it handles every
+// operation but changes nothing, which is what a pod label patch sees in a cluster
+// with no matching webhooks. It has to be non-nil, otherwise the managedFields
+// validating controller short-circuits and the benchmark skips admission entirely.
+type benchAdmission struct{}
+
+func (benchAdmission) Handles(admission.Operation) bool { return true }
+
+func (benchAdmission) Admit(ctx context.Context, a admission.Attributes, o admission.ObjectInterfaces) error {
+	return nil
+}
+
+func (benchAdmission) Validate(ctx context.Context, a admission.Attributes, o admission.ObjectInterfaces) error {
+	return nil
+}
+
+// BenchmarkPatch30KBPod measures an uncontended patch: one attempt, one commit.
 func BenchmarkPatch30KBPod(b *testing.B) {
+	benchmarkPatch30KBPod(b, 0, conflictDisjoint)
+}
+
+// BenchmarkPatch30KBPodConflictDisjoint measures one lost optimistic transaction
+// where the competing writer touched nothing we own. Cost is pure retry
+// amplification; subtract BenchmarkPatch30KBPod to price a single conflict.
+func BenchmarkPatch30KBPodConflictDisjoint(b *testing.B) {
+	benchmarkPatch30KBPod(b, 1, conflictDisjoint)
+}
+
+// BenchmarkPatch30KBPodConflictContended measures one lost transaction where the
+// competing writer owns the label we patch, so each attempt also transfers
+// ownership. The delta against the disjoint case is the cost of that transfer.
+func BenchmarkPatch30KBPodConflictContended(b *testing.B) {
+	benchmarkPatch30KBPod(b, 1, conflictContended)
+}
+
+// benchmarkPatch30KBPod drives the real patchResource path against a storage stub.
+//
+// Gap worth knowing: the strategy hooks the registry runs per attempt
+// (PrepareForUpdate, ValidateUpdate, declarative validation) are ~22% of the real
+// apiserver profile but live in k8s.io/kubernetes, which staging cannot import.
+// The conflict multiplier here therefore understates production retry cost.
+func benchmarkPatch30KBPod(b *testing.B, conflicts int, mode benchConflictMode) {
 	scheme, fm, livePod := initBenchmarkFixtures(b)
 	ctx := request.WithNamespace(context.Background(), "default")
 
@@ -189,7 +305,7 @@ func BenchmarkPatch30KBPod(b *testing.B) {
 		FieldManager:    fm,
 	}
 
-	admit := fieldmanager.NewManagedFieldsValidatingAdmissionController(nil)
+	admit := fieldmanager.NewManagedFieldsValidatingAdmissionController(benchAdmission{})
 	mutatingAdmission, _ := admit.(admission.MutationInterface)
 	staticUpdateAttributes := admission.NewAttributesRecord(
 		nil, nil, gvk, "default", "bench-pod-0", gvr, "", admission.Update, &metav1.UpdateOptions{}, false, nil,
@@ -209,7 +325,7 @@ func BenchmarkPatch30KBPod(b *testing.B) {
 		admissionCheck:      mutatingAdmission,
 		updateValidation:    rest.AdmissionToValidateObjectUpdateFunc(admit, staticUpdateAttributes, scope),
 		options:             &metav1.PatchOptions{FieldManager: "patch-manager"},
-		restPatcher:         &benchRestPatcher{livePod: livePod},
+		restPatcher:         newBenchRestPatcher(b, scheme, fm, livePod, conflicts, mode),
 		name:                "bench-pod-0",
 		patchType:           types.StrategicMergePatchType,
 	}

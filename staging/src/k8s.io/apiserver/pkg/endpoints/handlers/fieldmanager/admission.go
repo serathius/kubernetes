@@ -17,10 +17,12 @@ limitations under the License.
 package fieldmanager
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 
 	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/managedfields"
 	"k8s.io/apiserver/pkg/admission"
 	"k8s.io/apiserver/pkg/warning"
@@ -71,6 +73,13 @@ func (admit *managedFieldsValidatingAdmissionController) Admit(ctx context.Conte
 		return err
 	}
 	managedFieldsAfterAdmission := objectMeta.GetManagedFields()
+	// Validating means decoding every FieldsV1 blob and throwing the result away,
+	// which for a large object costs more than the rest of admission. The entries
+	// arrive valid (the field manager just produced them), so only a mutating
+	// plugin can have broken them: if nothing changed, there is nothing to check.
+	if managedFieldsEntriesEqual(managedFieldsBeforeAdmission, managedFieldsAfterAdmission) {
+		return nil
+	}
 	if err := managedfields.ValidateManagedFields(managedFieldsAfterAdmission); err != nil {
 		objectMeta.SetManagedFields(managedFieldsBeforeAdmission)
 		warning.AddWarning(ctx, "",
@@ -79,6 +88,40 @@ func (admit *managedFieldsValidatingAdmissionController) Admit(ctx context.Conte
 		)
 	}
 	return nil
+}
+
+// managedFieldsEntriesEqual reports whether two sets of entries are identical.
+//
+// Comparing the raw FieldsV1 bytes is deliberate: it is a memcmp against a parse
+// into a fieldpath.Set, so it stays cheap even when a webhook round trip hands
+// back byte-identical entries in freshly allocated slices.
+//
+// A plugin that mutates the entries in place is not detected, because both
+// arguments then alias the same backing array. The reset below already assumes
+// plugins replace rather than mutate in place — restoring an aliased slice would
+// be a no-op — so this adds no new assumption.
+func managedFieldsEntriesEqual(before, after []metav1.ManagedFieldsEntry) bool {
+	if len(before) != len(after) {
+		return false
+	}
+	for i := range before {
+		x, y := &before[i], &after[i]
+		if x.Manager != y.Manager ||
+			x.Operation != y.Operation ||
+			x.APIVersion != y.APIVersion ||
+			x.FieldsType != y.FieldsType ||
+			x.Subresource != y.Subresource ||
+			!x.Time.Equal(y.Time) {
+			return false
+		}
+		if (x.FieldsV1 == nil) != (y.FieldsV1 == nil) {
+			return false
+		}
+		if x.FieldsV1 != nil && !bytes.Equal(x.FieldsV1.Raw, y.FieldsV1.Raw) {
+			return false
+		}
+	}
+	return true
 }
 
 // Validate calls the wrapped admission.Interface if aplicable
