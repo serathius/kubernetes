@@ -1,5 +1,3 @@
-//go:build fieldsv1string
-
 /*
 Copyright The Kubernetes Authors.
 
@@ -21,6 +19,7 @@ package v1
 import (
 	"strings"
 	"unique"
+	"unsafe"
 )
 
 // FieldsV1 stores a set of fields in a data structure like a Trie, in JSON format.
@@ -93,7 +92,7 @@ func (f *FieldsV1) GetRawString() string {
 // SetRawBytes sets the raw bytes. It does not retain the passed-in byte slice.
 func (f *FieldsV1) SetRawBytes(b []byte) {
 	if f != nil {
-		f.handle = unique.Make(string(b))
+		f.handle = unique.Make(unsafe.String(unsafe.SliceData(b), len(b)))
 	}
 }
 
@@ -102,6 +101,14 @@ func (f *FieldsV1) SetRawString(s string) {
 	if f != nil {
 		f.handle = unique.Make(s)
 	}
+}
+
+// UniqueHandle returns the canonical handle for the raw JSON payload.
+func (f *FieldsV1) UniqueHandle() unique.Handle[string] {
+	if f == nil {
+		return unique.Handle[string]{}
+	}
+	return f.handle
 }
 
 func NewFieldsV1(raw string) *FieldsV1 {

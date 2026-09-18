@@ -70,6 +70,35 @@ func TestFieldsToSetError(t *testing.T) {
 	}
 }
 
+// TestFieldsToSetCache verifies that distinct FieldsV1 instances with identical
+// payloads share the same decoded *fieldpath.Set via their unique.Handle, while
+// differing payloads decode to distinct sets.
+func TestFieldsToSetCache(t *testing.T) {
+	f1 := *metav1.NewFieldsV1(`{"f:metadata":{"f:labels":{"f:app":{}}}}`)
+	f2 := *metav1.NewFieldsV1(`{"f:metadata":{"f:labels":{"f:app":{}}}}`)
+	f3 := *metav1.NewFieldsV1(`{"f:metadata":{"f:labels":{"f:other":{}}}}`)
+
+	s1, err := fieldsToSetRef(f1)
+	if err != nil {
+		t.Fatalf("fieldsToSetRef(f1) failed: %v", err)
+	}
+	s2, err := fieldsToSetRef(f2)
+	if err != nil {
+		t.Fatalf("fieldsToSetRef(f2) failed: %v", err)
+	}
+	if s1 != s2 {
+		t.Errorf("expected identical FieldsV1 payloads to return the same cached *fieldpath.Set pointer, got %p != %p", s1, s2)
+	}
+
+	s3, err := fieldsToSetRef(f3)
+	if err != nil {
+		t.Fatalf("fieldsToSetRef(f3) failed: %v", err)
+	}
+	if s1 == s3 || s1.Equals(s3) {
+		t.Errorf("expected differing FieldsV1 payloads to return distinct sets")
+	}
+}
+
 // TestSetToFieldsError tests that errors are picked up by SetToFields
 func TestSetToFieldsError(t *testing.T) {
 	validName := "ok"

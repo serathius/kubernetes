@@ -17,7 +17,6 @@ limitations under the License.
 package fieldmanager
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 
@@ -117,7 +116,7 @@ func managedFieldsEntriesEqual(before, after []metav1.ManagedFieldsEntry) bool {
 		if (x.FieldsV1 == nil) != (y.FieldsV1 == nil) {
 			return false
 		}
-		if x.FieldsV1 != nil && !bytes.Equal(x.FieldsV1.Raw, y.FieldsV1.Raw) {
+		if x.FieldsV1 != nil && !x.FieldsV1.Equal(*y.FieldsV1) {
 			return false
 		}
 	}

@@ -17,7 +17,6 @@ limitations under the License.
 package handlers
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"reflect"
@@ -52,7 +51,7 @@ func metadataPatchTestPod() *corev1.Pod {
 				Operation:  metav1.ManagedFieldsOperationUpdate,
 				APIVersion: "v1",
 				FieldsType: "FieldsV1",
-				FieldsV1:   &metav1.FieldsV1{Raw: []byte(`{"f:metadata":{"f:labels":{"f:app":{}}}}`)},
+				FieldsV1:   metav1.NewFieldsV1(`{"f:metadata":{"f:labels":{"f:app":{}}}}`),
 			}},
 		},
 		Spec: corev1.PodSpec{
@@ -248,10 +247,10 @@ func fieldsEqual(lhs, rhs *metav1.FieldsV1) bool {
 		return lhs == rhs
 	}
 	lhsSet, rhsSet := fieldpath.NewSet(), fieldpath.NewSet()
-	if err := lhsSet.FromJSON(bytes.NewReader(lhs.Raw)); err != nil {
+	if err := lhsSet.FromJSON(lhs.GetRawReader()); err != nil {
 		return false
 	}
-	if err := rhsSet.FromJSON(bytes.NewReader(rhs.Raw)); err != nil {
+	if err := rhsSet.FromJSON(rhs.GetRawReader()); err != nil {
 		return false
 	}
 	return lhsSet.Equals(rhsSet)
@@ -261,5 +260,5 @@ func fieldsString(fields *metav1.FieldsV1) string {
 	if fields == nil {
 		return "<nil>"
 	}
-	return string(fields.Raw)
+	return fields.String()
 }

@@ -17,9 +17,25 @@ limitations under the License.
 package internal
 
 import (
+	"hash/maphash"
+	"sync/atomic"
+	"unique"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"sigs.k8s.io/structured-merge-diff/v7/fieldpath"
+)
+
+const fieldSetCacheSize = 4096
+
+type cachedFieldSet struct {
+	handle unique.Handle[string]
+	set    *fieldpath.Set
+}
+
+var (
+	fieldSetCacheSeed = maphash.MakeSeed()
+	fieldSetCache     [fieldSetCacheSize]atomic.Pointer[cachedFieldSet]
 )
 
 // EmptyFields represents a set with no paths
@@ -32,10 +48,40 @@ var EmptyFields = func() metav1.FieldsV1 {
 	return f
 }()
 
+// fieldsToSetRef returns an immutable *fieldpath.Set decoded from f, reusing the cached
+// trie when f's canonical handle has already been parsed.
+//
+// Sharing *fieldpath.Set across callers and objects is safe because sigs.k8s.io/structured-merge-diff
+// set operations (Union, Difference, Intersection, ReconcileFieldSetWithSchema, EnsureNamedFieldsAreMembers)
+// never mutate a Set in place; they always allocate a new Set when the result differs.
+func fieldsToSetRef(f metav1.FieldsV1) (*fieldpath.Set, error) {
+	handle := f.UniqueHandle()
+	if handle != (unique.Handle[string]{}) {
+		idx := maphash.Comparable(fieldSetCacheSeed, handle) & (fieldSetCacheSize - 1)
+		if cached := fieldSetCache[idx].Load(); cached != nil && cached.handle == handle {
+			return cached.set, nil
+		}
+		var s fieldpath.Set
+		if err := s.FromJSON(f.GetRawReader()); err != nil {
+			return nil, err
+		}
+		fieldSetCache[idx].Store(&cachedFieldSet{handle: handle, set: &s})
+		return &s, nil
+	}
+	var s fieldpath.Set
+	if err := s.FromJSON(f.GetRawReader()); err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
 // FieldsToSet creates a set paths from an input trie of fields
 func FieldsToSet(f metav1.FieldsV1) (s fieldpath.Set, err error) {
-	err = s.FromJSON(f.GetRawReader())
-	return s, err
+	ref, err := fieldsToSetRef(f)
+	if err != nil {
+		return fieldpath.Set{}, err
+	}
+	return *ref, nil
 }
 
 // SetToFields creates a trie of fields from an input set of paths

@@ -164,11 +164,11 @@ func decodeVersionedSet(encodedVersionedSet *metav1.ManagedFieldsEntry) (version
 	if encodedVersionedSet.FieldsV1 != nil {
 		fields = *encodedVersionedSet.FieldsV1
 	}
-	set, err := FieldsToSet(fields)
+	set, err := fieldsToSetRef(fields)
 	if err != nil {
 		return nil, fmt.Errorf("error decoding set: %v", err)
 	}
-	decoded := fieldpath.NewVersionedSet(&set, fieldpath.APIVersion(encodedVersionedSet.APIVersion), encodedVersionedSet.Operation == metav1.ManagedFieldsOperationApply)
+	decoded := fieldpath.NewVersionedSet(set, fieldpath.APIVersion(encodedVersionedSet.APIVersion), encodedVersionedSet.Operation == metav1.ManagedFieldsOperationApply)
 	return &decodedVersionedSet{VersionedSet: decoded, encoded: fields}, nil
 }
 
