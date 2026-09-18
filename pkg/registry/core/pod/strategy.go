@@ -1032,7 +1032,7 @@ func applyAppArmorVersionSkew(ctx context.Context, pod *api.Pod) {
 // updatePodGeneration bumps metadata.generation if needed for any updates
 // to the podspec.
 func updatePodGeneration(newPod, oldPod *api.Pod) {
-	if !apiequality.Semantic.DeepEqual(newPod.Spec, oldPod.Spec) {
+	if !apiequality.Semantic.DeepEqual(&newPod.Spec, &oldPod.Spec) {
 		newPod.Generation++
 	}
 }

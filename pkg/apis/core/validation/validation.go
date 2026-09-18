@@ -5909,7 +5909,7 @@ func ValidatePodUpdate(newPod, oldPod *core.Pod, opts PodValidationOptions) fiel
 
 	// the last thing to check is pod spec equality.  If the pod specs are equal, then we can simply return the errors we have
 	// so far and save the cost of a deep copy.
-	if apiequality.Semantic.DeepEqual(newPod.Spec, oldPod.Spec) {
+	if apiequality.Semantic.DeepEqual(&newPod.Spec, &oldPod.Spec) {
 		return allErrs
 	}
 

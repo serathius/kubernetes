@@ -455,6 +455,11 @@ type smpPatcher struct {
 }
 
 func (p *smpPatcher) applyPatchToCurrentObject(requestContext context.Context, currentObject runtime.Object) (runtime.Object, error) {
+	manager := managerOrUserAgent(p.options.FieldManager, p.userAgent)
+	if patched, ok, err := p.applyMetadataScopedPatch(requestContext, currentObject, manager); ok {
+		return patched, err
+	}
+
 	// Since the patch is applied on versioned objects, we need to convert the
 	// current object to versioned representation first.
 	currentVersionedObject, err := p.unsafeConvertor.ConvertToVersion(currentObject, p.kind.GroupVersion())
@@ -465,8 +470,7 @@ func (p *smpPatcher) applyPatchToCurrentObject(requestContext context.Context, c
 	if err != nil {
 		return nil, err
 	}
-	metadataOnly, err := strategicPatchObjectWithScope(requestContext, p.defaulter, currentVersionedObject, p.patchBytes, versionedObjToUpdate, p.schemaReferenceObj, p.validationDirective)
-	if err != nil {
+	if err := strategicPatchObject(requestContext, p.defaulter, currentVersionedObject, p.patchBytes, versionedObjToUpdate, p.schemaReferenceObj, p.validationDirective); err != nil {
 		return nil, err
 	}
 	// Convert the object back to the hub version
@@ -475,12 +479,6 @@ func (p *smpPatcher) applyPatchToCurrentObject(requestContext context.Context, c
 		return nil, err
 	}
 
-	manager := managerOrUserAgent(p.options.FieldManager, p.userAgent)
-	if metadataOnly {
-		if scoped, ok := updateMetadataScopedManagedFields(p.fieldManager, currentObject, newObj, manager); ok {
-			return scoped, nil
-		}
-	}
 	newObj = p.fieldManager.UpdateNoErrors(currentObject, newObj, manager)
 	return newObj, nil
 }

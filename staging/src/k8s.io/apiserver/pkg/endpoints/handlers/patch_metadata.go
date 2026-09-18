@@ -152,16 +152,19 @@ func applyMetadataPatchToObject(
 		source, metadataToPatch = detached, detachedMeta
 	}
 
-	// Everything but metadata is carried over untouched. The deep copy keeps the patched
-	// object from aliasing the object the storage layer handed us, which admission
-	// plugins and update validation rely on.
-	if !deepCopyObjectInto(source, objToUpdate) {
+	// Everything outside of metadata is carried over by shallow copy so untouched
+	// subtrees (such as Pod.Spec and Pod.Status) are not deep-copied and retain
+	// pointer identity with originalObject for downstream DeepEqual checks.
+	if !shallowCopyObjectInto(source, objToUpdate) {
 		return errUnsupportedMetadataOnlyPatch
 	}
 	updatedMeta, ok := objectMetaOf(objToUpdate)
 	if !ok {
 		return errUnsupportedMetadataOnlyPatch
 	}
+	// Reset updatedMeta before decoding patchedMetaMap so FromUnstructuredWithValidation
+	// allocates fresh maps/slices rather than mutating originalMeta's backing storage.
+	*updatedMeta = metav1.ObjectMeta{}
 	if !patchesManagedFields {
 		// Carried over by reference: entries are replaced, never mutated in place, and the
 		// field manager overwrites this slice with the result of the update anyway.
@@ -190,6 +193,75 @@ func applyMetadataPatchToObject(
 	return nil
 }
 
+// applyMetadataScopedPatch applies a metadata-only strategic merge patch directly to a
+// shallow copy of currentObject without converting or deep-copying untouched subtrees
+// (such as Spec and Status) to the external version and back.
+//
+// Returns (nil, false, nil) if the patch touches anything outside of metadata or if the
+// object does not embed metav1.ObjectMeta.
+func (p *smpPatcher) applyMetadataScopedPatch(requestContext context.Context, currentObject runtime.Object, manager string) (runtime.Object, bool, error) {
+	if _, ok := objectMetaOf(currentObject); !ok {
+		return nil, false, nil
+	}
+	versionedCarrier, carrierMeta, ok := p.newVersionedMetadataCarrier(currentObject)
+	if !ok {
+		return nil, false, nil
+	}
+	versionedObjToUpdate, err := p.creater.New(p.kind)
+	if err != nil {
+		return nil, false, nil
+	}
+
+	metadataOnly, err := strategicPatchObjectWithScope(
+		requestContext,
+		p.defaulter,
+		versionedCarrier,
+		p.patchBytes,
+		versionedObjToUpdate,
+		p.schemaReferenceObj,
+		p.validationDirective,
+	)
+	if !metadataOnly {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, true, err
+	}
+	_ = carrierMeta
+
+	updatedVersionedMeta, ok := objectMetaOf(versionedObjToUpdate)
+	if !ok {
+		return nil, false, nil
+	}
+	newObj, newMeta, ok := shallowCopyObject(currentObject)
+	if !ok {
+		return nil, false, nil
+	}
+	*newMeta = *updatedVersionedMeta
+
+	if scoped, ok := updateMetadataScopedManagedFields(p.fieldManager, currentObject, newObj, manager); ok {
+		return scoped, true, nil
+	}
+	return p.fieldManager.UpdateNoErrors(currentObject, newObj, manager), true, nil
+}
+
+func (p *smpPatcher) newVersionedMetadataCarrier(currentObject runtime.Object) (runtime.Object, *metav1.ObjectMeta, bool) {
+	currentMeta, ok := objectMetaOf(currentObject)
+	if !ok {
+		return nil, nil, false
+	}
+	carrier, err := p.creater.New(p.kind)
+	if err != nil {
+		return nil, nil, false
+	}
+	carrierMeta, ok := objectMetaOf(carrier)
+	if !ok {
+		return nil, nil, false
+	}
+	*carrierMeta = *currentMeta
+	return carrier, carrierMeta, true
+}
+
 // shallowCopyObject returns a copy of obj that shares all of its referenced memory, along
 // with the metadata of the copy. Only fields that are replaced (not mutated in place) on
 // the copy may be touched.
@@ -211,17 +283,18 @@ func shallowCopyObject(obj runtime.Object) (runtime.Object, *metav1.ObjectMeta, 
 	return copied, copiedMeta, true
 }
 
-// deepCopyObjectInto deep copies src into the object dst points at.
-func deepCopyObjectInto(src, dst runtime.Object) bool {
+// shallowCopyObjectInto copies the top-level struct of src into dst without deep-copying
+// referenced subtrees.
+func shallowCopyObjectInto(src, dst runtime.Object) bool {
+	srcValue := reflect.ValueOf(src)
 	dstValue := reflect.ValueOf(dst)
-	if dstValue.Kind() != reflect.Pointer || dstValue.IsNil() {
+	if srcValue.Kind() != reflect.Pointer || srcValue.IsNil() || dstValue.Kind() != reflect.Pointer || dstValue.IsNil() {
 		return false
 	}
-	copied := reflect.ValueOf(src.DeepCopyObject())
-	if copied.Type() != dstValue.Type() {
+	if srcValue.Type() != dstValue.Type() {
 		return false
 	}
-	dstValue.Elem().Set(copied.Elem())
+	dstValue.Elem().Set(srcValue.Elem())
 	return true
 }
 
