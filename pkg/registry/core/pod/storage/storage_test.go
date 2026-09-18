@@ -52,7 +52,7 @@ import (
 	"k8s.io/utils/ptr"
 )
 
-func newStorage(t *testing.T) (*REST, *BindingREST, *StatusREST, *etcd3testing.EtcdTestServer) {
+func newStorage(t testing.TB) (*REST, *BindingREST, *StatusREST, *etcd3testing.EtcdTestServer) {
 	etcdStorage, server := registrytest.NewEtcdStorage(t, "")
 	restOptions := generic.RESTOptions{
 		StorageConfig:           etcdStorage,

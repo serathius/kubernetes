@@ -28,11 +28,11 @@ import (
 )
 
 // NewEtcdStorage is for testing.  It configures the etcd storage for a bogus resource; the test must not care.
-func NewEtcdStorage(t *testing.T, group string) (*storagebackend.ConfigForResource, *etcd3testing.EtcdTestServer) {
+func NewEtcdStorage(t testing.TB, group string) (*storagebackend.ConfigForResource, *etcd3testing.EtcdTestServer) {
 	return NewEtcdStorageForResource(t, schema.GroupResource{Group: group, Resource: "any"})
 }
 
-func NewEtcdStorageForResource(t *testing.T, resource schema.GroupResource) (*storagebackend.ConfigForResource, *etcd3testing.EtcdTestServer) {
+func NewEtcdStorageForResource(t testing.TB, resource schema.GroupResource) (*storagebackend.ConfigForResource, *etcd3testing.EtcdTestServer) {
 	t.Helper()
 
 	server, config := etcd3testing.NewUnsecuredEtcd3TestClientServer(t)
