@@ -17,10 +17,14 @@ limitations under the License.
 package cacher
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
+	"reflect"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -118,6 +122,9 @@ func newTestWatchCache(capacity int, eventFreshDuration time.Duration, indexers 
 		return storage.NamespaceKeyFunc("/prefix/", obj)
 	}
 	getAttrsFunc := func(obj runtime.Object) (labels.Set, fields.Set, error) {
+		if precomputed, ok := obj.(storage.PrecomputedAttrsObject); ok {
+			return precomputed.GetAttrs()
+		}
 		pod, ok := obj.(*v1.Pod)
 		if !ok {
 			return nil, nil, fmt.Errorf("not a pod")
@@ -1220,6 +1227,225 @@ func BenchmarkWatchCache_updateCache(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		store.history.updateCache(add)
+	}
+}
+
+// BenchmarkWatchCache_Ingestion measures the single-threaded Reflector watch stream
+// ingestion path: watchCache.Update(obj) followed by watchCache.UpdateResourceVersion(rv).
+func BenchmarkWatchCache_Ingestion(b *testing.B) {
+	const numPods = 1000
+	s := newTestWatchCache(defaultUpperBoundCapacity, DefaultEventFreshDuration, &cache.Indexers{})
+	defer s.Stop()
+
+	pods := make([]*v1.Pod, numPods)
+	for i := range numPods {
+		pods[i] = makeTestPod(fmt.Sprintf("pod-%d", i), uint64(i+1))
+		if err := s.Add(pods[i]); err != nil {
+			b.Fatalf("Add failed: %v", err)
+		}
+	}
+
+	// Pre-build updated pod templates to avoid measuring fmt/strconv inside the loop.
+	updatedPods := make([]*v1.Pod, numPods)
+	for i := range numPods {
+		updatedPods[i] = makeTestPod(fmt.Sprintf("pod-%d", i), 0)
+	}
+
+	baseRV := uint64(numPods + 1)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rv := baseRV + uint64(i)
+		rvStr := strconv.FormatUint(rv, 10)
+		pod := updatedPods[i%numPods]
+		pod.ResourceVersion = rvStr
+		if err := s.Update(pod); err != nil {
+			b.Fatalf("Update failed: %v", err)
+		}
+		// Reflector calls UpdateResourceVersion after every Add/Update/Delete event.
+		s.UpdateResourceVersion(rvStr)
+	}
+}
+
+// BenchmarkWatchCache_WaitUntilFreshAndGet_Fresh measures concurrent WaitUntilFreshAndGet
+// throughput when the cache is already synchronized up to the requested ResourceVersion.
+func BenchmarkWatchCache_WaitUntilFreshAndGet_Fresh(b *testing.B) {
+	const numPods = 1000
+	s := newTestWatchCache(defaultUpperBoundCapacity, DefaultEventFreshDuration, &cache.Indexers{})
+	defer s.Stop()
+
+	keys := make([]string, numPods)
+	for i := range numPods {
+		name := fmt.Sprintf("pod-%d", i)
+		keys[i] = "/prefix/ns/" + name
+		if err := s.Add(makeTestPod(name, uint64(i+1))); err != nil {
+			b.Fatalf("Add failed: %v", err)
+		}
+	}
+	targetRV := uint64(numPods)
+	ctx := context.Background()
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		i := 0
+		for pb.Next() {
+			_, _, _, err := s.WaitUntilFreshAndGet(ctx, targetRV, keys[i%numPods])
+			if err != nil {
+				b.Fatalf("WaitUntilFreshAndGet failed: %v", err)
+			}
+			i++
+		}
+	})
+}
+
+// BenchmarkWatchCache_ConcurrentIngestionAndReadWait measures single-writer watchCache
+// ingestion speed while 64 concurrent reader goroutines continuously wait for the next
+// ResourceVersion via WaitUntilFreshAndGet (simulating Patch/GuaranteedUpdate read-wait contention).
+func BenchmarkWatchCache_ConcurrentIngestionAndReadWait(b *testing.B) {
+	const (
+		numPods    = 1000
+		numReaders = 64
+	)
+	s := newTestWatchCache(defaultUpperBoundCapacity, DefaultEventFreshDuration, &cache.Indexers{})
+	defer s.Stop()
+	// Use a real clock so WaitUntilFreshAndGet timers work normally if needed.
+	s.config.clock = clock.RealClock{}
+
+	keys := make([]string, numPods)
+	updatedPods := make([]*v1.Pod, numPods)
+	for i := range numPods {
+		name := fmt.Sprintf("pod-%d", i)
+		keys[i] = "/prefix/ns/" + name
+		if err := s.Add(makeTestPod(name, uint64(i+1))); err != nil {
+			b.Fatalf("Add failed: %v", err)
+		}
+		updatedPods[i] = makeTestPod(name, 0)
+	}
+
+	var currentRV atomic.Uint64
+	currentRV.Store(uint64(numPods))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var wg wait.Group
+	for r := range numReaders {
+		readerIdx := r
+		wg.Start(func() {
+			for {
+				if ctx.Err() != nil {
+					return
+				}
+				// Wait for the next RV (currentRV + 1) to exercise the wait & wakeup path.
+				targetRV := currentRV.Load() + 1
+				_, _, _, _ = s.WaitUntilFreshAndGet(ctx, targetRV, keys[readerIdx%numPods])
+			}
+		})
+	}
+
+	baseRV := uint64(numPods + 1)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rv := baseRV + uint64(i)
+		rvStr := strconv.FormatUint(rv, 10)
+		pod := updatedPods[i%numPods]
+		pod.ResourceVersion = rvStr
+		if err := s.Update(pod); err != nil {
+			b.Fatalf("Update failed: %v", err)
+		}
+		s.UpdateResourceVersion(rvStr)
+		currentRV.Store(rv)
+	}
+	b.StopTimer()
+	cancel()
+	// Advance RV so any reader blocked in WaitUntilFreshAndGet wakes up immediately.
+	s.UpdateResourceVersion(strconv.FormatUint(baseRV+uint64(b.N)+1000, 10))
+	wg.Wait()
+}
+
+// BenchmarkWatchCache_LazyIngestionAndDispatch measures watchCache ingestion +
+// Cacher.dispatchEvent (setCachingObjects) with LazyObject pods when watchers
+// are registered (measuring the single-threaded dispatchEvents path).
+func BenchmarkWatchCache_LazyIngestionAndDispatch(b *testing.B) {
+	benchmarkWatchCacheLazyDispatch(b, false)
+}
+
+// BenchmarkWatchCache_LazyIngestionDispatchAndEncode measures watchCache ingestion +
+// Cacher.dispatchEvent (setCachingObjects) + watcher CacheEncode with LazyObject pods.
+func BenchmarkWatchCache_LazyIngestionDispatchAndEncode(b *testing.B) {
+	benchmarkWatchCacheLazyDispatch(b, true)
+}
+
+func benchmarkWatchCacheLazyDispatch(b *testing.B, encodeToWatcher bool) {
+	const numPods = 1000
+	s := newTestWatchCache(defaultUpperBoundCapacity, DefaultEventFreshDuration, &cache.Indexers{})
+	defer s.Stop()
+
+	codec := corev1ProtoCodec
+	versioner := storage.APIObjectVersioner{}
+	podType := reflect.TypeOf(&v1.Pod{})
+
+	var encodeBuf bytes.Buffer
+	encodeFunc := func(obj runtime.Object, w io.Writer) error {
+		return codec.Encode(obj, w)
+	}
+	encoderID := runtime.Identifier("json-v1")
+
+	s.config.eventHandler = func(event *watchCacheEvent) {
+		if event.Type == watch.Bookmark {
+			return
+		}
+		wcEvent := *event
+		setCachingObjects(&wcEvent, versioner)
+		if encodeToWatcher {
+			encodeBuf.Reset()
+			if co, ok := wcEvent.Object.(runtime.CacheableObject); ok {
+				_ = co.CacheEncode(encoderID, encodeFunc, &encodeBuf)
+			}
+		}
+	}
+
+	rawPods := make([][]byte, numPods)
+	for i := range numPods {
+		pod := makeTestPod(fmt.Sprintf("pod-%d", i), uint64(i+1))
+		pod.Status = v1.PodStatus{
+			Phase: v1.PodRunning,
+			PodIP: "10.0.0.1",
+			Conditions: []v1.PodCondition{
+				{Type: v1.PodReady, Status: v1.ConditionTrue},
+				{Type: v1.PodScheduled, Status: v1.ConditionTrue},
+			},
+		}
+		data, err := runtime.Encode(codec, pod)
+		if err != nil {
+			b.Fatalf("Encode failed: %v", err)
+		}
+		rawPods[i] = data
+		lazyObj, err := storage.NewLazyObjectWrapper(codec, versioner, data, int64(i+1), podType)
+		if err != nil {
+			b.Fatalf("NewLazyObjectWrapper failed: %v", err)
+		}
+		if err := s.Add(lazyObj); err != nil {
+			b.Fatalf("Add failed: %v", err)
+		}
+	}
+
+	baseRV := uint64(numPods + 1)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rv := baseRV + uint64(i)
+		rvStr := strconv.FormatUint(rv, 10)
+		lazyObj, err := storage.NewLazyObjectWrapper(codec, versioner, rawPods[i%numPods], int64(rv), podType)
+		if err != nil {
+			b.Fatalf("NewLazyObjectWrapper failed: %v", err)
+		}
+		if err := s.Update(lazyObj); err != nil {
+			b.Fatalf("Update failed: %v", err)
+		}
+		s.UpdateResourceVersion(rvStr)
 	}
 }
 

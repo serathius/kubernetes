@@ -1015,10 +1015,6 @@ func (c *Cacher) dispatchEvents() {
 func setCachingObjects(event *watchCacheEvent, versioner storage.Versioner) {
 	switch event.Type {
 	case watch.Added, watch.Modified:
-		decoded, err := storage.DecodeLazyObject(event.Object)
-		if err == nil {
-			event.Object = decoded
-		}
 		if object, err := newCachingObject(event.Object); err == nil {
 			event.Object = object
 		} else {
@@ -1034,10 +1030,6 @@ func setCachingObjects(event *watchCacheEvent, versioner storage.Versioner) {
 	case watch.Deleted:
 		// Don't wrap Object for delete events - these are not to deliver any
 		// events. Only wrap PrevObject.
-		decoded, err := storage.DecodeLazyObject(event.PrevObject)
-		if err == nil {
-			event.PrevObject = decoded
-		}
 		if object, err := newCachingObject(event.PrevObject); err == nil {
 			// Update resource version of the object.
 			// event.PrevObject is used to deliver DELETE watch events and

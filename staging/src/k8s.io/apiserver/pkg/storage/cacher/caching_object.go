@@ -30,6 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apiserver/pkg/storage"
 	"k8s.io/klog/v2"
 )
 
@@ -73,6 +74,10 @@ type cachingObject struct {
 	// DELETE events, so in all other cases we can effectively avoid
 	// performing any deep copies.
 	deepCopied bool
+
+	// overrideRV stores an updated ResourceVersion (e.g. for DELETE events)
+	// when object is a LazyObject so SetResourceVersion does not trigger full decoding.
+	overrideRV string
 
 	// Object for which serializations are cached.
 	object metaRuntimeInterface
@@ -162,6 +167,16 @@ func (o *cachingObject) CacheEncode(id runtime.Identifier, encode func(runtime.O
 func (o *cachingObject) GetObject() runtime.Object {
 	o.lock.RLock()
 	defer o.lock.RUnlock()
+	if lazy, ok := o.object.(storage.LazyObject); ok && !o.deepCopied {
+		if decoded, err := lazy.DecodeNew(); err == nil {
+			if o.overrideRV != "" {
+				if metaObj, ok := decoded.(metav1.Object); ok {
+					metaObj.SetResourceVersion(o.overrideRV)
+				}
+			}
+			return decoded
+		}
+	}
 	return o.object.DeepCopyObject().(metaRuntimeInterface)
 }
 
@@ -184,6 +199,17 @@ func (o *cachingObject) DeepCopyObject() runtime.Object {
 
 	o.lock.RLock()
 	defer o.lock.RUnlock()
+	if lazy, ok := o.object.(storage.LazyObject); ok && !o.deepCopied {
+		if decoded, err := lazy.DecodeNew(); err == nil {
+			if o.overrideRV != "" {
+				if metaObj, ok := decoded.(metav1.Object); ok {
+					metaObj.SetResourceVersion(o.overrideRV)
+				}
+			}
+			result.object = decoded.(metaRuntimeInterface)
+			return result
+		}
+	}
 	result.object = o.object.DeepCopyObject().(metaRuntimeInterface)
 	return result
 }
@@ -238,8 +264,24 @@ func (o *cachingObject) conditionalSet(isNoop func() bool, set func()) {
 		return
 	}
 	if !o.deepCopied {
-		o.object = o.object.DeepCopyObject().(metaRuntimeInterface)
-		o.deepCopied = true
+		if lazy, ok := o.object.(storage.LazyObject); ok {
+			if decoded, err := lazy.DecodeNew(); err == nil {
+				o.object = decoded.(metaRuntimeInterface)
+				if o.overrideRV != "" {
+					o.object.SetResourceVersion(o.overrideRV)
+					o.overrideRV = ""
+				}
+				o.deepCopied = true
+			}
+		}
+		if !o.deepCopied {
+			o.object = o.object.DeepCopyObject().(metaRuntimeInterface)
+			if o.overrideRV != "" {
+				o.object.SetResourceVersion(o.overrideRV)
+				o.overrideRV = ""
+			}
+			o.deepCopied = true
+		}
 	}
 	o.invalidateCacheLocked()
 	set()
@@ -292,13 +334,42 @@ func (o *cachingObject) SetUID(uid types.UID) {
 func (o *cachingObject) GetResourceVersion() string {
 	o.lock.RLock()
 	defer o.lock.RUnlock()
+	if o.overrideRV != "" {
+		return o.overrideRV
+	}
 	return o.object.GetResourceVersion()
 }
 func (o *cachingObject) SetResourceVersion(version string) {
-	o.conditionalSet(
-		func() bool { return o.object.GetResourceVersion() == version },
-		func() { o.object.SetResourceVersion(version) },
-	)
+	if fastPath := func() bool {
+		o.lock.RLock()
+		defer o.lock.RUnlock()
+		if o.overrideRV != "" {
+			return o.overrideRV == version
+		}
+		return o.object.GetResourceVersion() == version
+	}(); fastPath {
+		return
+	}
+	o.lock.Lock()
+	defer o.lock.Unlock()
+	curRV := o.overrideRV
+	if curRV == "" {
+		curRV = o.object.GetResourceVersion()
+	}
+	if curRV == version {
+		return
+	}
+	if _, isLazy := o.object.(storage.LazyObject); isLazy && !o.deepCopied {
+		o.invalidateCacheLocked()
+		o.overrideRV = version
+		return
+	}
+	if !o.deepCopied {
+		o.object = o.object.DeepCopyObject().(metaRuntimeInterface)
+		o.deepCopied = true
+	}
+	o.invalidateCacheLocked()
+	o.object.SetResourceVersion(version)
 }
 func (o *cachingObject) GetGeneration() int64 {
 	o.lock.RLock()

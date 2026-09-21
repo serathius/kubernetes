@@ -75,14 +75,6 @@ type watchCacheEvent struct {
 	timeline metrics.DispatchTimeline
 }
 
-type watchCacheSyncState struct {
-	// resourceVersion up to which the watchCache is synchronized
-	// (advances on both mutating events and bookmarks).
-	resourceVersion uint64
-	// notifyCh is closed when watchCache advances to a newer resourceVersion.
-	notifyCh chan struct{}
-}
-
 // watchCache implements a Store interface.
 // However, it depends on the elements implementing runtime.Object interface.
 //
@@ -91,15 +83,18 @@ type watchCacheSyncState struct {
 type watchCache struct {
 	sync.RWMutex
 
-	// Condition on which lists are waiting for the fresh enough
-	// resource version.
-	cond *sync.Cond
-
 	// ResourceVersion up to which the watchCache is propagated.
 	resourceVersion uint64
 
-	// Atomic state tracking the latest synchronized resourceVersion and broadcast channel.
-	syncState atomic.Pointer[watchCacheSyncState]
+	// Atomic latest synchronized resourceVersion (advances on both mutating events and bookmarks).
+	atomicResourceVersion atomic.Uint64
+
+	// Lazily allocated broadcast channel closed when atomicResourceVersion advances.
+	// Only allocated when at least one reader is actively waiting in waitUntilFresh.
+	notifyCh atomic.Pointer[chan struct{}]
+
+	// Pool of reusable timers for waitUntilFresh when using RealClock.
+	timerPool sync.Pool
 
 	// This handler is run at the end of every successful Replace() method.
 	onReplace func()
@@ -110,6 +105,10 @@ type watchCache struct {
 	config *ImmutableWatchCacheConfig
 }
 
+// ImmutableWatchCacheConfig contains configuration parameters for watchCache
+// that are initialized once during creation and never modified afterwards.
+// Grouping these together clarifies that they do not require synchronization
+// and can be safely accessed without holding the watchCache lock.
 type ImmutableWatchCacheConfig struct {
 	// keyFunc is used to get a key in the underlying storage for a given object.
 	keyFunc func(runtime.Object) (string, error)
@@ -117,26 +116,27 @@ type ImmutableWatchCacheConfig struct {
 	// getAttrsFunc is used to get labels and fields of an object.
 	getAttrsFunc func(runtime.Object) (labels.Set, fields.Set, error)
 
-	// This handler is run at the end of every Add/Update/Delete method
-	// and additionally gets the previous value of the object.
+	// eventHandler is run at the end of every successful Add, Update, or Delete
+	// method, and additionally in UpdateResourceVersion if the version actually
+	// changed.
 	eventHandler func(*watchCacheEvent)
-
-	// for testing timeouts.
-	clock clock.Clock
-
-	// An underlying storage.Versioner.
-	versioner storage.Versioner
-
-	// cacher's group resource
-	groupResource schema.GroupResource
 
 	// For testing cache interval invalidation.
 	indexValidator indexValidator
 
-	// Requests progress notification if there are requests waiting for watch
-	// to be fresh
+	// for testing timeouts.
+	clock clock.Clock
+
+	// versioner is used to parse and update resourceVersion of objects.
+	versioner storage.Versioner
+
+	// groupResource is the group and resource stored in this cache, used for metrics.
+	groupResource schema.GroupResource
+
+	// waitingUntilFresh is notified when a reader starts/stops waiting for fresh data.
 	waitingUntilFresh *progress.ConditionalProgressRequester
 
+	// getCurrentRV is used to get current resourceVersion from etcd for consistent reads.
 	getCurrentRV func(context.Context) (uint64, error)
 }
 
@@ -169,11 +169,6 @@ func newWatchCache(
 		history:         newWatchCacheHistory(config, eventFreshDuration),
 		storage:         store.NewWatchCacheStorage(config.keyFunc, indexers),
 	}
-	wc.syncState.Store(&watchCacheSyncState{
-		resourceVersion: 0,
-		notifyCh:        make(chan struct{}),
-	})
-	wc.cond = sync.NewCond(wc.RLocker())
 	wc.config.indexValidator = wc.history.isIndexValidLocked
 
 	return wc
@@ -181,14 +176,27 @@ func newWatchCache(
 
 func (w *watchCache) setResourceVersionLocked(rv uint64) {
 	w.resourceVersion = rv
-	prev := w.syncState.Swap(&watchCacheSyncState{
-		resourceVersion: rv,
-		notifyCh:        make(chan struct{}),
-	})
-	if prev != nil {
-		close(prev.notifyCh)
+	w.atomicResourceVersion.Store(rv)
+	if w.notifyCh.Load() != nil {
+		if chPtr := w.notifyCh.Swap(nil); chPtr != nil {
+			close(*chPtr)
+		}
 	}
-	w.cond.Broadcast()
+}
+
+func (w *watchCache) getNotifyChan() chan struct{} {
+	if chPtr := w.notifyCh.Load(); chPtr != nil {
+		return *chPtr
+	}
+	ch := make(chan struct{})
+	if w.notifyCh.CompareAndSwap(nil, &ch) {
+		return ch
+	}
+	if chPtr := w.notifyCh.Load(); chPtr != nil {
+		return *chPtr
+	}
+	close(ch)
+	return ch
 }
 
 // Add takes runtime.Object as an argument.
@@ -321,7 +329,7 @@ func (w *watchCache) UpdateResourceVersion(resourceVersion string) {
 	// Reflector calls UpdateResourceVersion after every Add/Update/Delete event
 	// in addition to Bookmark events. Skip when watchCache is already synchronized
 	// to this exact rv so mutating events do not re-lock or broadcast a second time.
-	if w.syncState.Load().resourceVersion == rv {
+	if w.atomicResourceVersion.Load() == rv {
 		return
 	}
 
@@ -355,9 +363,9 @@ func (w *watchCache) UpdateResourceVersion(resourceVersion string) {
 // waitUntilFresh waits lock-free until watchCache is synchronized to at least resourceVersion,
 // returning the synchronized resourceVersion observed.
 func (w *watchCache) waitUntilFresh(ctx context.Context, consistentReadSupported bool, resourceVersion uint64) (uint64, error) {
-	state := w.syncState.Load()
-	if resourceVersion == 0 || state.resourceVersion >= resourceVersion {
-		return state.resourceVersion, nil
+	curRV := w.atomicResourceVersion.Load()
+	if resourceVersion == 0 || curRV >= resourceVersion {
+		return curRV, nil
 	}
 	if consistentReadSupported {
 		w.config.waitingUntilFresh.Add()
@@ -370,27 +378,51 @@ func (w *watchCache) waitUntilFresh(ctx context.Context, consistentReadSupported
 		}
 	}()
 
-	timer := w.config.clock.NewTimer(blockTimeout)
-	defer timer.Stop()
+	_, isRealClock := w.config.clock.(clock.RealClock)
+	var timer clock.Timer
+	if isRealClock {
+		if v := w.timerPool.Get(); v != nil {
+			timer = v.(clock.Timer)
+			timer.Reset(blockTimeout)
+		} else {
+			timer = w.config.clock.NewTimer(blockTimeout)
+		}
+		defer func() {
+			if !timer.Stop() {
+				select {
+				case <-timer.C():
+				default:
+				}
+			}
+			w.timerPool.Put(timer)
+		}()
+	} else {
+		timer = w.config.clock.NewTimer(blockTimeout)
+		defer timer.Stop()
+	}
 
-	for state.resourceVersion < resourceVersion {
+	for curRV < resourceVersion {
 		if w.config.clock.Since(startTime) >= blockTimeout {
-			return 0, storage.NewTooLargeResourceVersionError(resourceVersion, state.resourceVersion, resourceVersionTooHighRetrySeconds)
+			return 0, storage.NewTooLargeResourceVersionError(resourceVersion, curRV, resourceVersionTooHighRetrySeconds)
+		}
+		notifyCh := w.getNotifyChan()
+		if curRV = w.atomicResourceVersion.Load(); curRV >= resourceVersion {
+			return curRV, nil
 		}
 		select {
-		case <-state.notifyCh:
-			state = w.syncState.Load()
+		case <-notifyCh:
+			curRV = w.atomicResourceVersion.Load()
 		case <-timer.C():
-			state = w.syncState.Load()
-			if state.resourceVersion >= resourceVersion {
-				return state.resourceVersion, nil
+			curRV = w.atomicResourceVersion.Load()
+			if curRV >= resourceVersion {
+				return curRV, nil
 			}
-			return 0, storage.NewTooLargeResourceVersionError(resourceVersion, state.resourceVersion, resourceVersionTooHighRetrySeconds)
+			return 0, storage.NewTooLargeResourceVersionError(resourceVersion, curRV, resourceVersionTooHighRetrySeconds)
 		case <-ctx.Done():
 			return 0, ctx.Err()
 		}
 	}
-	return state.resourceVersion, nil
+	return curRV, nil
 }
 
 // waitUntilFreshLocked waits until cache is at least as fresh as given resourceVersion.
@@ -592,7 +624,7 @@ func (w *watchCache) waitAndGetLatestSnapshot(ctx context.Context, minResourceVe
 }
 
 func (w *watchCache) notFresh(resourceVersion uint64) bool {
-	return resourceVersion > w.syncState.Load().resourceVersion
+	return resourceVersion > w.atomicResourceVersion.Load()
 }
 
 // WaitUntilFreshAndGet returns a pointers to <storeElement> object.
