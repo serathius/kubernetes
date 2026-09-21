@@ -108,6 +108,9 @@ func (podStrategy) PrepareForCreate(ctx context.Context, obj runtime.Object) {
 func (podStrategy) PrepareForUpdate(ctx context.Context, obj, old runtime.Object) {
 	newPod := obj.(*api.Pod)
 	oldPod := old.(*api.Pod)
+	if newPod.ObjectMeta.LazyWire != nil && oldPod.ObjectMeta.LazyWire != nil {
+		return
+	}
 	newPod.Status = oldPod.Status
 
 	if utilfeature.DefaultFeatureGate.Enabled(features.PodLevelResourcesFixDefaulting) {
@@ -154,6 +157,9 @@ func (podStrategy) ValidateUpdate(ctx context.Context, obj, old runtime.Object) 
 	// Allow downward api usage of hugepages on pod update if feature is enabled or if the old pod already had used them.
 	pod := obj.(*api.Pod)
 	oldPod := old.(*api.Pod)
+	if pod.ObjectMeta.LazyWire != nil && oldPod.ObjectMeta.LazyWire != nil {
+		return corevalidation.ValidateObjectMetaUpdate(&pod.ObjectMeta, &oldPod.ObjectMeta, field.NewPath("metadata"))
+	}
 	opts := podutil.GetValidationOptionsFromPodSpecAndMeta(&pod.Spec, &oldPod.Spec, &pod.ObjectMeta, &oldPod.ObjectMeta)
 	opts.ResourceIsPod = true
 	return corevalidation.ValidatePodUpdate(obj.(*api.Pod), old.(*api.Pod), opts)
@@ -491,6 +497,9 @@ func (p podResizeStrategy) GetResetFieldsFilter() map[fieldpath.APIVersion]field
 
 // GetAttrs returns labels and fields of a given object for filtering purposes.
 func GetAttrs(obj runtime.Object) (labels.Set, fields.Set, error) {
+	if precomputed, ok := obj.(storage.PrecomputedAttrsObject); ok {
+		return precomputed.GetAttrs()
+	}
 	pod, ok := obj.(*api.Pod)
 	if !ok {
 		return nil, nil, fmt.Errorf("not a pod")
@@ -510,11 +519,17 @@ func MatchPod(label labels.Selector, field fields.Selector) storage.SelectionPre
 
 // NodeNameTriggerFunc returns value spec.nodename of given object.
 func NodeNameTriggerFunc(obj runtime.Object) string {
+	if precomputed, ok := obj.(storage.PrecomputedAttrsObject); ok {
+		return precomputed.GetNodeName()
+	}
 	return obj.(*api.Pod).Spec.NodeName
 }
 
 // NodeNameIndexFunc return value spec.nodename of given object.
 func NodeNameIndexFunc(obj interface{}) ([]string, error) {
+	if precomputed, ok := obj.(storage.PrecomputedAttrsObject); ok {
+		return precomputed.GetNodeNameSlice(), nil
+	}
 	pod, ok := obj.(*api.Pod)
 	if !ok {
 		return nil, fmt.Errorf("not a pod")
@@ -566,6 +581,11 @@ func getPod(ctx context.Context, getter ResourceGetter, name string) (*api.Pod, 
 	pod := obj.(*api.Pod)
 	if pod == nil {
 		return nil, fmt.Errorf("Unexpected object type: %#v", pod)
+	}
+	if pod.ObjectMeta.LazyWire != nil && pod.ObjectMeta.LazyWire.DecodeFullInto != nil {
+		if err := pod.ObjectMeta.LazyWire.DecodeFullInto(pod); err != nil {
+			return nil, err
+		}
 	}
 	return pod, nil
 }

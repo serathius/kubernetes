@@ -377,7 +377,13 @@ func getPod(r *EvictionREST, ctx context.Context, name string) (*api.Pod, error)
 	if err != nil {
 		return nil, err
 	}
-	return obj.(*api.Pod), nil
+	pod := obj.(*api.Pod)
+	if pod != nil && pod.ObjectMeta.LazyWire != nil && pod.ObjectMeta.LazyWire.DecodeFullInto != nil {
+		if err := pod.ObjectMeta.LazyWire.DecodeFullInto(pod); err != nil {
+			return nil, err
+		}
+	}
+	return pod, nil
 }
 
 func setPreconditionsResourceVersion(deleteOptions *metav1.DeleteOptions, resourceVersion *string) {

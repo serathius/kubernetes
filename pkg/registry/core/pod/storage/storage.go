@@ -350,9 +350,22 @@ func (r *StatusREST) Destroy() {
 	// we don't destroy it here explicitly.
 }
 
+func getFullPod(ctx context.Context, store *genericregistry.Store, name string, options *metav1.GetOptions) (runtime.Object, error) {
+	obj, err := store.Get(ctx, name, options)
+	if err != nil {
+		return nil, err
+	}
+	if pod, ok := obj.(*api.Pod); ok && pod != nil && pod.ObjectMeta.LazyWire != nil && pod.ObjectMeta.LazyWire.DecodeFullInto != nil {
+		if err := pod.ObjectMeta.LazyWire.DecodeFullInto(pod); err != nil {
+			return nil, err
+		}
+	}
+	return obj, nil
+}
+
 // Get retrieves the object from the storage. It is required to support Patch.
 func (r *StatusREST) Get(ctx context.Context, name string, options *metav1.GetOptions) (runtime.Object, error) {
-	return r.store.Get(ctx, name, options)
+	return getFullPod(ctx, r.store, name, options)
 }
 
 // Update alters the status subset of an object.
@@ -380,7 +393,7 @@ var _ = rest.Patcher(&EphemeralContainersREST{})
 
 // Get retrieves the object from the storage. It is required to support Patch.
 func (r *EphemeralContainersREST) Get(ctx context.Context, name string, options *metav1.GetOptions) (runtime.Object, error) {
-	return r.store.Get(ctx, name, options)
+	return getFullPod(ctx, r.store, name, options)
 }
 
 // New creates a new pod resource
@@ -410,7 +423,7 @@ var _ = rest.Patcher(&ResizeREST{})
 
 // Get retrieves the object from the storage. It is required to support Patch.
 func (r *ResizeREST) Get(ctx context.Context, name string, options *metav1.GetOptions) (runtime.Object, error) {
-	return r.store.Get(ctx, name, options)
+	return getFullPod(ctx, r.store, name, options)
 }
 
 // New creates a new pod resource

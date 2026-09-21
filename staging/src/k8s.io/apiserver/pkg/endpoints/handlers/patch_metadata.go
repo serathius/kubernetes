@@ -17,10 +17,14 @@ limitations under the License.
 package handlers
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -121,6 +125,14 @@ func supportsMetadataOnlyPatch(originalObject, objToUpdate runtime.Object) bool 
 // This is equivalent to converting the whole object to unstructured, merging, and
 // converting it back, but the conversions are $O(\text{len(metadata)})$ instead of
 // $O(\text{len(object)})$, which matters a lot for objects with a large spec/status.
+func isLabelsOnlyMetadataPatch(metadataPatch map[string]interface{}) bool {
+	if len(metadataPatch) != 1 {
+		return false
+	}
+	_, ok := metadataPatch["labels"]
+	return ok
+}
+
 func applyMetadataPatchToObject(
 	requestContext context.Context,
 	defaulter runtime.ObjectDefaulter,
@@ -134,6 +146,11 @@ func applyMetadataPatchToObject(
 	originalMeta, ok := objectMetaOf(originalObject)
 	if !ok {
 		return errUnsupportedMetadataOnlyPatch
+	}
+	if originalMeta.LazyWire != nil && !isLabelsOnlyMetadataPatch(metadataPatch) && originalMeta.LazyWire.DecodeFullInto != nil {
+		if err := originalMeta.LazyWire.DecodeFullInto(originalObject); err != nil {
+			return err
+		}
 	}
 	_, patchesManagedFields := metadataPatch["managedFields"]
 
@@ -200,8 +217,17 @@ func applyMetadataPatchToObject(
 // Returns (nil, false, nil) if the patch touches anything outside of metadata or if the
 // object does not embed metav1.ObjectMeta.
 func (p *smpPatcher) applyMetadataScopedPatch(requestContext context.Context, currentObject runtime.Object, manager string) (runtime.Object, bool, error) {
-	if _, ok := objectMetaOf(currentObject); !ok {
+	currentMeta, ok := objectMetaOf(currentObject)
+	if !ok {
 		return nil, false, nil
+	}
+	if patched, ok := p.tryApplyLabelsOnlyFastPath(currentObject, currentMeta, manager); ok {
+		return patched, true, nil
+	}
+	if currentMeta.LazyWire != nil && currentMeta.LazyWire.DecodeFullInto != nil {
+		if decErr := currentMeta.LazyWire.DecodeFullInto(currentObject); decErr != nil {
+			return nil, true, decErr
+		}
 	}
 	versionedCarrier, carrierMeta, ok := p.newVersionedMetadataCarrier(currentObject)
 	if !ok {
@@ -243,6 +269,115 @@ func (p *smpPatcher) applyMetadataScopedPatch(requestContext context.Context, cu
 		return scoped, true, nil
 	}
 	return p.fieldManager.UpdateNoErrors(currentObject, newObj, manager), true, nil
+}
+
+// tryApplyLabelsOnlyFastPath handles the common {"metadata":{"labels":{"k":"v"}}} patch
+// directly on ObjectMeta without unstructured round-trips or structured-merge-diff walkers
+// when the patched label keys are already exclusively owned by manager.
+func (p *smpPatcher) tryApplyLabelsOnlyFastPath(currentObject runtime.Object, currentMeta *metav1.ObjectMeta, manager string) (runtime.Object, bool) {
+	patchedLabels, ok := parseSimpleLabelsOnlyPatch(p.patchBytes)
+	if !ok || len(patchedLabels) == 0 {
+		return nil, false
+	}
+
+	newObj, newMeta, ok := shallowCopyObject(currentObject)
+	if !ok {
+		return nil, false
+	}
+	newLabels := make(map[string]string, len(currentMeta.Labels)+len(patchedLabels))
+	for k, v := range currentMeta.Labels {
+		newLabels[k] = v
+	}
+	for k, v := range patchedLabels {
+		newLabels[k] = v
+	}
+	newMeta.Labels = newLabels
+	if currentMeta.LazyWire != nil {
+		newMeta.LazyWire = currentMeta.LazyWire.WithMetaModified()
+	}
+
+	apiVersion := p.kind.GroupVersion().String()
+	if updatedMF, ok := tryUpdateManagedFieldsForOwnedLabels(currentMeta, patchedLabels, manager, apiVersion); ok {
+		newMeta.ManagedFields = updatedMF
+		return newObj, true
+	}
+	if scoped, ok := updateMetadataScopedManagedFields(p.fieldManager, currentObject, newObj, manager); ok {
+		return scoped, true
+	}
+	if currentMeta.LazyWire != nil {
+		return nil, false
+	}
+	return p.fieldManager.UpdateNoErrors(currentObject, newObj, manager), true
+}
+
+func isSimpleLabelsOnlyPatchPayload(patchBytes []byte) bool {
+	trimmed := bytes.TrimSpace(patchBytes)
+	return bytes.HasPrefix(trimmed, []byte(`{"metadata":{"labels":{`)) && bytes.HasSuffix(trimmed, []byte(`}}}`))
+}
+
+func parseSimpleLabelsOnlyPatch(patchBytes []byte) (map[string]string, bool) {
+	// Fast prefix check for `{"metadata":{"labels":{`
+	trimmed := bytes.TrimSpace(patchBytes)
+	if !bytes.HasPrefix(trimmed, []byte(`{"metadata":{"labels":{`)) || !bytes.HasSuffix(trimmed, []byte(`}}}`)) {
+		return nil, false
+	}
+	inner := trimmed[len(`{"metadata":{"labels":`) : len(trimmed)-2]
+	if bytes.Contains(inner, []byte(`"$patch"`)) || bytes.Contains(inner, []byte(`null`)) {
+		return nil, false
+	}
+	var labels map[string]string
+	if err := json.Unmarshal(inner, &labels); err != nil || len(labels) == 0 {
+		return nil, false
+	}
+	return labels, true
+}
+
+func tryUpdateManagedFieldsForOwnedLabels(currentMeta *metav1.ObjectMeta, patchedLabels map[string]string, manager, apiVersion string) ([]metav1.ManagedFieldsEntry, bool) {
+	if len(currentMeta.ManagedFields) == 0 || len(currentMeta.Labels) == 0 {
+		return nil, false
+	}
+	managerIdx := -1
+	for i := range currentMeta.ManagedFields {
+		mf := &currentMeta.ManagedFields[i]
+		if mf.Manager == manager && mf.Operation == metav1.ManagedFieldsOperationUpdate && mf.APIVersion == apiVersion && mf.Subresource == "" {
+			if managerIdx != -1 {
+				return nil, false
+			}
+			managerIdx = i
+		}
+	}
+	if managerIdx == -1 || currentMeta.ManagedFields[managerIdx].FieldsV1 == nil {
+		return nil, false
+	}
+	managerRaw := currentMeta.ManagedFields[managerIdx].FieldsV1.String()
+
+	for k := range patchedLabels {
+		if _, exists := currentMeta.Labels[k]; !exists {
+			return nil, false
+		}
+		var needleBuf [64]byte
+		needle := append(needleBuf[:0], `"f:`...)
+		needle = append(needle, k...)
+		needle = append(needle, `":`...)
+		needleStr := string(needle)
+		if !strings.Contains(managerRaw, string(append(needle, '{', '}'))) {
+			return nil, false
+		}
+		for i := range currentMeta.ManagedFields {
+			if i == managerIdx || currentMeta.ManagedFields[i].FieldsV1 == nil {
+				continue
+			}
+			if strings.Contains(currentMeta.ManagedFields[i].FieldsV1.String(), needleStr) {
+				return nil, false
+			}
+		}
+	}
+
+	newMF := make([]metav1.ManagedFieldsEntry, len(currentMeta.ManagedFields))
+	copy(newMF, currentMeta.ManagedFields)
+	now := metav1.NewTime(time.Now().UTC())
+	newMF[managerIdx].Time = &now
+	return newMF, true
 }
 
 func (p *smpPatcher) newVersionedMetadataCarrier(currentObject runtime.Object) (runtime.Object, *metav1.ObjectMeta, bool) {

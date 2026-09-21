@@ -36,55 +36,85 @@ import (
 	"k8s.io/apiserver/pkg/audit"
 	"k8s.io/apiserver/pkg/endpoints/handlers"
 	"k8s.io/apiserver/pkg/endpoints/request"
-	"k8s.io/apiserver/pkg/registry/rest"
+	"k8s.io/apiserver/pkg/registry/generic"
+	genericregistry "k8s.io/apiserver/pkg/registry/generic/registry"
+	"k8s.io/apiserver/pkg/storage"
+	etcd3testing "k8s.io/apiserver/pkg/storage/etcd3/testing"
+	"k8s.io/apiserver/pkg/storage/storagebackend"
 	"k8s.io/client-go/applyconfigurations"
 	"k8s.io/kubernetes/pkg/api/legacyscheme"
 	api "k8s.io/kubernetes/pkg/apis/core"
+	"k8s.io/kubernetes/pkg/registry/registrytest"
 	"sigs.k8s.io/structured-merge-diff/v7/fieldpath"
 )
 
 //go:embed testdata/exemplar_pod.yaml
 var exemplarPodYAML []byte
 
-func BenchmarkPatchPod(b *testing.B) {
-	storage, scope, admit, pod := setupBenchmarkPatch(b)
-	patchTypes := []string{string(types.StrategicMergePatchType)}
-	ctx := audit.WithAuditContext(request.WithNamespace(request.WithRequestInfo(context.Background(), &request.RequestInfo{
-		IsResourceRequest: true,
-		Verb:              "patch",
-		APIVersion:        "v1",
-		Resource:          "pods",
-		Namespace:         pod.Namespace,
-		Name:              pod.Name,
-	}), pod.Namespace))
-	target := fmt.Sprintf("/api/v1/namespaces/%s/pods/%s?fieldManager=patch-manager", pod.Namespace, pod.Name)
+const benchmarkPodCount = 64
 
-	patch := func(i int) {
+func BenchmarkPatchPod(b *testing.B) {
+	restStorage, scope, admit, pods, _, _ := setupBenchmarkPatch(b)
+	patchTypes := []string{string(types.StrategicMergePatchType)}
+
+	patchAndGet := func(i int) {
+		pod := pods[i%len(pods)]
+		ctx := audit.WithAuditContext(request.WithNamespace(request.WithRequestInfo(context.Background(), &request.RequestInfo{
+			IsResourceRequest: true,
+			Verb:              "patch",
+			APIVersion:        "v1",
+			Resource:          "pods",
+			Namespace:         pod.Namespace,
+			Name:              pod.Name,
+		}), pod.Namespace))
+		target := fmt.Sprintf("/api/v1/namespaces/%s/pods/%s?fieldManager=patch-manager", pod.Namespace, pod.Name)
 		body := bytes.NewReader(fmt.Appendf(nil, `{"metadata":{"labels":{"bench-updated":"%d"}}}`, i))
 		req := httptest.NewRequestWithContext(ctx, http.MethodPatch, target, body)
 		req.Header.Set("Content-Type", string(types.StrategicMergePatchType))
 		req.Header.Set("Accept", runtime.ContentTypeProtobuf)
 		w := httptest.NewRecorder()
-		handlers.PatchResource(storage, scope, admit, patchTypes)(w, req)
+		handlers.PatchResource(restStorage, scope, admit, patchTypes)(w, req)
 		if w.Code != http.StatusOK {
 			b.Fatalf("unexpected status %d: %s", w.Code, w.Body.String())
 		}
+
+		rv, err := storage.ExtractResourceVersionFromStorageBytes(w.Body.Bytes())
+		if err != nil || rv == "" {
+			b.Fatalf("failed to extract resourceVersion from patch response: %v (rv=%q)", err, rv)
+		}
+		// Wait for watch cache to observe the patched revision and read the object through Get.
+		if _, err := restStorage.Get(ctx, pod.Name, &metav1.GetOptions{ResourceVersion: rv}); err != nil {
+			b.Fatalf("Get from watch cache failed: %v", err)
+		}
 	}
-	patch(0)
+	for i := range pods {
+		patchAndGet(i)
+	}
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		patch(i + 1)
+		patchAndGet(i + len(pods))
 	}
 }
 
-func setupBenchmarkPatch(b *testing.B) (*REST, *handlers.RequestScope, admission.Interface, *api.Pod) {
+func setupBenchmarkPatch(b *testing.B) (*REST, *handlers.RequestScope, admission.Interface, []*api.Pod, *storagebackend.ConfigForResource, *etcd3testing.EtcdTestServer) {
 	b.Helper()
-	storage, _, _, server := newStorage(b)
+	etcdStorage, server := registrytest.NewEtcdStorage(b, "")
+	restOptions := generic.RESTOptions{
+		StorageConfig:           etcdStorage,
+		Decorator:               genericregistry.StorageWithCacher(),
+		DeleteCollectionWorkers: 3,
+		ResourcePrefix:          "pods",
+	}
+	podStorage, err := NewStorage(restOptions, nil, nil, nil, nil)
+	if err != nil {
+		b.Fatalf("unexpected error from REST storage: %v", err)
+	}
+	storage := podStorage.Pod
 	b.Cleanup(func() {
-		server.Terminate(b)
 		storage.Store.DestroyFunc()
+		server.Terminate(b)
 	})
 
 	scheme := legacyscheme.Scheme
@@ -103,7 +133,7 @@ func setupBenchmarkPatch(b *testing.B) (*REST, *handlers.RequestScope, admission
 		b.Fatalf("failed to create field manager: %v", err)
 	}
 
-	pod := createBenchmarkPod(b, storage)
+	pods := createBenchmarkPods(b, storage, benchmarkPodCount)
 	scope := &handlers.RequestScope{
 		Namer:               handlers.ContextBasedNaming{Namer: meta.NewAccessor()},
 		Serializer:          legacyscheme.Codecs,
@@ -121,30 +151,34 @@ func setupBenchmarkPatch(b *testing.B) (*REST, *handlers.RequestScope, admission
 		FieldManager:        fm,
 	}
 	admit := admission.NewChainHandler(admission.NewHandler(admission.Update))
-	return storage, scope, admit, pod
+	return storage, scope, admit, pods, etcdStorage, server
 }
 
-func createBenchmarkPod(b *testing.B, storage *REST) *api.Pod {
+func createBenchmarkPods(b *testing.B, storage *REST, count int) []*api.Pod {
 	b.Helper()
 	var v1Pod v1.Pod
 	if err := yaml.Unmarshal(exemplarPodYAML, &v1Pod); err != nil {
 		b.Fatalf("failed to unmarshal exemplar_pod.yaml: %v", err)
 	}
-	var internalPod api.Pod
-	if err := legacyscheme.Scheme.Convert(&v1Pod, &internalPod, nil); err != nil {
+	var basePod api.Pod
+	if err := legacyscheme.Scheme.Convert(&v1Pod, &basePod, nil); err != nil {
 		b.Fatalf("failed to convert pod: %v", err)
 	}
-	internalPod.ResourceVersion = ""
-	ctx := request.WithNamespace(request.WithRequestInfo(context.Background(), &request.RequestInfo{
-		IsResourceRequest: true,
-		Verb:              "create",
-		APIVersion:        "v1",
-		Resource:          "pods",
-		Namespace:         internalPod.Namespace,
-	}), internalPod.Namespace)
-	created, err := storage.Create(ctx, &internalPod, rest.ValidateAllObjectFunc, &metav1.CreateOptions{})
-	if err != nil {
-		b.Fatalf("failed to create pod: %v", err)
+	basePod.ResourceVersion = ""
+	ctx := request.WithNamespace(context.Background(), basePod.Namespace)
+	pods := make([]*api.Pod, count)
+	for i := 0; i < count; i++ {
+		pod := basePod.DeepCopy()
+		pod.Name = fmt.Sprintf("%s-%d", basePod.Name, i)
+		key, err := storage.KeyFunc(ctx, pod.Name)
+		if err != nil {
+			b.Fatalf("failed to compute key: %v", err)
+		}
+		var created api.Pod
+		if err := storage.Store.Storage.Create(ctx, key, pod, &created, 0, false); err != nil {
+			b.Fatalf("failed to create pod in storage: %v", err)
+		}
+		pods[i] = &created
 	}
-	return created.(*api.Pod)
+	return pods
 }

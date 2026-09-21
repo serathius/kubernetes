@@ -87,9 +87,13 @@ func (c *CacheDelegator) Delete(ctx context.Context, key string, out runtime.Obj
 	if elem, exists, err := c.cacher.watchCache.storage.GetByKey(key); err != nil {
 		klog.Errorf("GetByKey returned error: %v", err)
 	} else if exists {
+		elemObj := elem.(*store.Element).Object
+		if _, ok := elemObj.(storage.LazyObject); ok {
+			return c.storage.Delete(ctx, key, out, preconditions, validateDeletion, elemObj, opts)
+		}
 		// DeepCopy the object since we modify resource version when serializing the
 		// current object.
-		currObj := elem.(*store.Element).Object.DeepCopyObject()
+		currObj := elemObj.DeepCopyObject()
 		return c.storage.Delete(ctx, key, out, preconditions, validateDeletion, currObj, opts)
 	}
 	// If we couldn't get the object, fallback to no-suggestion.
@@ -193,8 +197,6 @@ func shouldDelegateListOnNotReadyCache(opts storage.ListOptions) bool {
 	return noLabelSelector && noFieldSelector && hasLimit
 }
 
-const maxUpdateRetries = 3
-
 func (c *CacheDelegator) GuaranteedUpdate(ctx context.Context, key string, destination runtime.Object, ignoreNotFound bool, preconditions *storage.Preconditions, tryUpdate storage.UpdateFunc, cachedExistingObject runtime.Object) (err error) {
 	attempts := 0
 	defer func() {
@@ -215,8 +217,13 @@ func (c *CacheDelegator) GuaranteedUpdate(ctx context.Context, key string, desti
 	if elem, exists, err := c.cacher.watchCache.storage.GetByKey(key); err != nil {
 		klog.Errorf("GetByKey returned error: %v", err)
 	} else if exists {
-		// Avoid modifying the cached instance during serialization in the storage layer.
-		currObj = elem.(*store.Element).Object.DeepCopyObject()
+		obj := elem.(*store.Element).Object
+		if _, isLazy := obj.(storage.LazyObject); isLazy {
+			currObj = obj
+		} else {
+			// Avoid modifying the cached instance during serialization in the storage layer.
+			currObj = obj.DeepCopyObject()
+		}
 	} else if cachedExistingObject != nil {
 		currObj = cachedExistingObject.DeepCopyObject()
 	}
@@ -231,9 +238,6 @@ func (c *CacheDelegator) GuaranteedUpdate(ctx context.Context, key string, desti
 			return err
 		}
 		storagemetrics.RecordStorageUpdateConflict(c.cacher.groupResource, storagemetrics.StorageBackendWatchCache)
-		if attempts > maxUpdateRetries {
-			return err
-		}
 
 		var storageErr *storage.StorageError
 		if !stderrors.As(err, &storageErr) || storageErr.ResourceVersion <= 0 {
@@ -261,7 +265,11 @@ func (c *CacheDelegator) GuaranteedUpdate(ctx context.Context, key string, desti
 			if !ok {
 				return fmt.Errorf("non *store.Element returned from storage: %v", obj)
 			}
-			currObj = elem.Object.DeepCopyObject()
+			if _, isLazy := elem.Object.(storage.LazyObject); isLazy {
+				currObj = elem.Object
+			} else {
+				currObj = elem.Object.DeepCopyObject()
+			}
 		}
 	}
 }

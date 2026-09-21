@@ -19,6 +19,7 @@ package registrytest
 import (
 	"testing"
 
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apiserver/pkg/server/options"
 	serverstorage "k8s.io/apiserver/pkg/server/storage"
@@ -36,8 +37,10 @@ func NewEtcdStorageForResource(t testing.TB, resource schema.GroupResource) (*st
 	t.Helper()
 
 	server, config := etcd3testing.NewUnsecuredEtcd3TestClientServer(t)
+	config.EventsHistoryWindow = storagebackend.DefaultEventsHistoryWindow
 
 	options := options.NewEtcdOptions(config)
+	options.DefaultStorageMediaType = runtime.ContentTypeProtobuf
 	completedConfig := kubeapiserver.NewStorageFactoryConfig().Complete(options)
 	completedConfig.APIResourceConfig = serverstorage.NewResourceConfig()
 	factory, err := completedConfig.New()

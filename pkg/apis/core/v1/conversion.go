@@ -98,6 +98,17 @@ func addConversionFuncs(scheme *runtime.Scheme) error {
 	if err := AddFieldLabelConversionsForService(scheme); err != nil {
 		return err
 	}
+	if err := scheme.AddConversionFunc((*core.Pod)(nil), (*v1.Pod)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		in := a.(*core.Pod)
+		if in != nil && in.ObjectMeta.LazyWire != nil && in.ObjectMeta.LazyWire.DecodeFullInto != nil {
+			if err := in.ObjectMeta.LazyWire.DecodeFullInto(in); err != nil {
+				return err
+			}
+		}
+		return Convert_core_Pod_To_v1_Pod(in, b.(*v1.Pod), scope)
+	}); err != nil {
+		return err
+	}
 	return nil
 }
 

@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -91,6 +92,7 @@ type watcher struct {
 	client                   *clientv3.Client
 	codec                    runtime.Codec
 	newFunc                  func() runtime.Object
+	underlyingType           reflect.Type
 	objectType               string
 	groupResource            schema.GroupResource
 	versioner                storage.Versioner
@@ -767,6 +769,13 @@ func (t *timedWatchEvent) Unwrap() runtime.Object {
 	return t.Object
 }
 
+func (t *timedWatchEvent) GetUnderlyingType() reflect.Type {
+	if typed, ok := t.Object.(runtime.TypedObject); ok {
+		return typed.GetUnderlyingType()
+	}
+	return reflect.TypeOf(t.Object)
+}
+
 func transformErrorToEvent(err error) *watch.Event {
 	err = interpretWatchError(err)
 	if _, ok := err.(apierrors.APIStatus); !ok {
@@ -835,7 +844,7 @@ func (wc *watchChan) prepareObjs(e *event) (curObj runtime.Object, oldObj runtim
 		if err != nil {
 			return nil, nil, err
 		}
-		curObj, err = decodeObj(wc.watcher.codec, wc.watcher.versioner, data, e.rev)
+		curObj, err = decodeObj(wc.watcher.codec, wc.watcher.versioner, data, e.rev, wc.watcher.underlyingType, wc.recordTimestamps)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -852,7 +861,7 @@ func (wc *watchChan) prepareObjs(e *event) (curObj runtime.Object, oldObj runtim
 		}
 		// Note that this sends the *old* object with the etcd revision for the time at
 		// which it gets deleted.
-		oldObj, err = decodeObj(wc.watcher.codec, wc.watcher.versioner, data, e.rev)
+		oldObj, err = decodeObj(wc.watcher.codec, wc.watcher.versioner, data, e.rev, wc.watcher.underlyingType, wc.recordTimestamps)
 		if err != nil {
 			return nil, nil, wc.watcher.transformIfCorruptObjectError(e, err)
 		}
@@ -882,7 +891,17 @@ func (w *watcher) transformIfCorruptObjectError(e *event, err error) error {
 	return &corruptObjectDeletedError{err: corruptObjErr}
 }
 
-func decodeObj(codec runtime.Codec, versioner storage.Versioner, data []byte, rev int64) (_ runtime.Object, err error) {
+func decodeObj(codec runtime.Codec, versioner storage.Versioner, data []byte, rev int64, underlyingType reflect.Type, lazy bool) (_ runtime.Object, err error) {
+	if lazy && underlyingType != nil {
+		obj, err := storage.NewLazyObjectWrapper(codec, versioner, data, rev, underlyingType)
+		if err != nil {
+			if fatalOnDecodeError.Load() {
+				panic(err)
+			}
+			return nil, err
+		}
+		return obj, nil
+	}
 	obj, err := runtime.Decode(codec, []byte(data))
 	if err != nil {
 		if fatalOnDecodeError.Load() {

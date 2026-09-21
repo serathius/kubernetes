@@ -304,6 +304,10 @@ type ObjectMeta struct {
 	// +listType=atomic
 	// +k8s:alpha(since: "1.37")=+k8s:optional
 	ManagedFields []ManagedFieldsEntry `json:"managedFields,omitempty" protobuf:"bytes,17,rep,name=managedFields"`
+
+	// LazyWire holds optional pre-parsed protobuf wire slices so Get and metadata-scoped
+	// Patch can splice wire bytes without unmarshaling or marshaling untouched sub-messages.
+	LazyWire *RawStorageWire `json:"-" protobuf:"-"`
 }
 
 const (

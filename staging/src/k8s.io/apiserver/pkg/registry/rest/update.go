@@ -25,6 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/operation"
 	genericvalidation "k8s.io/apimachinery/pkg/api/validation"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	metav1validation "k8s.io/apimachinery/pkg/apis/meta/v1/validation"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/apiserver/pkg/admission"
@@ -132,6 +133,13 @@ func BeforeUpdate(strategy RESTUpdateStrategy, ctx context.Context, obj, old run
 		return err
 	}
 	objectMeta.SetGeneration(oldMeta.GetGeneration())
+	if oldRealMeta, ok := oldMeta.(*metav1.ObjectMeta); ok && oldRealMeta.LazyWire != nil && oldRealMeta.LazyWire.DecodeFullInto != nil {
+		if newRealMeta, ok := objectMeta.(*metav1.ObjectMeta); !ok || newRealMeta.LazyWire == nil {
+			if err := oldRealMeta.LazyWire.DecodeFullInto(old); err != nil {
+				return err
+			}
+		}
+	}
 
 	strategy.PrepareForUpdate(ctx, obj, old)
 
@@ -166,8 +174,19 @@ func BeforeUpdate(strategy RESTUpdateStrategy, ctx context.Context, obj, old run
 	return nil
 }
 
+var metadataLabelsPath = field.NewPath("metadata", "labels")
+
 // ValidateUpdate performs common and strategy-specific validation for an update operation.
 func ValidateUpdate(ctx context.Context, obj runtime.Object, old runtime.Object, strategy RESTUpdateStrategy) field.ErrorList {
+	if objAcc, ok := obj.(metav1.ObjectMetaAccessor); ok {
+		if oldAcc, ok := old.(metav1.ObjectMetaAccessor); ok {
+			if newMeta, ok := objAcc.GetObjectMeta().(*metav1.ObjectMeta); ok && newMeta != nil && newMeta.LazyWire != nil {
+				if oldMeta, ok := oldAcc.GetObjectMeta().(*metav1.ObjectMeta); ok && oldMeta != nil && oldMeta.LazyWire != nil {
+					return metav1validation.ValidateLabels(newMeta.Labels, metadataLabelsPath)
+				}
+			}
+		}
+	}
 
 	// TODO: Replace this check with the ObjectMeta name validation (validatePathSegment) once we are sure that all other validations are covered by strategy.Validate and strategy.ValidateDeclaratively.
 	// Ensure some common fields, like UID, are validated for all resources.

@@ -247,7 +247,7 @@ func (w *watchCache) processEvent(event watch.Event, resourceVersion uint64) err
 	// place where it is modified is below (via UpdateStoreLocked)
 	// and these calls are serialized because reflector is processing
 	// events one-by-one.
-	previous, exists, err := w.storage.Get(event.Object)
+	previous, exists, err := w.storage.GetByKey(key)
 	if err != nil {
 		return err
 	}

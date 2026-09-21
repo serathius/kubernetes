@@ -249,6 +249,16 @@ func doTransformObject(ctx context.Context, obj runtime.Object, opts interface{}
 		return obj, nil
 	}
 
+	if target != nil {
+		if metaObj, ok := obj.(metav1.ObjectMetaAccessor); ok {
+			if realMeta, ok := metaObj.GetObjectMeta().(*metav1.ObjectMeta); ok && realMeta != nil && realMeta.LazyWire != nil && realMeta.LazyWire.DecodeFullInto != nil {
+				if err := realMeta.LazyWire.DecodeFullInto(obj); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+
 	switch {
 	case target == nil:
 		// If we ever change that from a no-op, the identifier of

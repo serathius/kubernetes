@@ -754,7 +754,14 @@ func (c *Cacher) Get(ctx context.Context, key string, opts storage.GetOptions, o
 		if !ok {
 			return fmt.Errorf("non *store.Element returned from storage: %v", obj)
 		}
-		objVal.Set(reflect.ValueOf(elem.Object).Elem())
+		if lazy, ok := elem.Object.(storage.LazyObject); ok && lazy.CopyMetadataOnlyInto(objPtr) {
+			return nil
+		}
+		decodedObj, err := storage.DecodeLazyObject(elem.Object)
+		if err != nil {
+			return err
+		}
+		objVal.Set(reflect.ValueOf(decodedObj).Elem())
 	} else {
 		objVal.Set(reflect.Zero(objVal.Type()))
 		if !opts.IgnoreNotFound {
@@ -841,7 +848,11 @@ func (c *Cacher) GetList(ctx context.Context, key string, opts storage.ListOptio
 			if !ok {
 				return fmt.Errorf("non *store.Element returned from storage: %v", obj)
 			}
-			listVal.Index(i).Set(reflect.ValueOf(elem.Object).Elem())
+			decodedObj, err := storage.DecodeLazyObject(elem.Object)
+			if err != nil {
+				return err
+			}
+			listVal.Index(i).Set(reflect.ValueOf(decodedObj).Elem())
 			lastSelectedObjectKey = elem.Key
 		}
 	} else {
@@ -880,7 +891,11 @@ func (c *Cacher) GetList(ctx context.Context, key string, opts storage.ListOptio
 			listVal.Set(reflect.MakeSlice(listVal.Type(), len(selectedObjects), len(selectedObjects)))
 			span.AddEvent("Resized result")
 			for i, o := range selectedObjects {
-				listVal.Index(i).Set(reflect.ValueOf(o).Elem())
+				decodedObj, err := storage.DecodeLazyObject(o)
+				if err != nil {
+					return err
+				}
+				listVal.Index(i).Set(reflect.ValueOf(decodedObj).Elem())
 			}
 		}
 	}
@@ -1000,6 +1015,10 @@ func (c *Cacher) dispatchEvents() {
 func setCachingObjects(event *watchCacheEvent, versioner storage.Versioner) {
 	switch event.Type {
 	case watch.Added, watch.Modified:
+		decoded, err := storage.DecodeLazyObject(event.Object)
+		if err == nil {
+			event.Object = decoded
+		}
 		if object, err := newCachingObject(event.Object); err == nil {
 			event.Object = object
 		} else {
@@ -1015,6 +1034,10 @@ func setCachingObjects(event *watchCacheEvent, versioner storage.Versioner) {
 	case watch.Deleted:
 		// Don't wrap Object for delete events - these are not to deliver any
 		// events. Only wrap PrevObject.
+		decoded, err := storage.DecodeLazyObject(event.PrevObject)
+		if err == nil {
+			event.PrevObject = decoded
+		}
 		if object, err := newCachingObject(event.PrevObject); err == nil {
 			// Update resource version of the object.
 			// event.PrevObject is used to deliver DELETE watch events and
@@ -1040,7 +1063,7 @@ func (c *Cacher) dispatchEvent(event *watchCacheEvent) {
 		for _, watcher := range c.watchersBuffer {
 			watcher.nonblockingAdd(event)
 		}
-	} else {
+	} else if len(c.watchersBuffer) > 0 {
 		// Set up caching of object serializations only for dispatching this event.
 		//
 		// Storing serializations in memory would result in increased memory usage,

@@ -38,6 +38,7 @@ import (
 	etcdrpc "go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/conversion"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -182,7 +183,8 @@ func New(c *kubernetes.Client, compactor Compactor, codec runtime.Codec, newFunc
 	if newFunc == nil {
 		w.objectType = "<unknown>"
 	} else {
-		w.objectType = reflect.TypeOf(newFunc()).String()
+		w.underlyingType = reflect.TypeOf(newFunc())
+		w.objectType = w.underlyingType.String()
 	}
 	s := &store{
 		client:             c,
@@ -382,7 +384,7 @@ func (s *store) conditionalDelete(
 	var err error
 	var origStateIsCurrent bool
 	if cachedExistingObject != nil && !expectTransformOrDecodeError {
-		origState, err = s.getStateFromObject(cachedExistingObject)
+		origState, err = s.getStateFromObject(ctx, cachedExistingObject)
 	} else {
 		origState, err = getCurrentState()
 		origStateIsCurrent = true
@@ -515,7 +517,7 @@ func (s *store) GuaranteedUpdate(
 	var origState *objState
 	var origStateIsCurrent bool
 	if cachedExistingObject != nil {
-		origState, err = s.getStateFromObject(cachedExistingObject)
+		origState, err = s.getStateFromObject(ctx, cachedExistingObject)
 	} else {
 		origState, err = getCurrentState()
 		origStateIsCurrent = true
@@ -653,6 +655,16 @@ func (s *store) GuaranteedUpdate(
 			span.AddEvent("Retry value restored")
 			origStateIsCurrent = true
 			continue
+		}
+
+		if metaObj, ok := ret.(metav1.ObjectMetaAccessor); ok {
+			if realMeta, ok := metaObj.GetObjectMeta().(*metav1.ObjectMeta); ok && realMeta != nil && realMeta.LazyWire != nil {
+				if err := s.versioner.UpdateObject(ret, uint64(txnResp.Revision)); err != nil {
+					return err
+				}
+				v.Set(reflect.ValueOf(ret).Elem())
+				return nil
+			}
 		}
 
 		err = s.decoder.Decode(data, destination, txnResp.Revision)
@@ -1267,7 +1279,33 @@ func (s *store) getState(ctx context.Context, kv *mvccpb.KeyValue, rev int64, ke
 	return state, nil
 }
 
-func (s *store) getStateFromObject(obj runtime.Object) (*objState, error) {
+func (s *store) getStateFromObject(ctx context.Context, obj runtime.Object) (*objState, error) {
+	if lazy, ok := obj.(storage.LazyObject); ok {
+		if storage.CanUseLazyMetadataCarrier(ctx) {
+			carrier, err := lazy.MetadataCarrier()
+			if err != nil {
+				return nil, err
+			}
+			rev := lazy.StorageRevision()
+			return &objState{
+				obj:  carrier,
+				meta: &storage.ResponseMeta{ResourceVersion: uint64(rev)},
+				rev:  rev,
+				data: lazy.RawStorageBytes(),
+			}, nil
+		}
+		decoded, err := lazy.Decode()
+		if err != nil {
+			return nil, err
+		}
+		rev := lazy.StorageRevision()
+		return &objState{
+			obj:  decoded.DeepCopyObject(),
+			meta: &storage.ResponseMeta{ResourceVersion: uint64(rev)},
+			rev:  rev,
+			data: lazy.RawStorageBytes(),
+		}, nil
+	}
 	state := &objState{
 		obj:  obj,
 		meta: &storage.ResponseMeta{},
@@ -1299,6 +1337,9 @@ func (s *store) updateState(st *objState, userUpdate storage.UpdateFunc) (runtim
 	ret, ttlPtr, err := userUpdate(st.obj, *st.meta)
 	if err != nil {
 		return nil, 0, err
+	}
+	if ret == st.obj {
+		ret = ret.DeepCopyObject()
 	}
 
 	if err := s.versioner.PrepareObjectForStorage(ret); err != nil {

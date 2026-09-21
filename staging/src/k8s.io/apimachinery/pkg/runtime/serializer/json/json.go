@@ -24,6 +24,7 @@ import (
 	kjson "sigs.k8s.io/json"
 	"sigs.k8s.io/yaml"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/runtime/serializer/recognizer"
@@ -225,6 +226,13 @@ func (s *Serializer) Encode(obj runtime.Object, w io.Writer) error {
 }
 
 func (s *Serializer) doEncode(obj runtime.Object, w io.Writer) error {
+	if metaObj, ok := obj.(metav1.ObjectMetaAccessor); ok {
+		if realMeta, ok := metaObj.GetObjectMeta().(*metav1.ObjectMeta); ok && realMeta != nil && realMeta.LazyWire != nil && realMeta.LazyWire.DecodeFullInto != nil {
+			if err := realMeta.LazyWire.DecodeFullInto(obj); err != nil {
+				return err
+			}
+		}
+	}
 	if s.options.Yaml {
 		json, err := json.Marshal(obj)
 		if err != nil {

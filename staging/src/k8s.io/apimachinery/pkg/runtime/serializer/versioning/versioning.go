@@ -22,6 +22,7 @@ import (
 	"reflect"
 	"sync"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -225,6 +226,18 @@ func (c *codec) doEncode(obj runtime.Object, w io.Writer, memAlloc runtime.Memor
 		} else {
 			//nolint:logcheck // Extending the API is not worth it for contextual, structured logging of this.
 			klog.V(6).Infof("a memory allocator was provided but the encoder %s doesn't implement the runtime.EncoderWithAllocator, using regular encoder.Encode method", c.encoder.Identifier())
+		}
+	}
+	if metaObj, ok := obj.(metav1.ObjectMetaAccessor); ok {
+		if realMeta, ok := metaObj.GetObjectMeta().(*metav1.ObjectMeta); ok && realMeta != nil && realMeta.LazyWire != nil {
+			if string(c.encoder.Identifier()) == "protobuf" {
+				return encodeFn(obj, w)
+			}
+			if realMeta.LazyWire.DecodeFullInto != nil {
+				if err := realMeta.LazyWire.DecodeFullInto(obj); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	switch obj := obj.(type) {

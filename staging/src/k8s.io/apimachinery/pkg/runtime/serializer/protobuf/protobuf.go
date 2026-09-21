@@ -203,6 +203,16 @@ func (s *Serializer) doEncode(obj runtime.Object, w io.Writer, memAlloc runtime.
 		klog.Error("a mandatory memory allocator wasn't provided, this might have a negative impact on performance, check invocations of EncodeWithAllocator method, falling back on runtime.SimpleAllocator")
 		memAlloc = &runtime.SimpleAllocator{}
 	}
+	if metaObj, ok := obj.(metav1.ObjectMetaAccessor); ok {
+		if realMeta, ok := metaObj.GetObjectMeta().(*metav1.ObjectMeta); ok && realMeta != nil && realMeta.LazyWire != nil {
+			data, err := realMeta.LazyWire.MarshalToEnvelope(realMeta, memAlloc.Allocate)
+			if err != nil {
+				return err
+			}
+			_, err = w.Write(data)
+			return err
+		}
+	}
 	prefixSize := uint64(len(s.prefix))
 
 	var unk runtime.Unknown

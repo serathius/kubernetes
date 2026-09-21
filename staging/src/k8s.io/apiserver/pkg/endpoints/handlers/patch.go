@@ -55,6 +55,7 @@ import (
 	"k8s.io/apiserver/pkg/endpoints/request"
 	"k8s.io/apiserver/pkg/features"
 	"k8s.io/apiserver/pkg/registry/rest"
+	"k8s.io/apiserver/pkg/storage"
 	"k8s.io/apiserver/pkg/util/dryrun"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/component-base/tracing"
@@ -627,6 +628,13 @@ func (p *patcher) applyPatch(ctx context.Context, _, currentObject runtime.Objec
 	} else if !currentObjectHasUID {
 		objToUpdate, patchErr = p.mechanism.createNewObject(ctx)
 	} else {
+		if p.patchType != types.StrategicMergePatchType {
+			if m, ok := objectMetaOf(currentObject); ok && m.LazyWire != nil && m.LazyWire.DecodeFullInto != nil {
+				if err := m.LazyWire.DecodeFullInto(currentObject); err != nil {
+					return nil, err
+				}
+			}
+		}
 		objToUpdate, patchErr = p.mechanism.applyPatchToCurrentObject(ctx, currentObject)
 	}
 
@@ -738,6 +746,9 @@ func (p *patcher) patchResource(ctx context.Context, scope *RequestScope) (runti
 
 	wasCreated := false
 	p.updatedObjectInfo = rest.DefaultUpdatedObjectInfo(nil, transformers...)
+	if p.patchType == types.StrategicMergePatchType && p.subresource == "" && isSimpleLabelsOnlyPatchPayload(p.patchBytes) {
+		ctx = storage.WithLazyMetadataCarrier(ctx)
+	}
 	requestFunc := func() (runtime.Object, error) {
 		// Pass in UpdateOptions to override UpdateStrategy.AllowUpdateOnCreate
 		options := patchToUpdateOptions(p.options)

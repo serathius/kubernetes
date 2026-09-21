@@ -167,6 +167,7 @@ func StartTestServer(ctx context.Context, t testing.TB, setup TestServerSetup) (
 
 	opts.SecureServing.Listener = listener
 	opts.SecureServing.BindAddress = netutils.ParseIPSloppy("127.0.0.1")
+	opts.GenericServerRunOptions.AdvertiseAddress = netutils.ParseIPSloppy("10.0.0.1")
 	opts.SecureServing.ServerCert.CertDirectory = certDir
 	opts.ServiceAccountSigningKeyFile = saSigningKeyFile.Name()
 	opts.Etcd.StorageConfig.Prefix = path.Join("/", uuid.New().String(), "registry")
