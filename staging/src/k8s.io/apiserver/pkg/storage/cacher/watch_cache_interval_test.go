@@ -533,6 +533,10 @@ type countingSnapshot struct {
 	orderedListPrefixCalls int
 }
 
+func (s *countingSnapshot) ResourceVersion() uint64 {
+	return 0
+}
+
 func (s *countingSnapshot) GetByKey(string) (interface{}, bool, error) {
 	return nil, false, nil
 }

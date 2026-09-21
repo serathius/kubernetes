@@ -51,6 +51,42 @@ func (si *threadedStoreIndexer) Clone() Snapshot {
 	return si.store.Clone()
 }
 
+func (si *threadedStoreIndexer) CloneWithRV(resourceVersion uint64) Snapshot {
+	si.lock.Lock()
+	defer si.lock.Unlock()
+	return si.store.CloneWithRV(resourceVersion)
+}
+
+func (si *threadedStoreIndexer) Mutate(eventType string, elem *Element, resourceVersion uint64, cloneSnapshot bool) (prev *Element, snap Snapshot, err error) {
+	if elem == nil {
+		return nil, nil, fmt.Errorf("obj cannot be nil")
+	}
+	si.lock.Lock()
+	defer si.lock.Unlock()
+	switch eventType {
+	case "ADDED", "MODIFIED":
+		prev = si.store.addOrUpdateElem(elem)
+		if err := si.indexer.updateElem(elem.Key, prev, elem); err != nil {
+			return prev, nil, err
+		}
+	case "DELETED":
+		var existed bool
+		prev, existed = si.store.deleteElem(elem)
+		if existed {
+			if err := si.indexer.updateElem(elem.Key, prev, nil); err != nil {
+				return prev, nil, err
+			}
+		}
+	default:
+		return nil, nil, fmt.Errorf("unexpected event type: %v", eventType)
+	}
+	si.store.resourceVersion = resourceVersion
+	if cloneSnapshot {
+		snap = si.store.CloneWithRV(resourceVersion)
+	}
+	return prev, snap, nil
+}
+
 func (si *threadedStoreIndexer) Add(obj interface{}) error {
 	return si.addOrUpdate(obj)
 }
@@ -142,14 +178,27 @@ func newBtreeStore(degree int) btreeStore {
 }
 
 type btreeStore struct {
-	tree *btree.BTree[*Element]
+	tree            *btree.BTree[*Element]
+	resourceVersion uint64
+}
+
+func (s *btreeStore) ResourceVersion() uint64 {
+	return s.resourceVersion
 }
 
 // Clone should not be called concurrently.
 // Ref: https://github.com/kubernetes/kubernetes/blob/4a8f617f3ca/vendor/k8s.io/utils/third_party/forked/golang/btree/btree.go#L586-L588
 func (s *btreeStore) Clone() Snapshot {
 	return &btreeStore{
-		tree: s.tree.Clone(),
+		tree:            s.tree.Clone(),
+		resourceVersion: s.resourceVersion,
+	}
+}
+
+func (s *btreeStore) CloneWithRV(resourceVersion uint64) Snapshot {
+	return &btreeStore{
+		tree:            s.tree.Clone(),
+		resourceVersion: resourceVersion,
 	}
 }
 
@@ -456,6 +505,7 @@ type Snapshotter interface {
 	GetLessOrEqual(rv uint64) (Snapshot, bool)
 	Latest() (Snapshot, bool)
 	Add(rv uint64, indexer Indexer)
+	AddSnapshot(rv uint64, snap Snapshot)
 	RemoveLess(rv uint64)
 	Len() int
 }
@@ -503,9 +553,13 @@ func (s *storeSnapshotter) Latest() (Snapshot, bool) {
 }
 
 func (s *storeSnapshotter) Add(rv uint64, indexer Indexer) {
+	s.AddSnapshot(rv, indexer.CloneWithRV(rv))
+}
+
+func (s *storeSnapshotter) AddSnapshot(rv uint64, snap Snapshot) {
 	s.mux.Lock()
 	defer s.mux.Unlock()
-	s.snapshots.ReplaceOrInsert(rvSnapshot{resourceVersion: rv, snapshot: indexer.Clone()})
+	s.snapshots.ReplaceOrInsert(rvSnapshot{resourceVersion: rv, snapshot: snap})
 }
 
 func (s *storeSnapshotter) RemoveLess(rv uint64) {

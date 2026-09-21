@@ -63,6 +63,7 @@ type Indexer interface {
 	Add(obj interface{}) error
 	Update(obj interface{}) error
 	Delete(obj interface{}) error
+	Mutate(eventType string, elem *Element, resourceVersion uint64, cloneSnapshot bool) (prev *Element, snap Snapshot, err error)
 	List() []interface{}
 	ListKeys() []string
 	Get(obj interface{}) (item interface{}, exists bool, err error)
@@ -70,11 +71,14 @@ type Indexer interface {
 	Replace([]interface{}, string) error
 	ByIndex(indexName, indexedValue string) ([]interface{}, error)
 	Clone() Snapshot
+	CloneWithRV(resourceVersion uint64) Snapshot
 	OrderedListPrefix(prefix, continueKey string) ([]interface{}, error)
 }
 
-// Snapshot is an immutable point-in-time view of the store.
+// Snapshot is an immutable point-in-time view of the store at the ResourceVersion
+// of the last mutating event that produced it.
 type Snapshot interface {
+	ResourceVersion() uint64
 	GetByKey(key string) (item interface{}, exists bool, err error)
 	OrderedListPrefix(prefix, continueKey string) ([]interface{}, error)
 	RangePrefix(prefix, continueKey string) Range

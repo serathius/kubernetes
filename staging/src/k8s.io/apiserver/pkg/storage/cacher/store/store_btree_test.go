@@ -135,10 +135,15 @@ type fakeIndexer struct {
 	rv int
 }
 
+func (f fakeIndexer) ResourceVersion() uint64 { return uint64(f.rv) }
 func (f fakeIndexer) Add(obj interface{}) error    { return nil }
 func (f fakeIndexer) Update(obj interface{}) error { return nil }
 func (f fakeIndexer) Delete(obj interface{}) error { return nil }
-func (f fakeIndexer) Clone() Snapshot              { return f }
+func (f fakeIndexer) Mutate(eventType string, elem *Element, resourceVersion uint64, cloneSnapshot bool) (*Element, Snapshot, error) {
+	return nil, f, nil
+}
+func (f fakeIndexer) Clone() Snapshot                    { return f }
+func (f fakeIndexer) CloneWithRV(rv uint64) Snapshot     { return f }
 func (f fakeIndexer) OrderedListPrefix(prefixKey, continueKey string) ([]interface{}, error) {
 	return nil, nil
 }
@@ -183,8 +188,9 @@ func (f *fakeSnapshotter) GetLessOrEqual(rv uint64) (Snapshot, bool) {
 func (f *fakeSnapshotter) Latest() (Snapshot, bool) {
 	return nil, false
 }
-func (f *fakeSnapshotter) Add(rv uint64, indexer Indexer) {}
-func (f *fakeSnapshotter) RemoveLess(rv uint64)           {}
+func (f *fakeSnapshotter) Add(rv uint64, indexer Indexer)     {}
+func (f *fakeSnapshotter) AddSnapshot(rv uint64, s Snapshot)  {}
+func (f *fakeSnapshotter) RemoveLess(rv uint64)               {}
 func (f *fakeSnapshotter) Len() int {
 	return 0
 }

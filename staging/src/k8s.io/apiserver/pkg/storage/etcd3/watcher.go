@@ -839,12 +839,13 @@ func (wc *watchChan) prepareObjs(e *event) (curObj runtime.Object, oldObj runtim
 		return nil, nil, nil
 	}
 
+	lazy := wc.recordTimestamps && !e.isInitialEvent
 	if !e.isDeleted {
 		data, _, err := wc.watcher.transformer.TransformFromStorage(wc.ctx, e.value, authenticatedDataString(e.key))
 		if err != nil {
 			return nil, nil, err
 		}
-		curObj, err = decodeObj(wc.watcher.codec, wc.watcher.versioner, data, e.rev, wc.watcher.underlyingType, wc.recordTimestamps)
+		curObj, err = decodeObj(wc.watcher.codec, wc.watcher.versioner, data, e.rev, wc.watcher.underlyingType, lazy)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -861,7 +862,7 @@ func (wc *watchChan) prepareObjs(e *event) (curObj runtime.Object, oldObj runtim
 		}
 		// Note that this sends the *old* object with the etcd revision for the time at
 		// which it gets deleted.
-		oldObj, err = decodeObj(wc.watcher.codec, wc.watcher.versioner, data, e.rev, wc.watcher.underlyingType, wc.recordTimestamps)
+		oldObj, err = decodeObj(wc.watcher.codec, wc.watcher.versioner, data, e.rev, wc.watcher.underlyingType, lazy)
 		if err != nil {
 			return nil, nil, wc.watcher.transformIfCorruptObjectError(e, err)
 		}

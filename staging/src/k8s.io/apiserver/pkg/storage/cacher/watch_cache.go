@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -74,6 +75,14 @@ type watchCacheEvent struct {
 	timeline metrics.DispatchTimeline
 }
 
+type watchCacheSyncState struct {
+	// resourceVersion up to which the watchCache is synchronized
+	// (advances on both mutating events and bookmarks).
+	resourceVersion uint64
+	// notifyCh is closed when watchCache advances to a newer resourceVersion.
+	notifyCh chan struct{}
+}
+
 // watchCache implements a Store interface.
 // However, it depends on the elements implementing runtime.Object interface.
 //
@@ -88,6 +97,9 @@ type watchCache struct {
 
 	// ResourceVersion up to which the watchCache is propagated.
 	resourceVersion uint64
+
+	// Atomic state tracking the latest synchronized resourceVersion and broadcast channel.
+	syncState atomic.Pointer[watchCacheSyncState]
 
 	// This handler is run at the end of every successful Replace() method.
 	onReplace func()
@@ -157,10 +169,26 @@ func newWatchCache(
 		history:         newWatchCacheHistory(config, eventFreshDuration),
 		storage:         store.NewWatchCacheStorage(config.keyFunc, indexers),
 	}
+	wc.syncState.Store(&watchCacheSyncState{
+		resourceVersion: 0,
+		notifyCh:        make(chan struct{}),
+	})
 	wc.cond = sync.NewCond(wc.RLocker())
 	wc.config.indexValidator = wc.history.isIndexValidLocked
 
 	return wc
+}
+
+func (w *watchCache) setResourceVersionLocked(rv uint64) {
+	w.resourceVersion = rv
+	prev := w.syncState.Swap(&watchCacheSyncState{
+		resourceVersion: rv,
+		notifyCh:        make(chan struct{}),
+	})
+	if prev != nil {
+		close(prev.notifyCh)
+	}
+	w.cond.Broadcast()
 }
 
 // Add takes runtime.Object as an argument.
@@ -227,7 +255,14 @@ func (w *watchCache) processEvent(event watch.Event, resourceVersion uint64) err
 	elem := &store.Element{Key: key, Object: event.Object}
 	elem.Labels, elem.Fields, err = w.config.getAttrsFunc(event.Object)
 	if err != nil {
-		return err
+		if decoded, decodeErr := storage.DecodeLazyObject(event.Object); decodeErr == nil && decoded != event.Object {
+			event.Object = decoded
+			elem.Object = decoded
+			elem.Labels, elem.Fields, err = w.config.getAttrsFunc(decoded)
+		}
+		if err != nil {
+			return err
+		}
 	}
 
 	wcEvent := &watchCacheEvent{
@@ -242,37 +277,25 @@ func (w *watchCache) processEvent(event watch.Event, resourceVersion uint64) err
 	wcEvent.timeline.MarkAt(metrics.PointStorageDecoded, recordTime)
 	wcEvent.timeline.MarkAt(metrics.PointCacheReceived, cacheReceived)
 
-	// We can call w.storage.Get() outside of a critical section,
-	// because the w.storage itself is thread-safe and the only
-	// place where it is modified is below (via UpdateStoreLocked)
-	// and these calls are serialized because reflector is processing
-	// events one-by-one.
-	previous, exists, err := w.storage.GetByKey(key)
-	if err != nil {
-		return err
-	}
-	if exists {
-		previousElem := previous.(*store.Element)
-		wcEvent.PrevObject = previousElem.Object
-		wcEvent.PrevObjLabels = previousElem.Labels
-		wcEvent.PrevObjFields = previousElem.Fields
-	}
-
 	if err := func() error {
 		w.Lock()
 		defer w.Unlock()
-
-		w.history.updateCache(wcEvent)
-		w.resourceVersion = resourceVersion
-		defer w.cond.Broadcast()
 
 		if w.history.isCacheFullLocked() {
 			oldestRV := w.history.OldestResourceVersionLocked()
 			w.storage.CompactSnapshotsLocked(oldestRV)
 		}
-		if err := w.storage.UpdateStoreLocked(event.Type, elem, resourceVersion); err != nil {
+		previous, err := w.storage.MutateStoreLocked(event.Type, elem, resourceVersion)
+		if err != nil {
 			return err
 		}
+		if previous != nil {
+			wcEvent.PrevObject = previous.Object
+			wcEvent.PrevObjLabels = previous.Labels
+			wcEvent.PrevObjFields = previous.Fields
+		}
+		w.history.updateCache(wcEvent)
+		w.setResourceVersionLocked(resourceVersion)
 		return nil
 	}(); err != nil {
 		return err
@@ -295,13 +318,25 @@ func (w *watchCache) UpdateResourceVersion(resourceVersion string) {
 		klog.Errorf("Couldn't parse resourceVersion: %v", err)
 		return
 	}
+	// Reflector calls UpdateResourceVersion after every Add/Update/Delete event
+	// in addition to Bookmark events. Skip when watchCache is already synchronized
+	// to this exact rv so mutating events do not re-lock or broadcast a second time.
+	if w.syncState.Load().resourceVersion == rv {
+		return
+	}
 
+	updated := false
 	func() {
 		w.Lock()
 		defer w.Unlock()
-		w.resourceVersion = rv
-		w.cond.Broadcast()
+		if w.resourceVersion != rv {
+			w.setResourceVersionLocked(rv)
+			updated = true
+		}
 	}()
+	if !updated {
+		return
+	}
 
 	// Avoid calling event handler under lock.
 	// This is safe as long as there is at most one call to Add/Update/Delete and
@@ -317,10 +352,12 @@ func (w *watchCache) UpdateResourceVersion(resourceVersion string) {
 	metrics.RecordResourceVersion(w.config.groupResource, rv)
 }
 
-// waitUntilFreshLocked waits until cache is at least as fresh as given resourceVersion.
-func (w *watchCache) waitUntilFreshLocked(ctx context.Context, consistentReadSupported bool, resourceVersion uint64) error {
-	if resourceVersion == 0 || resourceVersion <= w.resourceVersion {
-		return nil
+// waitUntilFresh waits lock-free until watchCache is synchronized to at least resourceVersion,
+// returning the synchronized resourceVersion observed.
+func (w *watchCache) waitUntilFresh(ctx context.Context, consistentReadSupported bool, resourceVersion uint64) (uint64, error) {
+	state := w.syncState.Load()
+	if resourceVersion == 0 || state.resourceVersion >= resourceVersion {
+		return state.resourceVersion, nil
 	}
 	if consistentReadSupported {
 		w.config.waitingUntilFresh.Add()
@@ -333,35 +370,38 @@ func (w *watchCache) waitUntilFreshLocked(ctx context.Context, consistentReadSup
 		}
 	}()
 
-	// In case resourceVersion is 0, we accept arbitrarily stale result.
-	// As a result, the condition in the below for loop will never be
-	// satisfied (w.resourceVersion is never negative), this call will
-	// never hit the w.cond.Wait().
-	// As a result - we can optimize the code by not firing the wakeup
-	// function (and avoid starting a gorotuine), especially given that
-	// resourceVersion=0 is the most common case.
-	if resourceVersion > 0 {
-		go func() {
-			// Wake us up when the time limit has expired.  The docs
-			// promise that time.After (well, NewTimer, which it calls)
-			// will wait *at least* the duration given. Since this go
-			// routine starts sometime after we record the start time, and
-			// it will wake up the loop below sometime after the broadcast,
-			// we don't need to worry about waking it up before the time
-			// has expired accidentally.
-			<-w.config.clock.After(blockTimeout)
-			w.cond.Broadcast()
-		}()
-	}
+	timer := w.config.clock.NewTimer(blockTimeout)
+	defer timer.Stop()
 
-	for w.resourceVersion < resourceVersion {
+	for state.resourceVersion < resourceVersion {
 		if w.config.clock.Since(startTime) >= blockTimeout {
-			// Request that the client retry after 'resourceVersionTooHighRetrySeconds' seconds.
-			return storage.NewTooLargeResourceVersionError(resourceVersion, w.resourceVersion, resourceVersionTooHighRetrySeconds)
+			return 0, storage.NewTooLargeResourceVersionError(resourceVersion, state.resourceVersion, resourceVersionTooHighRetrySeconds)
 		}
-		w.cond.Wait()
+		select {
+		case <-state.notifyCh:
+			state = w.syncState.Load()
+		case <-timer.C():
+			state = w.syncState.Load()
+			if state.resourceVersion >= resourceVersion {
+				return state.resourceVersion, nil
+			}
+			return 0, storage.NewTooLargeResourceVersionError(resourceVersion, state.resourceVersion, resourceVersionTooHighRetrySeconds)
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		}
 	}
-	return nil
+	return state.resourceVersion, nil
+}
+
+// waitUntilFreshLocked waits until cache is at least as fresh as given resourceVersion.
+func (w *watchCache) waitUntilFreshLocked(ctx context.Context, consistentReadSupported bool, resourceVersion uint64) error {
+	if resourceVersion == 0 || resourceVersion <= w.resourceVersion {
+		return nil
+	}
+	w.RUnlock()
+	_, err := w.waitUntilFresh(ctx, consistentReadSupported, resourceVersion)
+	w.RLock()
+	return err
 }
 
 func (c *watchCache) WaitUntilFreshAndGetList(ctx context.Context, key string, opts storage.ListOptions) (listResp, string, error) {
@@ -511,6 +551,17 @@ func (w *watchCache) waitAndListLatestRV(ctx context.Context, minResourceVersion
 func (w *watchCache) waitAndGetLatestSnapshot(ctx context.Context, minResourceVersion uint64, key, continueKey string, matchValues []storage.MatchValue) (snap store.Snapshot, resourceVersion uint64, index string, err error) {
 	consistentReadSupported := delegator.ConsistentReadSupported()
 	span := tracing.SpanFromContext(ctx)
+	if len(matchValues) == 0 && w.storage.SnapshottingEnabled() {
+		syncedRV, err := w.waitUntilFresh(ctx, consistentReadSupported, minResourceVersion)
+		if err != nil {
+			return nil, 0, "", err
+		}
+		span.AddEvent("watchCache fresh enough")
+		if snap, ok := w.storage.LatestSnapshot(); ok {
+			span.AddEvent("GetLatestSnapshotOrBuildLocked success")
+			return snap, max(syncedRV, snap.ResourceVersion()), "", nil
+		}
+	}
 	w.RLock()
 	span.AddEvent("watchCache locked acquired")
 	defer w.RUnlock()
@@ -541,15 +592,29 @@ func (w *watchCache) waitAndGetLatestSnapshot(ctx context.Context, minResourceVe
 }
 
 func (w *watchCache) notFresh(resourceVersion uint64) bool {
-	w.RLock()
-	defer w.RUnlock()
-	return resourceVersion > w.resourceVersion
+	return resourceVersion > w.syncState.Load().resourceVersion
 }
 
 // WaitUntilFreshAndGet returns a pointers to <storeElement> object.
 func (w *watchCache) WaitUntilFreshAndGet(ctx context.Context, resourceVersion uint64, key string) (interface{}, bool, uint64, error) {
 	span := tracing.SpanFromContext(ctx)
 	consistentReadSupported := delegator.ConsistentReadSupported()
+	if w.storage.SnapshottingEnabled() {
+		syncedRV, err := w.waitUntilFresh(ctx, consistentReadSupported, resourceVersion)
+		if err != nil {
+			return nil, false, 0, err
+		}
+		span.AddEvent("watchCache fresh enough")
+		if snap, ok := w.storage.LatestSnapshot(); ok {
+			value, exists, err := snap.GetByKey(key)
+			if err != nil {
+				span.AddEvent("GetByKey failed", attribute.String("error", err.Error()))
+				return nil, false, 0, err
+			}
+			span.AddEvent("GetByKey success")
+			return value, exists, max(syncedRV, snap.ResourceVersion()), nil
+		}
+	}
 	w.RLock()
 	span.AddEvent("watchCache locked acquired")
 	defer w.RUnlock()
@@ -586,7 +651,13 @@ func (w *watchCache) Replace(objs []interface{}, resourceVersion string) error {
 		}
 		objLabels, objFields, err := w.config.getAttrsFunc(object)
 		if err != nil {
-			return err
+			if decoded, decodeErr := storage.DecodeLazyObject(object); decodeErr == nil && decoded != object {
+				object = decoded
+				objLabels, objFields, err = w.config.getAttrsFunc(decoded)
+			}
+			if err != nil {
+				return err
+			}
 		}
 		toReplace = append(toReplace, &store.Element{
 			Key:    key,
@@ -610,11 +681,10 @@ func (w *watchCache) Replace(objs []interface{}, resourceVersion string) error {
 	if err := w.storage.ReplaceLocked(toReplace, resourceVersion, version); err != nil {
 		return err
 	}
-	w.resourceVersion = version
+	w.setResourceVersionLocked(version)
 	if w.onReplace != nil {
 		w.onReplace()
 	}
-	w.cond.Broadcast()
 
 	metrics.RecordResourceVersion(w.config.groupResource, version)
 	klog.V(3).Infof("Replaced watchCache (rev: %v) ", resourceVersion)

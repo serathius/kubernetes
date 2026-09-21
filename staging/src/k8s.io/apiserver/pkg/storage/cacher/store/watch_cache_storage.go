@@ -59,6 +59,7 @@ type WatchCacheStorage struct {
 	// Stores previous snapshots of orderedLister to allow serving requests from previous revisions.
 	snapshots           Snapshotter
 	snapshottingEnabled atomic.Bool
+	latestSnapshot      atomic.Pointer[Snapshot]
 }
 
 // StoreLocked returns the live store.
@@ -95,20 +96,31 @@ func (w *WatchCacheStorage) MarkConsistent(consistent bool) {
 	if utilfeature.DefaultFeatureGate.Enabled(features.ListFromCacheSnapshot) {
 		w.snapshottingEnabled.Store(consistent)
 		if !consistent && w.snapshots != nil {
+			w.latestSnapshot.Store(nil)
 			w.snapshots.Reset()
+		} else if consistent && w.snapshots != nil {
+			snap := w.store.CloneWithRV(w.listResourceVersion)
+			w.latestSnapshot.Store(&snap)
 		}
 	}
 }
 
-func (w *WatchCacheStorage) LatestSnapshotLocked() (Snapshot, bool) {
-	if w.SnapshottingEnabled() {
-		return w.snapshots.Latest()
+func (w *WatchCacheStorage) LatestSnapshot() (Snapshot, bool) {
+	if !w.SnapshottingEnabled() {
+		return nil, false
 	}
-	return nil, false
+	if snapPtr := w.latestSnapshot.Load(); snapPtr != nil {
+		return *snapPtr, true
+	}
+	return w.snapshots.Latest()
+}
+
+func (w *WatchCacheStorage) LatestSnapshotLocked() (Snapshot, bool) {
+	return w.LatestSnapshot()
 }
 
 func (w *WatchCacheStorage) GetLatestSnapshotOrBuildLocked(key, continueKey string) (Snapshot, error) {
-	if snap, ok := w.LatestSnapshotLocked(); ok {
+	if snap, ok := w.LatestSnapshot(); ok {
 		// Snapshots are added in order as we update store, so the
 		// latest snapshot match latest store state and latest revision.
 		return snap, nil
@@ -126,10 +138,15 @@ func orderedSnapshotResponseFromIndexer(indexer Indexer, key, continueKey string
 }
 
 type orderedListSnapshot struct {
-	Items []interface{}
+	Items           []interface{}
+	resourceVersion uint64
 }
 
 var _ Snapshot = (*orderedListSnapshot)(nil)
+
+func (o orderedListSnapshot) ResourceVersion() uint64 {
+	return o.resourceVersion
+}
 
 func (o orderedListSnapshot) GetByKey(key string) (interface{}, bool, error) {
 	for _, item := range o.Items {
@@ -170,10 +187,15 @@ func (o orderedListSnapshot) countPrefix(prefix, continueKey string) int {
 
 // listSnapshot serves an unordered index bucket.
 type listSnapshot struct {
-	Items []interface{}
+	Items           []interface{}
+	resourceVersion uint64
 }
 
 var _ Snapshot = (*listSnapshot)(nil)
+
+func (l listSnapshot) ResourceVersion() uint64 {
+	return l.resourceVersion
+}
 
 func (l listSnapshot) GetByKey(key string) (interface{}, bool, error) {
 	for _, item := range l.Items {
@@ -287,24 +309,24 @@ func (w *WatchCacheStorage) List() []interface{} {
 }
 
 // UpdateStoreLocked executes a mutation (Add, Update, Delete) on the underlying store.
-func (w *WatchCacheStorage) UpdateStoreLocked(eventType watch.EventType, elem *Element, resourceVersion uint64) (err error) {
-	switch eventType {
-	case watch.Added:
-		err = w.store.Add(elem)
-	case watch.Modified:
-		err = w.store.Update(elem)
-	case watch.Deleted:
-		err = w.store.Delete(elem)
-	default:
-		err = fmt.Errorf("unexpected event type: %v", eventType)
-	}
+func (w *WatchCacheStorage) UpdateStoreLocked(eventType watch.EventType, elem *Element, resourceVersion uint64) error {
+	_, err := w.MutateStoreLocked(eventType, elem, resourceVersion)
+	return err
+}
+
+// MutateStoreLocked executes a mutation (Add, Update, Delete) on the underlying store
+// and returns the previous element (if any).
+func (w *WatchCacheStorage) MutateStoreLocked(eventType watch.EventType, elem *Element, resourceVersion uint64) (prev *Element, err error) {
+	snapEnabled := w.SnapshottingEnabled()
+	prev, snap, err := w.store.Mutate(string(eventType), elem, resourceVersion, snapEnabled)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if w.snapshots != nil && w.snapshottingEnabled.Load() {
-		w.snapshots.Add(resourceVersion, w.store)
+	if snapEnabled && snap != nil {
+		w.snapshots.AddSnapshot(resourceVersion, snap)
+		w.latestSnapshot.Store(&snap)
 	}
-	return nil
+	return prev, nil
 }
 
 // CompactSnapshotsLocked prunes snapshots older than the oldest history version.
@@ -322,7 +344,11 @@ func (w *WatchCacheStorage) ReplaceLocked(toReplace []interface{}, resourceVersi
 	if w.snapshots != nil {
 		w.snapshots.Reset()
 		if w.snapshottingEnabled.Load() {
-			w.snapshots.Add(version, w.store)
+			snap := w.store.CloneWithRV(version)
+			w.snapshots.AddSnapshot(version, snap)
+			w.latestSnapshot.Store(&snap)
+		} else {
+			w.latestSnapshot.Store(nil)
 		}
 	}
 	w.listResourceVersion = version
