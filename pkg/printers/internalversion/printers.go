@@ -56,7 +56,6 @@ import (
 	"k8s.io/kubernetes/pkg/apis/lifecycle"
 	"k8s.io/utils/ptr"
 
-	podutil "k8s.io/kubernetes/pkg/api/pod"
 	podutilv1 "k8s.io/kubernetes/pkg/api/v1/pod"
 	"k8s.io/kubernetes/pkg/apis/admissionregistration"
 	"k8s.io/kubernetes/pkg/apis/apiserverinternal"
@@ -957,161 +956,41 @@ func printPodList(podList *api.PodList, options printers.GenerateOptions) ([]met
 }
 
 func printPod(pod *api.Pod, options printers.GenerateOptions) ([]metav1.TableRow, error) {
-	restarts := 0
-	restartableInitContainerRestarts := 0
-	totalContainers := len(pod.Spec.Containers)
-	readyContainers := 0
-	lastRestartDate := metav1.NewTime(time.Time{})
-	lastRestartableInitContainerRestartDate := metav1.NewTime(time.Time{})
+	return printPodAccessor(pod, options)
+}
 
-	podPhase := pod.Status.Phase
-	reason := string(podPhase)
-	if pod.Status.Reason != "" {
-		reason = pod.Status.Reason
-	}
-
-	// If the Pod carries {type:PodScheduled, reason:SchedulingGated}, set reason to 'SchedulingGated'.
-	for _, condition := range pod.Status.Conditions {
-		if condition.Type == api.PodScheduled && condition.Reason == apiv1.PodReasonSchedulingGated {
-			reason = apiv1.PodReasonSchedulingGated
-		}
-	}
+func printPodAccessor(pod api.PodAccessor, options printers.GenerateOptions) ([]metav1.TableRow, error) {
+	sum := pod.GetPodTableSummary(options.Wide)
+	reason := sum.StatusReason
 
 	row := metav1.TableRow{
 		Object: runtime.RawExtension{Object: pod},
 	}
 
-	switch pod.Status.Phase {
+	switch sum.Phase {
 	case api.PodSucceeded:
 		row.Conditions = podSuccessConditions
 	case api.PodFailed:
 		row.Conditions = podFailedConditions
 	}
 
-	initContainers := make(map[string]*api.Container)
-	for i := range pod.Spec.InitContainers {
-		initContainers[pod.Spec.InitContainers[i].Name] = &pod.Spec.InitContainers[i]
-		if podutil.IsRestartableInitContainer(&pod.Spec.InitContainers[i]) {
-			totalContainers++
-		}
-	}
-
-	initializing := false
-	for i := range pod.Status.InitContainerStatuses {
-		container := pod.Status.InitContainerStatuses[i]
-		restarts += int(container.RestartCount)
-		if container.LastTerminationState.Terminated != nil {
-			terminatedDate := container.LastTerminationState.Terminated.FinishedAt
-			if lastRestartDate.Before(&terminatedDate) {
-				lastRestartDate = terminatedDate
-			}
-		}
-		if podutil.IsRestartableInitContainer(initContainers[container.Name]) {
-			restartableInitContainerRestarts += int(container.RestartCount)
-			if container.LastTerminationState.Terminated != nil {
-				terminatedDate := container.LastTerminationState.Terminated.FinishedAt
-				if lastRestartableInitContainerRestartDate.Before(&terminatedDate) {
-					lastRestartableInitContainerRestartDate = terminatedDate
-				}
-			}
-		}
-		switch {
-		case container.State.Terminated != nil && container.State.Terminated.ExitCode == 0:
-			continue
-		case podutil.IsRestartableInitContainer(initContainers[container.Name]) &&
-			container.Started != nil && *container.Started:
-			if container.Ready {
-				readyContainers++
-			}
-			continue
-		case container.State.Terminated != nil:
-			// initialization is failed
-			if len(container.State.Terminated.Reason) == 0 {
-				if container.State.Terminated.Signal != 0 {
-					reason = fmt.Sprintf("Init:Signal:%d", container.State.Terminated.Signal)
-				} else {
-					reason = fmt.Sprintf("Init:ExitCode:%d", container.State.Terminated.ExitCode)
-				}
-			} else {
-				reason = "Init:" + container.State.Terminated.Reason
-			}
-			initializing = true
-		case container.State.Waiting != nil && len(container.State.Waiting.Reason) > 0 && container.State.Waiting.Reason != "PodInitializing":
-			reason = "Init:" + container.State.Waiting.Reason
-			initializing = true
-		default:
-			reason = fmt.Sprintf("Init:%d/%d", i, len(pod.Spec.InitContainers))
-			initializing = true
-		}
-		break
-	}
-
-	if !initializing || isPodInitializedConditionTrue(&pod.Status) {
-		restarts = restartableInitContainerRestarts
-		lastRestartDate = lastRestartableInitContainerRestartDate
-		hasRunning := false
-		errorReason := ""
-		for i := len(pod.Status.ContainerStatuses) - 1; i >= 0; i-- {
-			container := pod.Status.ContainerStatuses[i]
-
-			restarts += int(container.RestartCount)
-			if container.LastTerminationState.Terminated != nil {
-				terminatedDate := container.LastTerminationState.Terminated.FinishedAt
-				if lastRestartDate.Before(&terminatedDate) {
-					lastRestartDate = terminatedDate
-				}
-			}
-			switch {
-			case container.State.Waiting != nil && container.State.Waiting.Reason != "":
-				reason = container.State.Waiting.Reason
-			case container.State.Terminated != nil:
-				if len(container.State.Terminated.Reason) > 0 {
-					reason = container.State.Terminated.Reason
-				} else if container.State.Terminated.Signal != 0 {
-					reason = fmt.Sprintf("Signal:%d", container.State.Terminated.Signal)
-				} else {
-					reason = fmt.Sprintf("ExitCode:%d", container.State.Terminated.ExitCode)
-				}
-				if container.State.Terminated.ExitCode != 0 {
-					errorReason = reason
-				}
-			case container.Ready && container.State.Running != nil:
-				hasRunning = true
-				readyContainers++
-			}
-		}
-
-		// change pod status back to "Running" if there is at least one container still reporting as "Running" status
-		if reason == "Completed" {
-			if hasRunning && hasPodReadyCondition(pod.Status.Conditions) {
-				reason = "Running"
-			} else if errorReason != "" {
-				reason = errorReason
-			} else if hasRunning {
-				reason = "NotReady"
-			}
-		}
-	}
-
-	if pod.DeletionTimestamp != nil && pod.Status.Reason == node.NodeUnreachablePodReason {
+	if pod.GetDeletionTimestamp() != nil && sum.RawStatusReason == node.NodeUnreachablePodReason {
 		reason = "Unknown"
-	} else if pod.DeletionTimestamp != nil && !podutilv1.IsPodPhaseTerminal(apiv1.PodPhase(podPhase)) {
+	} else if pod.GetDeletionTimestamp() != nil && !podutilv1.IsPodPhaseTerminal(apiv1.PodPhase(sum.Phase)) {
 		reason = "Terminating"
 	}
 
-	restartsStr := strconv.Itoa(restarts)
-	if restarts != 0 && !lastRestartDate.IsZero() {
-		restartsStr = fmt.Sprintf("%d (%s ago)", restarts, translateTimestampSince(lastRestartDate))
+	restartsStr := strconv.Itoa(sum.Restarts)
+	if sum.Restarts != 0 && !sum.LastRestartTime.IsZero() {
+		restartsStr = fmt.Sprintf("%d (%s ago)", sum.Restarts, translateTimestampSince(sum.LastRestartTime))
 	}
 
-	row.Cells = append(row.Cells, pod.Name, fmt.Sprintf("%d/%d", readyContainers, totalContainers), reason, restartsStr, translateTimestampSince(pod.CreationTimestamp))
+	row.Cells = append(row.Cells, pod.GetName(), fmt.Sprintf("%d/%d", sum.ReadyContainers, sum.TotalContainers), reason, restartsStr, translateTimestampSince(pod.GetCreationTimestamp()))
 	if options.Wide {
-		nodeName := pod.Spec.NodeName
-		nominatedNodeName := pod.Status.NominatedNodeName
-		podIP := ""
-		if len(pod.Status.PodIPs) > 0 {
-			podIP = pod.Status.PodIPs[0].IP
-		}
+		podIP := sum.PodIP
+		nodeName := sum.NodeName
+		nominatedNodeName := sum.NominatedNode
+		readinessGates := sum.ReadinessGates
 
 		if podIP == "" {
 			podIP = "<none>"
@@ -1122,36 +1001,13 @@ func printPod(pod *api.Pod, options printers.GenerateOptions) ([]metav1.TableRow
 		if nominatedNodeName == "" {
 			nominatedNodeName = "<none>"
 		}
-
-		readinessGates := "<none>"
-		if len(pod.Spec.ReadinessGates) > 0 {
-			trueConditions := 0
-			for _, readinessGate := range pod.Spec.ReadinessGates {
-				conditionType := readinessGate.ConditionType
-				for _, condition := range pod.Status.Conditions {
-					if condition.Type == conditionType {
-						if condition.Status == api.ConditionTrue {
-							trueConditions++
-						}
-						break
-					}
-				}
-			}
-			readinessGates = fmt.Sprintf("%d/%d", trueConditions, len(pod.Spec.ReadinessGates))
+		if readinessGates == "" {
+			readinessGates = "<none>"
 		}
 		row.Cells = append(row.Cells, podIP, nodeName, nominatedNodeName, readinessGates)
 	}
 
 	return []metav1.TableRow{row}, nil
-}
-
-func hasPodReadyCondition(conditions []api.PodCondition) bool {
-	for _, condition := range conditions {
-		if condition.Type == api.PodReady && condition.Status == api.ConditionTrue {
-			return true
-		}
-	}
-	return false
 }
 
 func hasJobCondition(conditions []batch.JobCondition, conditionType batch.JobConditionType) bool {
@@ -3812,15 +3668,4 @@ func (list SortableResourceNames) Swap(i, j int) {
 
 func (list SortableResourceNames) Less(i, j int) bool {
 	return list[i] < list[j]
-}
-
-func isPodInitializedConditionTrue(status *api.PodStatus) bool {
-	for _, condition := range status.Conditions {
-		if condition.Type != api.PodInitialized {
-			continue
-		}
-
-		return condition.Status == api.ConditionTrue
-	}
-	return false
 }

@@ -295,6 +295,9 @@ func checkName(obj runtime.Object, name, namespace string, namer ScopeNamer) err
 // sharing the same UID but different fields. Nor do we know what might break.
 // In the future we may just dedup/reject owner references with the same UID.
 func dedupOwnerReferences(refs []metav1.OwnerReference) ([]metav1.OwnerReference, []string) {
+	if len(refs) <= 1 {
+		return refs, nil
+	}
 	var result []metav1.OwnerReference
 	var duplicates []string
 	seen := make(map[types.UID]struct{})

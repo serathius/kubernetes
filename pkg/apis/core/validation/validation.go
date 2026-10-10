@@ -200,10 +200,16 @@ func ValidateDNS1123Subdomain(value string, fldPath *field.Path) field.ErrorList
 }
 
 func ValidatePodSpecificAnnotations(annotations map[string]string, spec *core.PodSpec, fldPath *field.Path, opts PodValidationOptions) field.ErrorList {
+	return validatePodSpecificAnnotations(annotations, spec.NodeName, func(containerName string) bool {
+		return podSpecHasContainer(spec, containerName)
+	}, fldPath, opts)
+}
+
+func validatePodSpecificAnnotations(annotations map[string]string, nodeName string, hasContainer func(string) bool, fldPath *field.Path, opts PodValidationOptions) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	if value, isMirror := annotations[core.MirrorPodAnnotationKey]; isMirror {
-		if len(spec.NodeName) == 0 {
+		if len(nodeName) == 0 {
 			allErrs = append(allErrs, field.Invalid(fldPath.Key(core.MirrorPodAnnotationKey), value, "must set spec.nodeName if mirror pod annotation is set"))
 		}
 	}
@@ -219,7 +225,7 @@ func ValidatePodSpecificAnnotations(annotations map[string]string, spec *core.Po
 	}
 
 	allErrs = append(allErrs, ValidateSeccompPodAnnotations(annotations, fldPath)...)
-	allErrs = append(allErrs, ValidateAppArmorPodAnnotations(annotations, spec, fldPath)...)
+	allErrs = append(allErrs, validateAppArmorPodAnnotations(annotations, hasContainer, fldPath)...)
 
 	return allErrs
 }
@@ -241,9 +247,9 @@ func ValidateTolerationsInPodAnnotations(annotations map[string]string, fldPath 
 	return allErrs
 }
 
-func ValidatePodSpecificAnnotationUpdates(newPod *core.Pod, oldAnnotations map[string]string, fldPath *field.Path, opts PodValidationOptions) field.ErrorList {
+func ValidatePodSpecificAnnotationUpdates(newPod core.PodAccessor, oldAnnotations map[string]string, fldPath *field.Path, opts PodValidationOptions) field.ErrorList {
 	allErrs := field.ErrorList{}
-	newAnnotations := newPod.Annotations
+	newAnnotations := newPod.GetAnnotations()
 	for k, oldVal := range oldAnnotations {
 		if newVal, exists := newAnnotations[k]; exists && newVal == oldVal {
 			continue // No change.
@@ -267,7 +273,13 @@ func ValidatePodSpecificAnnotationUpdates(newPod *core.Pod, oldAnnotations map[s
 			allErrs = append(allErrs, field.Forbidden(fldPath.Key(k), "may not add mirror pod annotation"))
 		}
 	}
-	allErrs = append(allErrs, ValidatePodSpecificAnnotations(newAnnotations, &newPod.Spec, fldPath, opts)...)
+	allErrs = append(allErrs, validatePodSpecificAnnotations(newAnnotations, newPod.GetSpecNodeName(), func(containerName string) bool {
+		if containerName == "" {
+			return false
+		}
+		_, ok, _ := newPod.ResolveContainer(containerName)
+		return ok
+	}, fldPath, opts)...)
 	return allErrs
 }
 
@@ -5477,13 +5489,19 @@ func ValidateAppArmorProfileField(profile *core.AppArmorProfile, fldPath *field.
 }
 
 func ValidateAppArmorPodAnnotations(annotations map[string]string, spec *core.PodSpec, fldPath *field.Path) field.ErrorList {
+	return validateAppArmorPodAnnotations(annotations, func(containerName string) bool {
+		return podSpecHasContainer(spec, containerName)
+	}, fldPath)
+}
+
+func validateAppArmorPodAnnotations(annotations map[string]string, hasContainer func(string) bool, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 	for k, p := range annotations {
 		if !strings.HasPrefix(k, v1.DeprecatedAppArmorBetaContainerAnnotationKeyPrefix) {
 			continue
 		}
 		containerName := strings.TrimPrefix(k, v1.DeprecatedAppArmorBetaContainerAnnotationKeyPrefix)
-		if !podSpecHasContainer(spec, containerName) {
+		if !hasContainer(containerName) {
 			allErrs = append(allErrs, field.Invalid(fldPath.Key(k), containerName, "container not found"))
 		}
 

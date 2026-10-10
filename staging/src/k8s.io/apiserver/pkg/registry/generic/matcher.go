@@ -22,23 +22,23 @@ import (
 )
 
 // ObjectMetaFieldsSet returns a fields that represent the ObjectMeta.
-func ObjectMetaFieldsSet(objectMeta *metav1.ObjectMeta, hasNamespaceField bool) fields.Set {
+func ObjectMetaFieldsSet(objectMeta metav1.Object, hasNamespaceField bool) fields.Set {
 	if !hasNamespaceField {
 		return fields.Set{
-			"metadata.name": objectMeta.Name,
+			"metadata.name": objectMeta.GetName(),
 		}
 	}
 	return fields.Set{
-		"metadata.name":      objectMeta.Name,
-		"metadata.namespace": objectMeta.Namespace,
+		"metadata.name":      objectMeta.GetName(),
+		"metadata.namespace": objectMeta.GetNamespace(),
 	}
 }
 
 // AdObjectMetaField add fields that represent the ObjectMeta to source.
-func AddObjectMetaFieldsSet(source fields.Set, objectMeta *metav1.ObjectMeta, hasNamespaceField bool) fields.Set {
-	source["metadata.name"] = objectMeta.Name
+func AddObjectMetaFieldsSet(source fields.Set, objectMeta metav1.Object, hasNamespaceField bool) fields.Set {
+	source["metadata.name"] = objectMeta.GetName()
 	if hasNamespaceField {
-		source["metadata.namespace"] = objectMeta.Namespace
+		source["metadata.namespace"] = objectMeta.GetNamespace()
 	}
 	return source
 }

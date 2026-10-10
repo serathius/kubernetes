@@ -210,7 +210,7 @@ func (r *BindingREST) Create(ctx context.Context, name string, obj runtime.Objec
 	out = &metav1.Status{
 		Status: metav1.StatusSuccess,
 		ListMeta: metav1.ListMeta{
-			ResourceVersion: finalPod.ResourceVersion,
+			ResourceVersion: finalPod.GetResourceVersion(),
 		},
 	}
 	return
@@ -226,7 +226,7 @@ func (r *BindingREST) PreserveRequestObjectMetaSystemFieldsOnSubresourceCreate()
 // setPodNodeAndMetadata sets the given pod's nodeName to 'machine' if and only if
 // the pod is unassigned, and merges the provided annotations and labels with those of the pod.
 // Returns the current state of the pod, or an error.
-func (r *BindingREST) setPodNodeAndMetadata(ctx context.Context, podUID types.UID, podResourceVersion, podID, machine string, annotations, labels map[string]string, dryRun bool) (finalPod *api.Pod, err error) {
+func (r *BindingREST) setPodNodeAndMetadata(ctx context.Context, podUID types.UID, podResourceVersion, podID, machine string, annotations, labels map[string]string, dryRun bool) (finalPod api.PodAccessor, err error) {
 	podKey, err := r.store.KeyFunc(ctx, podID)
 	if err != nil {
 		return nil, err
@@ -243,46 +243,48 @@ func (r *BindingREST) setPodNodeAndMetadata(ctx context.Context, podUID types.UI
 		}
 	}
 
-	finalPod = &api.Pod{}
+	finalPod = r.store.NewFunc().(api.PodAccessor)
 	err = r.store.Storage.GuaranteedUpdate(ctx, podKey, finalPod, false, preconditions, storage.SimpleUpdate(func(obj runtime.Object) (runtime.Object, error) {
-		pod, ok := obj.(*api.Pod)
+		pod, ok := obj.(api.PodAccessor)
 		if !ok {
 			return nil, fmt.Errorf("unexpected object: %#v", obj)
 		}
-		if pod.DeletionTimestamp != nil {
-			return nil, fmt.Errorf("pod %s is being deleted, cannot be assigned to a host", pod.Name)
+		if pod.GetDeletionTimestamp() != nil {
+			return nil, fmt.Errorf("pod %s is being deleted, cannot be assigned to a host", pod.GetName())
 		}
-		if pod.Spec.NodeName != "" {
-			return nil, fmt.Errorf("pod %v is already assigned to node %q", pod.Name, pod.Spec.NodeName)
+		if pod.GetSpecNodeName() != "" {
+			return nil, fmt.Errorf("pod %v is already assigned to node %q", pod.GetName(), pod.GetSpecNodeName())
 		}
 		// Reject binding to a scheduling un-ready Pod.
-		if len(pod.Spec.SchedulingGates) != 0 {
-			return nil, fmt.Errorf("pod %v has non-empty .spec.schedulingGates", pod.Name)
+		if pod.HasSpecSchedulingGates() {
+			return nil, fmt.Errorf("pod %v has non-empty .spec.schedulingGates", pod.GetName())
 		}
-		pod.Spec.NodeName = machine
+		pod.SetSpecNodeName(machine)
 		// Clear nomination hint to prevent stale information affecting external components.
 		if utilfeature.DefaultFeatureGate.Enabled(kubefeatures.ClearingNominatedNodeNameAfterBinding) {
-			pod.Status.NominatedNodeName = ""
+			pod.SetStatusNominatedNodeName("")
 		}
-		if pod.Annotations == nil {
-			pod.Annotations = make(map[string]string)
+		podAnnotations := pod.GetAnnotations()
+		if podAnnotations == nil {
+			podAnnotations = make(map[string]string)
+			pod.SetAnnotations(podAnnotations)
 		}
 		var oldAnnotations map[string]string
 		if len(annotations) > 0 {
-			oldAnnotations = maps.Clone(pod.Annotations)
+			oldAnnotations = maps.Clone(podAnnotations)
 		}
 		for k, v := range annotations {
-			pod.Annotations[k] = v
+			podAnnotations[k] = v
 		}
 		// Binding writes bypass the pod strategy (and thus DropDisabledPodFields),
 		// so scrub the merged annotations here the same way.
-		podutil.DropInitContainerAnnotations(pod.Annotations)
+		podutil.DropInitContainerAnnotations(podAnnotations)
 		// Copy all labels from the Binding over to the Pod object, overwriting
 		// any existing labels set on the Pod.
 		if utilfeature.DefaultFeatureGate.Enabled(kubefeatures.PodTopologyLabelsAdmission) {
 			copyLabelsWithOverwriting(pod, labels)
 		}
-		podutil.UpdatePodCondition(&pod.Status, &api.PodCondition{
+		pod.UpsertStatusCondition(api.PodCondition{
 			Type:   api.PodScheduled,
 			Status: api.ConditionTrue,
 		})
@@ -291,7 +293,7 @@ func (r *BindingREST) setPodNodeAndMetadata(ctx context.Context, podUID types.UI
 			// validate updated annotations
 			fldPath := field.NewPath("metadata", "annotations")
 			allErrs := validation.ValidatePodSpecificAnnotationUpdates(pod, oldAnnotations, fldPath, validation.PodValidationOptions{})
-			if err := apimachineryvalidation.ValidateAnnotationsSize(pod.Annotations); err != nil {
+			if err := apimachineryvalidation.ValidateAnnotationsSize(pod.GetAnnotations()); err != nil {
 				allErrs = append(allErrs, field.TooLong(fldPath, "" /*unused*/, apimachineryvalidation.TotalAnnotationSizeLimitB))
 			}
 			if len(allErrs) > 0 {
@@ -304,22 +306,24 @@ func (r *BindingREST) setPodNodeAndMetadata(ctx context.Context, podUID types.UI
 	return finalPod, err
 }
 
-func copyLabelsWithOverwriting(pod *api.Pod, labels map[string]string) {
+func copyLabelsWithOverwriting(pod metav1.Object, labels map[string]string) {
 	if len(labels) == 0 {
 		// nothing to do
 		return
 	}
-	if pod.Labels == nil {
-		pod.Labels = make(map[string]string)
+	podLabels := pod.GetLabels()
+	if podLabels == nil {
+		podLabels = make(map[string]string)
+		pod.SetLabels(podLabels)
 	}
 	// Iterate over the binding's labels and copy them across to the Pod.
 	for k, v := range labels {
-		pod.Labels[k] = v
+		podLabels[k] = v
 	}
 }
 
 // assignPod assigns the given pod to the given machine.
-func (r *BindingREST) assignPod(ctx context.Context, podUID types.UID, podResourceVersion, podID string, machine string, annotations, labels map[string]string, dryRun bool) (finalPod *api.Pod, err error) {
+func (r *BindingREST) assignPod(ctx context.Context, podUID types.UID, podResourceVersion, podID string, machine string, annotations, labels map[string]string, dryRun bool) (finalPod api.PodAccessor, err error) {
 	if finalPod, err = r.setPodNodeAndMetadata(ctx, podUID, podResourceVersion, podID, machine, annotations, labels, dryRun); err != nil {
 		err = storeerr.InterpretGetError(err, api.Resource("pods"), podID)
 		err = storeerr.InterpretUpdateError(err, api.Resource("pods"), podID)

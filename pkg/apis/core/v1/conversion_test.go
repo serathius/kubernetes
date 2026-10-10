@@ -905,3 +905,103 @@ func BenchmarkPodConvertToVersion(b *testing.B) {
 		})
 	}
 }
+
+// TestPodMemoryLayoutEquivalence locks in 100% memory-layout equivalence between
+// external v1.Pod (and v1.PodList) and internal core.Pod (and core.PodList), as well
+// as zero-allocation conversion in both directions.
+func TestPodMemoryLayoutEquivalence(t *testing.T) {
+	visited := make(map[[2]reflect.Type]bool)
+	assertEqualMemoryLayout(t, reflect.TypeFor[v1.Pod](), reflect.TypeFor[core.Pod](), "Pod", visited)
+	assertEqualMemoryLayout(t, reflect.TypeFor[v1.PodList](), reflect.TypeFor[core.PodList](), "PodList", visited)
+
+	v1Pod := loadExemplarPod()
+	// TypeMeta is intentionally not copied by conversion-gen (+k8s:conversion-gen=false).
+	v1Pod.TypeMeta = metav1.TypeMeta{}
+	corePod := &core.Pod{}
+	v1RoundTrip := &v1.Pod{}
+
+	allocsToCore := testing.AllocsPerRun(100, func() {
+		if err := corev1.Convert_v1_Pod_To_core_Pod(v1Pod, corePod, nil); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+	if allocsToCore != 0 {
+		t.Errorf("expected 0 allocations in Convert_v1_Pod_To_core_Pod, got %v", allocsToCore)
+	}
+
+	allocsToV1 := testing.AllocsPerRun(100, func() {
+		if err := corev1.Convert_core_Pod_To_v1_Pod(corePod, v1RoundTrip, nil); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+	if allocsToV1 != 0 {
+		t.Errorf("expected 0 allocations in Convert_core_Pod_To_v1_Pod, got %v", allocsToV1)
+	}
+
+	if !apiequality.Semantic.DeepEqual(v1Pod, v1RoundTrip) {
+		t.Errorf("round-trip mismatch:\n%s", cmp.Diff(v1Pod, v1RoundTrip))
+	}
+}
+
+func assertEqualMemoryLayout(t *testing.T, a, b reflect.Type, path string, visited map[[2]reflect.Type]bool) {
+	t.Helper()
+	pair := [2]reflect.Type{a, b}
+	if visited[pair] {
+		return
+	}
+	visited[pair] = true
+
+	if a.Kind() != b.Kind() {
+		t.Fatalf("%s: kind mismatch: %v vs %v", path, a.Kind(), b.Kind())
+	}
+	if a.Size() != b.Size() {
+		t.Fatalf("%s: size mismatch: %d vs %d (%v vs %v)", path, a.Size(), b.Size(), a, b)
+	}
+	if a.Align() != b.Align() {
+		t.Fatalf("%s: align mismatch: %d vs %d (%v vs %v)", path, a.Align(), b.Align(), a, b)
+	}
+
+	switch a.Kind() {
+	case reflect.Struct:
+		if a.NumField() != b.NumField() {
+			t.Fatalf("%s: field count mismatch: %d vs %d (%v vs %v)", path, a.NumField(), b.NumField(), a, b)
+		}
+		for i := 0; i < a.NumField(); i++ {
+			fa := a.Field(i)
+			fb := b.Field(i)
+			if fa.Name != fb.Name {
+				t.Fatalf("%s: field %d name mismatch: %q vs %q", path, i, fa.Name, fb.Name)
+			}
+			if fa.Offset != fb.Offset {
+				t.Fatalf("%s.%s: offset mismatch: %d vs %d", path, fa.Name, fa.Offset, fb.Offset)
+			}
+			assertEqualMemoryLayout(t, fa.Type, fb.Type, path+"."+fa.Name, visited)
+		}
+	case reflect.Pointer, reflect.Slice, reflect.Array:
+		assertEqualMemoryLayout(t, a.Elem(), b.Elem(), path+"[]", visited)
+	case reflect.Map:
+		assertEqualMemoryLayout(t, a.Key(), b.Key(), path+"[key]", visited)
+		assertEqualMemoryLayout(t, a.Elem(), b.Elem(), path+"[val]", visited)
+	}
+}
+
+func TestDefaultObjectPodEquivalence(t *testing.T) {
+	exemplar := loadExemplarPod()
+	viaScheme := exemplar.DeepCopy()
+	viaDefaulter := exemplar.DeepCopy()
+
+	corev1.SetObjectDefaults_Pod(viaScheme)
+	corev1.DefaultObjectPod(corev1.AsPodDefaulter(viaDefaulter))
+
+	if !apiequality.Semantic.DeepEqual(viaScheme, viaDefaulter) {
+		t.Errorf("DefaultObjectPod mismatch with SetObjectDefaults_Pod:\n%s", cmp.Diff(viaScheme, viaDefaulter))
+	}
+
+	// Defaulting an already-defaulted Pod via DefaultObjectPod should not allocate.
+	allocs := testing.AllocsPerRun(100, func() {
+		corev1.DefaultObjectPod(corev1.AsPodDefaulter(viaDefaulter))
+	})
+	if allocs != 0 {
+		t.Errorf("expected 0 allocations when defaulting an already-defaulted Pod, got %v", allocs)
+	}
+}

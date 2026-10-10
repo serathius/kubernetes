@@ -177,7 +177,7 @@ func (podStrategy) CheckGracefulDelete(ctx context.Context, obj runtime.Object, 
 	if options == nil {
 		return false
 	}
-	pod := podutil.MustAccessor(obj)
+	pod := obj.(api.PodAccessor)
 	period := int64(0)
 	// user has specified a value
 	if options.GracePeriodSeconds != nil {
@@ -296,7 +296,7 @@ func (podStatusStrategy) ValidateUpdate(ctx context.Context, obj, old runtime.Ob
 
 // WarningsOnUpdate returns warnings for the given update.
 func (podStatusStrategy) WarningsOnUpdate(ctx context.Context, obj, old runtime.Object) []string {
-	pod := podutil.MustAccessor(obj)
+	pod := obj.(api.PodAccessor)
 	var warnings []string
 
 	for i, podIP := range pod.GetStatusPodIPs() {
@@ -491,8 +491,8 @@ func (p podResizeStrategy) GetResetFieldsFilter() map[fieldpath.APIVersion]field
 
 // GetAttrs returns labels and fields of a given object for filtering purposes.
 func GetAttrs(obj runtime.Object) (labels.Set, fields.Set, error) {
-	pod, err := podutil.Accessor(obj)
-	if err != nil {
+	pod, ok := obj.(api.PodAccessor)
+	if !ok {
 		return nil, nil, fmt.Errorf("not a pod")
 	}
 	return labels.Set(pod.GetLabels()), ToSelectableFields(pod), nil
@@ -510,13 +510,13 @@ func MatchPod(label labels.Selector, field fields.Selector) storage.SelectionPre
 
 // NodeNameTriggerFunc returns value spec.nodename of given object.
 func NodeNameTriggerFunc(obj runtime.Object) string {
-	return podutil.MustAccessor(obj).GetSpecNodeName()
+	return obj.(api.PodAccessor).GetSpecNodeName()
 }
 
 // NodeNameIndexFunc return value spec.nodename of given object.
 func NodeNameIndexFunc(obj interface{}) ([]string, error) {
-	pod, err := podutil.Accessor(obj)
-	if err != nil {
+	pod, ok := obj.(api.PodAccessor)
+	if !ok {
 		return nil, fmt.Errorf("not a pod")
 	}
 	return []string{pod.GetSpecNodeName()}, nil
@@ -531,7 +531,7 @@ func Indexers() *cache.Indexers {
 
 // ToSelectableFields returns a field set that represents the object
 // TODO: fields are not labels, and the validation rules for them do not apply.
-func ToSelectableFields(pod podutil.PodAccessor) fields.Set {
+func ToSelectableFields(pod api.PodAccessor) fields.Set {
 	// The purpose of allocation with a given number of elements is to reduce
 	// amount of allocations needed to create the fields.Set. If you add any
 	// field here or the number of object-meta related fields changes, this should
@@ -544,13 +544,9 @@ func ToSelectableFields(pod podutil.PodAccessor) fields.Set {
 	podSpecificFieldsSet["spec.hostNetwork"] = strconv.FormatBool(pod.GetSpecHostNetwork())
 	podSpecificFieldsSet["status.phase"] = string(pod.GetStatusPhase())
 	// TODO: add podIPs as a downward API value(s) with proper format
-	podIP := ""
-	if podIPs := pod.GetStatusPodIPs(); len(podIPs) > 0 {
-		podIP = podIPs[0].IP
-	}
-	podSpecificFieldsSet["status.podIP"] = podIP
+	podSpecificFieldsSet["status.podIP"] = pod.GetStatusFirstPodIP()
 	podSpecificFieldsSet["status.nominatedNodeName"] = pod.GetStatusNominatedNodeName()
-	return generic.AddObjectMetaFieldsSet(podSpecificFieldsSet, &metav1.ObjectMeta{Name: pod.GetName(), Namespace: pod.GetNamespace()}, true)
+	return generic.AddObjectMetaFieldsSet(podSpecificFieldsSet, pod, true)
 }
 
 // ResourceGetter is an interface for retrieving resources by ResourceLocation.
@@ -558,28 +554,27 @@ type ResourceGetter interface {
 	Get(context.Context, string, *metav1.GetOptions) (runtime.Object, error)
 }
 
-func getPod(ctx context.Context, getter ResourceGetter, name string) (podutil.PodAccessor, error) {
+func getPod(ctx context.Context, getter ResourceGetter, name string) (api.PodAccessor, error) {
 	obj, err := getter.Get(ctx, name, &metav1.GetOptions{})
 	if err != nil {
 		return nil, err
 	}
-	pod := podutil.MustAccessor(obj)
-	if pod == nil {
-		return nil, fmt.Errorf("Unexpected object type: %#v", pod)
+	if p, ok := obj.(*api.Pod); ok && p == nil {
+		return nil, fmt.Errorf("Unexpected object type: %#v", p)
+	}
+	pod, ok := obj.(api.PodAccessor)
+	if !ok || pod == nil {
+		return nil, fmt.Errorf("Unexpected object type: %#v", obj)
 	}
 	return pod, nil
 }
 
 // getPodIP returns primary IP for a Pod
-func getPodIP(pod podutil.PodAccessor) string {
+func getPodIP(pod api.PodAccessor) string {
 	if pod == nil {
 		return ""
 	}
-	if podIPs := pod.GetStatusPodIPs(); len(podIPs) > 0 {
-		return podIPs[0].IP
-	}
-
-	return ""
+	return pod.GetStatusFirstPodIP()
 }
 
 // ResourceLocation returns a URL to which one can send traffic for the specified pod.
@@ -598,12 +593,8 @@ func ResourceLocation(ctx context.Context, getter ResourceGetter, rt http.RoundT
 
 	// Try to figure out a port.
 	if port == "" {
-		containers := pod.GetSpecContainers()
-		for i := range containers {
-			if len(containers[i].Ports) > 0 {
-				port = fmt.Sprintf("%d", containers[i].Ports[0].ContainerPort)
-				break
-			}
+		if firstPort := pod.GetFirstContainerPort(); firstPort != 0 {
+			port = fmt.Sprintf("%d", firstPort)
 		}
 	}
 	podIP := getPodIP(pod)
@@ -694,25 +685,6 @@ func LogLocation(
 		return loc, nodeInfo.InsecureSkipTLSVerifyTransport, nil
 	}
 	return loc, nodeInfo.Transport, nil
-}
-
-func podHasContainerWithName(pod podutil.PodAccessor, containerName string) bool {
-	for _, c := range pod.GetSpecInitContainers() {
-		if c.Name == containerName {
-			return true
-		}
-	}
-	for _, c := range pod.GetSpecContainers() {
-		if c.Name == containerName {
-			return true
-		}
-	}
-	for _, c := range pod.GetSpecEphemeralContainers() {
-		if c.Name == containerName {
-			return true
-		}
-	}
-	return false
 }
 
 func streamParams(params url.Values, opts runtime.Object) error {
@@ -863,35 +835,19 @@ func PortForwardLocation(
 }
 
 // validateContainer validate container is valid for pod, return valid container
-func validateContainer(container string, pod podutil.PodAccessor) (string, error) {
-	if len(container) == 0 {
-		containers := pod.GetSpecContainers()
-		switch len(containers) {
-		case 1:
-			container = containers[0].Name
-		case 0:
-			return "", errors.NewBadRequest(fmt.Sprintf("a container name must be specified for pod %s", pod.GetName()))
-		default:
-			var containerNames []string
-			for _, c := range pod.GetSpecInitContainers() {
-				containerNames = append(containerNames, c.Name)
-			}
-			for _, c := range containers {
-				containerNames = append(containerNames, c.Name)
-			}
-			for _, c := range pod.GetSpecEphemeralContainers() {
-				containerNames = append(containerNames, c.Name)
-			}
-			errStr := fmt.Sprintf("a container name must be specified for pod %s, choose one of: %s", pod.GetName(), containerNames)
-			return "", errors.NewBadRequest(errStr)
-		}
-	} else {
-		if !podHasContainerWithName(pod, container) {
-			return "", errors.NewBadRequest(fmt.Sprintf("container %s is not valid for pod %s", container, pod.GetName()))
-		}
+func validateContainer(container string, pod api.PodAccessor) (string, error) {
+	resolved, ok, allNames := pod.ResolveContainer(container)
+	if ok {
+		return resolved, nil
 	}
-
-	return container, nil
+	if len(container) == 0 {
+		if len(allNames) == 0 {
+			return "", errors.NewBadRequest(fmt.Sprintf("a container name must be specified for pod %s", pod.GetName()))
+		}
+		errStr := fmt.Sprintf("a container name must be specified for pod %s, choose one of: %s", pod.GetName(), allNames)
+		return "", errors.NewBadRequest(errStr)
+	}
+	return "", errors.NewBadRequest(fmt.Sprintf("container %s is not valid for pod %s", container, pod.GetName()))
 }
 
 // applyLabelKeysToLabelSelector obtains the label value from the given label set by the key in labelKeys,

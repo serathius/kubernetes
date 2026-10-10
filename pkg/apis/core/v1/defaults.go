@@ -64,11 +64,7 @@ func SetDefaults_ReplicationController(obj *v1.ReplicationController) {
 	// obj.Spec.Replicas is defaulted declaratively
 }
 func SetDefaults_Volume(obj *v1.Volume) {
-	if ptr.AllPtrFieldsNil(&obj.VolumeSource) {
-		obj.VolumeSource = v1.VolumeSource{
-			EmptyDir: &v1.EmptyDirVolumeSource{},
-		}
-	}
+	DefaultVolume(v1VolumeAdapter{vol: obj})
 	if utilfeature.DefaultFeatureGate.Enabled(features.ImageVolume) && obj.Image != nil && obj.Image.PullPolicy == "" {
 		// PullPolicy defaults to Always if :latest tag is specified, or IfNotPresent otherwise.
 		_, tag, _, _ := parsers.ParseImageName(obj.Image.Reference)
@@ -80,23 +76,7 @@ func SetDefaults_Volume(obj *v1.Volume) {
 	}
 }
 func SetDefaults_Container(obj *v1.Container) {
-	if obj.ImagePullPolicy == "" {
-		// Ignore error and assume it has been validated elsewhere
-		_, tag, _, _ := parsers.ParseImageName(obj.Image)
-
-		// Check image tag
-		if tag == "latest" {
-			obj.ImagePullPolicy = v1.PullAlways
-		} else {
-			obj.ImagePullPolicy = v1.PullIfNotPresent
-		}
-	}
-	if obj.TerminationMessagePath == "" {
-		obj.TerminationMessagePath = v1.TerminationMessagePathDefault
-	}
-	if obj.TerminationMessagePolicy == "" {
-		obj.TerminationMessagePolicy = v1.TerminationMessageReadFile
-	}
+	DefaultContainer(v1ContainerAdapter{c: obj})
 }
 
 func SetDefaults_EphemeralContainer(obj *v1.EphemeralContainer) {
@@ -162,39 +142,7 @@ func SetDefaults_Service(obj *v1.Service) {
 
 }
 func SetDefaults_Pod(obj *v1.Pod) {
-	// Enforced on Pod but not on PodSpec. For historical reasons, PodTemplate is not defaulted this way.
-	if obj.Spec.TerminationGracePeriodSeconds != nil && *obj.Spec.TerminationGracePeriodSeconds < 0 {
-		obj.Spec.TerminationGracePeriodSeconds = ptr.To[int64](1)
-	}
-
-	// If limits are specified, but requests are not, default requests to limits
-	// This is done here rather than a more specific defaulting pass on v1.ResourceRequirements
-	// because we only want this defaulting semantic to take place on a v1.Pod and not a v1.PodTemplate
-	for i := range obj.Spec.Containers {
-		// set requests to limits if requests are not specified, but limits are
-		if obj.Spec.Containers[i].Resources.Limits != nil {
-			if obj.Spec.Containers[i].Resources.Requests == nil {
-				obj.Spec.Containers[i].Resources.Requests = make(v1.ResourceList)
-			}
-			for key, value := range obj.Spec.Containers[i].Resources.Limits {
-				if _, exists := obj.Spec.Containers[i].Resources.Requests[key]; !exists {
-					obj.Spec.Containers[i].Resources.Requests[key] = value.DeepCopy()
-				}
-			}
-		}
-	}
-	for i := range obj.Spec.InitContainers {
-		if obj.Spec.InitContainers[i].Resources.Limits != nil {
-			if obj.Spec.InitContainers[i].Resources.Requests == nil {
-				obj.Spec.InitContainers[i].Resources.Requests = make(v1.ResourceList)
-			}
-			for key, value := range obj.Spec.InitContainers[i].Resources.Limits {
-				if _, exists := obj.Spec.InitContainers[i].Resources.Requests[key]; !exists {
-					obj.Spec.InitContainers[i].Resources.Requests[key] = value.DeepCopy()
-				}
-			}
-		}
-	}
+	DefaultPodLevel(v1PodSpecAdapter{spec: &obj.Spec})
 
 	// Pod Requests default values must be applied after container-level default values
 	// have been populated. When PodLevelResourcesFixDefaulting is enabled, this
@@ -206,16 +154,6 @@ func SetDefaults_Pod(obj *v1.Pod) {
 		defaultPodRequests(obj)
 	}
 
-	if obj.Spec.EnableServiceLinks == nil {
-		enableServiceLinks := v1.DefaultEnableServiceLinks
-		obj.Spec.EnableServiceLinks = &enableServiceLinks
-	}
-
-	if obj.Spec.HostNetwork {
-		defaultHostNetworkPorts(&obj.Spec.Containers)
-		defaultHostNetworkPorts(&obj.Spec.InitContainers)
-	}
-
 	if utilfeature.DefaultFeatureGate.Enabled(features.H2CContainerProbe) {
 		defaultHTTPProbeProtocol(obj.Spec.Containers)
 		defaultHTTPProbeProtocol(obj.Spec.InitContainers)
@@ -223,21 +161,7 @@ func SetDefaults_Pod(obj *v1.Pod) {
 	}
 }
 func SetDefaults_PodStatus(obj *v1.PodStatus) {
-	// Keep the singular PodIP and the PodIPs list in sync.
-	hasIP := len(obj.PodIP) > 0
-	hasIPs := len(obj.PodIPs) > 0
-	switch {
-	case hasIP && !hasIPs:
-		// default the list from the singular field
-		obj.PodIPs = []v1.PodIP{{IP: obj.PodIP}}
-	case !hasIP && hasIPs:
-		// default the singular field from the list
-		obj.PodIP = obj.PodIPs[0].IP
-	case hasIP && hasIPs && obj.PodIPs[0].IP != obj.PodIP:
-		// when both are specified and mismatch, PodIP is authoritative for
-		// compatibility with older kubelets
-		obj.PodIPs = []v1.PodIP{{IP: obj.PodIP}}
-	}
+	DefaultPodStatus(v1PodStatusAdapter{status: obj})
 }
 
 func SetDefaults_PodSpec(obj *v1.PodSpec) {
@@ -245,32 +169,7 @@ func SetDefaults_PodSpec(obj *v1.PodSpec) {
 	// https://github.com/kubernetes/kubernetes/issues/69445
 	// In most cases the new defaulted field can added to SetDefaults_Pod instead of here, so
 	// that it only materializes in the Pod object and not all objects with a PodSpec field.
-
-	// DeprecatedServiceAccount is an alias for ServiceAccountName; keep the two
-	// in sync, with ServiceAccountName winning when both are set. This was
-	// historically applied during conversion and produces identical
-	// serializations, so it is exempt from the new-field caution above.
-	if len(obj.ServiceAccountName) == 0 {
-		obj.ServiceAccountName = obj.DeprecatedServiceAccount
-	}
-	obj.DeprecatedServiceAccount = obj.ServiceAccountName
-	if obj.DNSPolicy == "" {
-		obj.DNSPolicy = v1.DNSClusterFirst
-	}
-	if obj.RestartPolicy == "" {
-		obj.RestartPolicy = v1.RestartPolicyAlways
-	}
-	// Always default an empty securityContext to preserve historical behavior.
-	if obj.SecurityContext == nil {
-		obj.SecurityContext = &v1.PodSecurityContext{}
-	}
-	if obj.TerminationGracePeriodSeconds == nil {
-		period := int64(v1.DefaultTerminationGracePeriodSeconds)
-		obj.TerminationGracePeriodSeconds = &period
-	}
-	if obj.SchedulerName == "" {
-		obj.SchedulerName = v1.DefaultSchedulerName
-	}
+	DefaultPodSpec(v1PodSpecAdapter{spec: obj})
 }
 func SetDefaults_Probe(obj *v1.Probe) {
 	if obj.TimeoutSeconds == 0 {
@@ -433,17 +332,6 @@ func SetDefaults_LimitRangeItem(obj *v1.LimitRangeItem) {
 func SetDefaults_ConfigMap(obj *v1.ConfigMap) {
 	if obj.Data == nil {
 		obj.Data = make(map[string]string)
-	}
-}
-
-// With host networking default all container ports to host ports.
-func defaultHostNetworkPorts(containers *[]v1.Container) {
-	for i := range *containers {
-		for j := range (*containers)[i].Ports {
-			if (*containers)[i].Ports[j].HostPort == 0 {
-				(*containers)[i].Ports[j].HostPort = (*containers)[i].Ports[j].ContainerPort
-			}
-		}
 	}
 }
 

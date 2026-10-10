@@ -132,34 +132,12 @@ func (p *Plugin) Admit(ctx context.Context, attributes admission.Attributes, o a
 		return nil
 	}
 
-	pod, ok := attributes.GetObject().(*api.Pod)
+	pod, ok := attributes.GetObject().(api.PodAccessor)
 	if !ok {
 		return errors.NewBadRequest(fmt.Sprintf("expected *api.Pod but got %T", attributes.GetObject()))
 	}
 
-	tolerations := pod.Spec.Tolerations
-
-	toleratesNodeNotReady := false
-	toleratesNodeUnreachable := false
-	for _, toleration := range tolerations {
-		if (toleration.Key == v1.TaintNodeNotReady || len(toleration.Key) == 0) &&
-			(toleration.Effect == api.TaintEffectNoExecute || len(toleration.Effect) == 0) {
-			toleratesNodeNotReady = true
-		}
-
-		if (toleration.Key == v1.TaintNodeUnreachable || len(toleration.Key) == 0) &&
-			(toleration.Effect == api.TaintEffectNoExecute || len(toleration.Effect) == 0) {
-			toleratesNodeUnreachable = true
-		}
-	}
-
-	if !toleratesNodeNotReady {
-		pod.Spec.Tolerations = append(pod.Spec.Tolerations, p.notReadyToleration)
-	}
-
-	if !toleratesNodeUnreachable {
-		pod.Spec.Tolerations = append(pod.Spec.Tolerations, p.unreachableToleration)
-	}
+	pod.EnsureDefaultFaultTolerations(p.notReadyToleration, p.unreachableToleration)
 
 	return nil
 }
