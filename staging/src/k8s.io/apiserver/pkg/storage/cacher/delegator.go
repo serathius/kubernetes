@@ -220,6 +220,19 @@ func (c *CacheDelegator) RequestWatchProgress(ctx context.Context) error {
 	return c.storage.RequestWatchProgress(ctx)
 }
 
+func (c *CacheDelegator) Compact(ctx context.Context, resourceVersion string) error {
+	if err := c.cacher.Compact(resourceVersion); err != nil {
+		return err
+	}
+	if err := c.storage.Compact(ctx, resourceVersion); err != nil {
+		return err
+	}
+	if c.cacher.compactor != nil {
+		c.cacher.compactor.compactIfNeeded()
+	}
+	return nil
+}
+
 func (c *CacheDelegator) CompactRevision() int64 {
 	if c.cacher.compactor == nil {
 		return c.storage.CompactRevision()

@@ -104,7 +104,7 @@ func (s *ModelStorage) GetList(ctx context.Context, key string, opts storage.Lis
 	}, listObj)
 }
 
-func (s *ModelStorage) Compact(resourceVersion string) error {
+func (s *ModelStorage) Compact(ctx context.Context, resourceVersion string) error {
 	return s.execute(Request{
 		Op:      OpCompact,
 		Compact: CompactRequest{ResourceVersion: resourceVersion},

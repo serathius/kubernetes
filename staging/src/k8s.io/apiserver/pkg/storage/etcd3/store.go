@@ -223,6 +223,17 @@ func newStorageKeyReverseFunc(pathPrefix string, reverseKeyFunc storage.ReverseK
 	}
 }
 
+func (s *store) Compact(ctx context.Context, resourceVersion string) error {
+	if s.compactor == nil {
+		return fmt.Errorf("compactor is not configured")
+	}
+	rv, err := s.versioner.ParseResourceVersion(resourceVersion)
+	if err != nil {
+		return err
+	}
+	return s.compactor.Compact(ctx, int64(rv))
+}
+
 func (s *store) CompactRevision() int64 {
 	if s.compactor == nil {
 		return 0

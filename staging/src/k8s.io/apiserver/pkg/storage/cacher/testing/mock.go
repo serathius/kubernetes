@@ -55,6 +55,10 @@ func (d *MockStorage) GetRequestWatchProgressCounter() int {
 	return d.RequestWatchProgressCounter
 }
 
+func (d *MockStorage) Compact(_ context.Context, _ string) error {
+	return fmt.Errorf("unimplemented")
+}
+
 func (d *MockStorage) CompactRevision() int64 {
 	return 0
 }

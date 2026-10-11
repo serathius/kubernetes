@@ -44,7 +44,14 @@ var (
 			{Choice: correctness.OpDelete, Weight: 20},
 			{Choice: correctness.OpGet, Weight: 10},
 			{Choice: correctness.OpList, Weight: 25},
-			{Choice: correctness.OpUpdate, Weight: 30},
+			{Choice: correctness.OpUpdate, Weight: 29},
+			{Choice: correctness.OpCompact, Weight: 1},
+		},
+		Compact: CompactDistribution{
+			ResourceVersion: []ChoiceWeight[RVType]{
+				{Choice: RVCurrent, Weight: 50},
+				{Choice: RVPast, Weight: 50},
+			},
 		},
 		Delete: DeleteDistribution{
 			Preconditions: PreconditionsDistribution{
@@ -100,9 +107,13 @@ var (
 				{Choice: LabelByApp, Weight: 40},
 			},
 			ResourceVersion: []ChoiceWeight[RVType]{
-				{Choice: RVEmpty, Weight: 50},
-				{Choice: RVZero, Weight: 20},
-				{Choice: RVCached, Weight: 30},
+				{Choice: RVEmpty, Weight: 30},
+				{Choice: RVZero, Weight: 15},
+				{Choice: RVOne, Weight: 10},
+				{Choice: RVCached, Weight: 15},
+				{Choice: RVCurrent, Weight: 10},
+				{Choice: RVPast, Weight: 10},
+				{Choice: RVFuture, Weight: 10},
 			},
 			ResourceVersionMatch: []ChoiceWeight[metav1.ResourceVersionMatch]{
 				{Choice: "", Weight: 50},

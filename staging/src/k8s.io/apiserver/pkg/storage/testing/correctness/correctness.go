@@ -1964,7 +1964,7 @@ func watchTestCases() []watchTestCase {
 
 // RunTestCorrectness executes the operations from the sequential storage model against real storage
 // and validates that every transition matches the StorageModel specification.
-func RunTestCorrectness(ctx context.Context, t *testing.T, store storage.Interface, storagePrefix string, keyFunc func(obj runtime.Object) (string, error), compact func(ctx context.Context, t *testing.T, resourceVersion string)) {
+func RunTestCorrectness(ctx context.Context, t *testing.T, store storage.Interface, storagePrefix string, keyFunc func(obj runtime.Object) (string, error)) {
 	versioner := store.Versioner()
 	initialState := NewEmptyModel(storagePrefix, func() runtime.Object { return &example.Pod{} }, func() runtime.Object { return &example.PodList{} }, versioner)
 	model := initialState.Clone()
@@ -2000,7 +2000,7 @@ func RunTestCorrectness(ctx context.Context, t *testing.T, store storage.Interfa
 		case OpUpdate:
 			err = store.GuaranteedUpdate(ctx, step.Request.Key, out, step.Request.Update.IgnoreNotFound, step.Request.Update.Preconditions, step.Request.Update.UpdateFunc, step.Request.Update.CachedExistingObject)
 		case OpCompact:
-			compact(ctx, t, step.Request.Compact.ResourceVersion)
+			err = store.Compact(ctx, step.Request.Compact.ResourceVersion)
 			out = nil
 		default:
 			t.Fatalf("unknown mutation operation: %v", step.Request.Op)

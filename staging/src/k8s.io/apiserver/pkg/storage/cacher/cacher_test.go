@@ -269,7 +269,7 @@ func TestLists(t *testing.T) {
 				t.Parallel()
 				ctx, cacher, server, terminate := testSetupWithEtcdServer(t)
 				t.Cleanup(terminate)
-				storagetesting.RunTestList(ctx, t, cacher, compactStore(cacher, server.V3Client.Client), true, server.V3Client.Kubernetes.(*storagetesting.KubernetesRecorder))
+				storagetesting.RunTestList(ctx, t, cacher, true, server.V3Client.Kubernetes.(*storagetesting.KubernetesRecorder))
 			})
 
 			t.Run("ConsistentList", func(t *testing.T) {
@@ -294,7 +294,7 @@ func TestCompactRevision(t *testing.T) {
 	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.ListFromCacheSnapshot, true)
 	ctx, cacher, server, terminate := testSetupWithEtcdServer(t)
 	t.Cleanup(terminate)
-	storagetesting.RunTestCompactRevision(ctx, t, cacher, increaseRVFunc(server.V3Client.Client), compactStore(cacher, server.V3Client.Client))
+	storagetesting.RunTestCompactRevision(ctx, t, cacher, increaseRVFunc(server.V3Client.Client))
 }
 
 func TestMarkConsistent(t *testing.T) {
@@ -468,9 +468,9 @@ func TestWatch(t *testing.T) {
 		storagetesting.RunTestWatch(ctx, t, cacher)
 	})
 	t.Run("WatchFromZero", func(t *testing.T) {
-		ctx, cacher, server, terminate := testSetupWithEtcdServer(t)
+		ctx, cacher, terminate := testSetup(t)
 		t.Cleanup(terminate)
-		storagetesting.RunTestWatchFromZero(ctx, t, cacher, compactWatch(cacher, server.V3Client.Client))
+		storagetesting.RunTestWatchFromZero(ctx, t, cacher, compactWatch(cacher))
 	})
 	t.Run("DeleteTriggerWatch", func(t *testing.T) {
 		ctx, cacher, terminate := testSetup(t)
@@ -852,7 +852,7 @@ func BenchmarkStoreStats(b *testing.B) {
 }
 
 func TestCorrectness(t *testing.T) {
-	ctx, cacher, server, terminate := testSetupWithEtcdServer(t)
+	ctx, cacher, terminate := testSetup(t)
 	t.Cleanup(terminate)
-	correctness.RunTestCorrectness(ctx, t, cacher, etcd3testing.PathPrefix(), cacher.cacher.watchCache.config.keyFunc, compactStore(cacher, server.V3Client.Client))
+	correctness.RunTestCorrectness(ctx, t, cacher, etcd3testing.PathPrefix(), cacher.cacher.watchCache.config.keyFunc)
 }

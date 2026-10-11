@@ -462,14 +462,14 @@ func (s *Model) compact(rvStr string) Response {
 	if err != nil {
 		return Response{Err: err}
 	}
-	if rv == 0 {
+	if rv <= s.CompactResourceVersion {
 		return Response{}
 	}
 	if rv > s.ResourceVersion {
 		return Response{Err: storage.NewTooLargeResourceVersionError(rv, s.ResourceVersion, 0)}
 	}
 	s.ResourceVersion++
-	s.CompactResourceVersion = max(s.CompactResourceVersion, rv)
+	s.CompactResourceVersion = rv
 	return Response{}
 }
 

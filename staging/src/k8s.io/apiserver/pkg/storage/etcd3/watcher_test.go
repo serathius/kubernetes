@@ -72,8 +72,12 @@ func TestWatch(t *testing.T) {
 		storagetesting.RunTestDeleteTriggerWatch(ctx, t, store)
 	})
 	t.Run("WatchFromZero", func(t *testing.T) {
-		ctx, store, client := testSetup(t)
-		storagetesting.RunTestWatchFromZero(ctx, t, store, compactStorage(store, client.Client))
+		ctx, store, _ := testSetup(t)
+		storagetesting.RunTestWatchFromZero(ctx, t, store, func(ctx context.Context, t *testing.T, rv string) {
+			if err := store.Compact(ctx, rv); err != nil {
+				t.Fatal(err)
+			}
+		})
 	})
 	t.Run("WatchFromNonZero", func(t *testing.T) {
 		ctx, store, _ := testSetup(t)

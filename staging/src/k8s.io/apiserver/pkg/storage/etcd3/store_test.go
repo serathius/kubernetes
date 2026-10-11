@@ -26,7 +26,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/go-logr/logr"
 	"github.com/google/go-cmp/cmp"
@@ -347,7 +346,7 @@ func TestList(t *testing.T) {
 			resetFeatureSupportCheckerDuringTest(t)
 			ctx, store, client := testSetup(t)
 			kvRecorder := client.KV.(*storagetesting.KVRecorder)
-			storagetesting.RunTestList(ctx, t, store, compactStorage(store, client.Client), false, client.Kubernetes.(*storagetesting.KubernetesRecorder))
+			storagetesting.RunTestList(ctx, t, store, false, client.Kubernetes.(*storagetesting.KubernetesRecorder))
 			streamReads := kvRecorder.GetStreamReadsAndReset()
 			if rangeStream && streamReads == 0 {
 				t.Error("expected lists to be served by RangeStream")
@@ -632,7 +631,7 @@ func TestCompactRevision(t *testing.T) {
 	// Test requires store to observe extenal changes to compaction revision, requiring dedicated watch on compact key which is enabled by ListFromCacheSnapshot.
 	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.ListFromCacheSnapshot, true)
 	ctx, store, client := testSetup(t)
-	storagetesting.RunTestCompactRevision(ctx, t, store, increaseRVFunc(client.Client), compactStorage(store, client.Client))
+	storagetesting.RunTestCompactRevision(ctx, t, store, increaseRVFunc(client.Client))
 }
 
 func checkStorageCallsInvariants(transformer *storagetesting.PrefixTransformer, recorder *storagetesting.KVRecorder) storagetesting.CallsValidation {
@@ -694,38 +693,6 @@ func TestNamespaceScopedList(t *testing.T) {
 	storagetesting.RunTestNamespaceScopedList(ctx, t, store)
 }
 
-func compactStorage(s *store, client *clientv3.Client) storagetesting.Compaction {
-	return func(ctx context.Context, t *testing.T, resourceVersion string) {
-		versioner := storage.APIObjectVersioner{}
-		rv, err := versioner.ParseResourceVersion(resourceVersion)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var currentVersion int64
-		currentVersion, _, _, err = Compact(ctx, client, currentVersion, int64(rv))
-		if err != nil {
-			_, _, _, err = Compact(ctx, client, currentVersion, int64(rv))
-		}
-		if err != nil {
-			t.Fatal(err)
-		}
-		// Wait for compaction to be observed.
-		if utilfeature.DefaultFeatureGate.Enabled(features.ListFromCacheSnapshot) {
-			for {
-				select {
-				case <-ctx.Done():
-					t.Fatal(ctx.Err())
-				case <-time.After(100 * time.Millisecond):
-				}
-				compactedRev := s.CompactRevision()
-				if compactedRev == int64(rv) {
-					break
-				}
-			}
-		}
-	}
-}
-
 func increaseRVFunc(client *clientv3.Client) storagetesting.IncreaseRVFunc {
 	return func(ctx context.Context, t *testing.T) int64 {
 		resp, err := client.KV.Put(ctx, "increaseRV", "ok")
@@ -737,8 +704,8 @@ func increaseRVFunc(client *clientv3.Client) storagetesting.IncreaseRVFunc {
 }
 
 func TestListInconsistentContinuation(t *testing.T) {
-	ctx, store, client := testSetup(t)
-	storagetesting.RunTestListInconsistentContinuation(ctx, t, store, compactStorage(store, client.Client))
+	ctx, store, _ := testSetup(t)
+	storagetesting.RunTestListInconsistentContinuation(ctx, t, store)
 }
 
 func TestListResourceVersionMatch(t *testing.T) {
@@ -1528,9 +1495,9 @@ func TestPrefixStats(t *testing.T) {
 }
 
 func TestCorrectness(t *testing.T) {
-	ctx, store, client := testSetup(t)
+	ctx, store, _ := testSetup(t)
 	correctness.RunTestCorrectness(ctx, t, store, "", func(obj runtime.Object) (string, error) {
 		pod := obj.(*example.Pod)
 		return computePodKey(pod), nil
-	}, compactStorage(store, client.Client))
+	})
 }

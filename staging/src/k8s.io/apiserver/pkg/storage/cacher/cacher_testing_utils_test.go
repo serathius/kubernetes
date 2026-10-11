@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"testing"
-	"time"
 
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/server/v3/embed"
@@ -138,7 +137,7 @@ func benchmarkEtcdTestStorage(t testing.TB) (*etcd3testing.EtcdTestServer, stora
 	return server, s
 }
 
-func compactWatch(c *CacheDelegator, client *clientv3.Client) storagetesting.Compaction {
+func compactWatch(c *CacheDelegator) storagetesting.Compaction {
 	return func(ctx context.Context, t *testing.T, resourceVersion string) {
 		versioner := storage.APIObjectVersioner{}
 		rv, err := versioner.ParseResourceVersion(resourceVersion)
@@ -177,41 +176,8 @@ func compactWatch(c *CacheDelegator, client *clientv3.Client) storagetesting.Com
 			c.cacher.watchCache.history.startIndex++
 		}
 		c.cacher.watchCache.storage.UpdateListResourceVersion(rv)
-		if _, err := client.Compact(ctx, int64(rv)); err != nil {
+		if err := c.Compact(ctx, resourceVersion); err != nil {
 			t.Fatalf("Could not compact: %v", err)
-		}
-	}
-}
-
-func compactStore(c *CacheDelegator, client *clientv3.Client) storagetesting.Compaction {
-	return func(ctx context.Context, t *testing.T, resourceVersion string) {
-		versioner := storage.APIObjectVersioner{}
-		rv, err := versioner.ParseResourceVersion(resourceVersion)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var currentVersion int64
-		currentVersion, _, _, err = etcd3.Compact(ctx, client, currentVersion, int64(rv))
-		if err != nil {
-			_, _, _, err = etcd3.Compact(ctx, client, currentVersion, int64(rv))
-		}
-		if err != nil {
-			t.Fatal(err)
-		}
-		// Wait for compaction to be observed.
-		if c.cacher.compactor != nil {
-			for {
-				select {
-				case <-ctx.Done():
-					t.Fatal(ctx.Err())
-				case <-time.After(100 * time.Millisecond):
-				}
-				compactedRev := c.storage.CompactRevision()
-				if compactedRev == int64(rv) {
-					break
-				}
-			}
-			c.cacher.compactor.compactIfNeeded()
 		}
 	}
 }

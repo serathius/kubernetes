@@ -642,7 +642,7 @@ func RunTestPreconditionalDeleteWithOnlySuggestionPass(ctx context.Context, t *t
 	expectNoDiff(t, "incorrect pod:", updatedPod, out)
 }
 
-func RunTestList(ctx context.Context, t *testing.T, store storage.Interface, compact Compaction, watchCacheEnabled bool, recorder *KubernetesRecorder) {
+func RunTestList(ctx context.Context, t *testing.T, store storage.Interface, watchCacheEnabled bool, recorder *KubernetesRecorder) {
 	initialRV, createdPods, updatedPod, err := seedMultiLevelData(ctx, store)
 	if err != nil {
 		t.Fatal(err)
@@ -669,7 +669,9 @@ func RunTestList(ctx context.Context, t *testing.T, store storage.Interface, com
 		return nil, fields.Set{"metadata.name": pod.Name, "spec.nodeName": pod.Spec.NodeName}, nil
 	}
 	// Compact and increase RV to test consistent List.
-	compact(ctx, t, createdPods[0].ResourceVersion)
+	if err := store.Compact(ctx, createdPods[0].ResourceVersion); err != nil {
+		t.Fatal(err)
+	}
 	currentRV := fmt.Sprintf("%d", continueRV+1)
 
 	tests := []struct {
@@ -3580,7 +3582,7 @@ func RunTestListContinuationWithFilter(ctx context.Context, t *testing.T, store 
 type Compaction func(ctx context.Context, t *testing.T, resourceVersion string)
 type IncreaseRVFunc func(ctx context.Context, t *testing.T) (revision int64)
 
-func RunTestListInconsistentContinuation(ctx context.Context, t *testing.T, store storage.Interface, compaction Compaction) {
+func RunTestListInconsistentContinuation(ctx context.Context, t *testing.T, store storage.Interface) {
 	// Setup storage with the following structure:
 	//  /
 	//   - first/
@@ -3666,7 +3668,9 @@ func RunTestListInconsistentContinuation(ctx context.Context, t *testing.T, stor
 
 	// compact to latest revision.
 	lastRVString := preset[2].storedObj.ResourceVersion
-	compaction(ctx, t, lastRVString)
+	if err := store.Compact(ctx, lastRVString); err != nil {
+		t.Fatal(err)
+	}
 
 	// The old continue token should have expired
 	options = storage.ListOptions{
@@ -4798,7 +4802,7 @@ func RunTestNamespaceScopedList(ctx context.Context, t *testing.T, store storage
 	}
 }
 
-func RunTestCompactRevision(ctx context.Context, t *testing.T, store storage.Interface, increaseRV IncreaseRVFunc, compact Compaction) {
+func RunTestCompactRevision(ctx context.Context, t *testing.T, store storage.Interface, increaseRV IncreaseRVFunc) {
 	listOut := &example.PodList{}
 	if err := store.GetList(ctx, "/pods/", storage.ListOptions{
 		Predicate: storage.Everything,
@@ -4824,7 +4828,9 @@ func RunTestCompactRevision(ctx context.Context, t *testing.T, store storage.Int
 	}
 	increaseRV(ctx, t)
 	expectCompactedRV := currentRV + 1
-	compact(ctx, t, fmt.Sprintf("%d", expectCompactedRV))
+	if err := store.Compact(ctx, fmt.Sprintf("%d", expectCompactedRV)); err != nil {
+		t.Fatal(err)
+	}
 	if err := store.GetList(ctx, "/pods/", storage.ListOptions{
 		Predicate:            storage.Everything,
 		Recursive:            true,

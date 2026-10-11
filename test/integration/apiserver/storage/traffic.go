@@ -27,6 +27,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
@@ -108,11 +109,16 @@ var (
 )
 
 type RequestDistribution struct {
-	Op     []ChoiceWeight[correctness.OpType]
-	Get    GetDistribution
-	List   ListDistribution
-	Update UpdateDistribution
-	Delete DeleteDistribution
+	Op      []ChoiceWeight[correctness.OpType]
+	Get     GetDistribution
+	List    ListDistribution
+	Update  UpdateDistribution
+	Delete  DeleteDistribution
+	Compact CompactDistribution
+}
+
+type CompactDistribution struct {
+	ResourceVersion []ChoiceWeight[RVType]
 }
 
 type GetDistribution struct {
@@ -413,6 +419,17 @@ func randomRequest(ctx context.Context, store storage.Interface, keys []types.Na
 				UpdateFunc:           randomUpdate(key, noOp, validateUpdate),
 			},
 		}
+	case correctness.OpCompact:
+		rv, ok := pickResourceVersion(ctx, store, dist.Compact.ResourceVersion, cached)
+		if !ok {
+			return nil
+		}
+		return &correctness.Request{
+			Op: correctness.OpCompact,
+			Compact: correctness.CompactRequest{
+				ResourceVersion: rv,
+			},
+		}
 	default:
 		panic(fmt.Sprintf("%v: unknown operation", selectedOp))
 	}
@@ -525,11 +542,14 @@ func runTraffic(ctx context.Context, store storage.Interface, request *correctne
 		err = store.GetList(ctx, key, request.List.Options, out)
 	case correctness.OpUpdate:
 		err = store.GuaranteedUpdate(ctx, key, out, request.Update.IgnoreNotFound, request.Update.Preconditions, request.Update.UpdateFunc, request.Update.CachedExistingObject)
+	case correctness.OpCompact:
+		out = nil
+		err = store.Compact(ctx, request.Compact.ResourceVersion)
 	default:
 		panic(fmt.Sprintf("%v: unknown operation", request.Op))
 	}
 	if err != nil {
-		if _, ok := errors.AsType[*storage.StorageError](err); ok || storage.IsTooLargeResourceVersion(err) || errors.Is(err, errDeleteRejected) || errors.Is(err, errUpdateRejected) {
+		if _, ok := errors.AsType[*storage.StorageError](err); ok || storage.IsTooLargeResourceVersion(err) || errors.Is(err, errDeleteRejected) || errors.Is(err, errUpdateRejected) || apierrors.IsResourceExpired(err) {
 			return correctness.Response{
 				Err: err,
 			}

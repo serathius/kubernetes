@@ -75,6 +75,7 @@ func StartCompactorPerEndpoint(client *clientv3.Client, compactInterval time.Dur
 }
 
 type Compactor interface {
+	Compact(ctx context.Context, rev int64) error
 	CompactRevision() int64
 }
 
@@ -115,6 +116,7 @@ type compactor struct {
 	stop     chan struct{}
 
 	mux             sync.Mutex
+	compactTime     int64
 	compactRevision int64
 	interval        time.Duration
 }
@@ -128,6 +130,25 @@ func (c *compactor) Stop() {
 		close(c.stop)
 		c.wg.Wait()
 	})
+}
+
+func (c *compactor) Compact(ctx context.Context, rev int64) error {
+	c.mux.Lock()
+	defer c.mux.Unlock()
+	if rev <= c.compactRevision {
+		return nil
+	}
+	var compactRev int64
+	var err error
+	c.compactTime, _, compactRev, err = Compact(ctx, c.client, c.compactTime, rev)
+	if err == nil && compactRev < rev {
+		c.compactTime, _, compactRev, err = Compact(ctx, c.client, c.compactTime, rev)
+	}
+	if err != nil {
+		return err
+	}
+	c.compactRevision = max(c.compactRevision, compactRev)
+	return nil
 }
 
 func (c *compactor) CompactRevision() int64 {
@@ -191,10 +212,7 @@ func (c *compactor) runCompactLoop(stopCh chan struct{}) {
 	//   every 5 minutes. This is very unlikely affecting or affected w.r.t. server load.
 
 	ctx := wait.ContextForChannel(stopCh)
-	var compactTime int64
 	var rev int64
-	var compactRev int64
-	var err error
 	for {
 		select {
 		case <-c.clock.After(c.interval):
@@ -202,13 +220,21 @@ func (c *compactor) runCompactLoop(stopCh chan struct{}) {
 			return
 		}
 
-		compactTime, rev, compactRev, err = Compact(ctx, c.client, compactTime, rev)
+		err := func() error {
+			c.mux.Lock()
+			defer c.mux.Unlock()
+			var compactRev int64
+			var err error
+			c.compactTime, rev, compactRev, err = Compact(ctx, c.client, c.compactTime, max(rev, c.compactRevision))
+			if err != nil {
+				return err
+			}
+			c.compactRevision = max(c.compactRevision, compactRev)
+			return nil
+		}()
 		if err != nil {
 			klog.Errorf("etcd: endpoint (%v) compact failed: %v", c.client.Endpoints(), err)
 			continue
-		}
-		if compactRev != 0 {
-			c.UpdateCompactRevision(compactRev)
 		}
 	}
 }

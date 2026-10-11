@@ -279,6 +279,9 @@ type Interface interface {
 	// EnableResourceSizeEstimation enables estimating resource size by providing function get keys from storage.
 	EnableResourceSizeEstimation(KeysFunc) error
 
+	// Compact compacts storage up to the given resourceVersion.
+	Compact(ctx context.Context, resourceVersion string) error
+
 	// CompactRevision returns latest observed revision that was compacted.
 	// Without ListFromCacheSnapshot enabled only locally executed compaction will be observed.
 	// Returns 0 if no compaction was yet observed.
