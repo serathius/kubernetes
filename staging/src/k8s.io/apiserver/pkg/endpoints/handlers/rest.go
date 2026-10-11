@@ -335,6 +335,9 @@ func hasOwnerReference(refs []metav1.OwnerReference, ref metav1.OwnerReference) 
 // dedupOwnerReferencesAndAddWarning dedups owner references in the object metadata.
 // If duplicates are found, the function records a warning to the provided context.
 func dedupOwnerReferencesAndAddWarning(obj runtime.Object, requestContext context.Context, afterMutatingAdmission bool) {
+	if fast, ok := obj.(interface{ HasMultipleOwnerReferences() bool }); ok && !fast.HasMultipleOwnerReferences() {
+		return
+	}
 	accessor, err := meta.Accessor(obj)
 	if err != nil {
 		// The object doesn't have metadata. Nothing we need to do here.

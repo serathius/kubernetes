@@ -1253,6 +1253,10 @@ func (t *Tester) testGetFound(obj runtime.Object) {
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
+	got, err = runtime.EnsureDecodedObject(got)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
 	gotMeta := t.getObjectMetaOrFail(got)
 	gotMeta.SetResourceVersion(existingMeta.GetResourceVersion())
 	if e, a := existing, got; !apiequality.Semantic.DeepEqual(e, a) {
@@ -1318,7 +1322,11 @@ func listToItems(listObj runtime.Object) ([]runtime.Object, error) {
 	}
 	result := make([]runtime.Object, items.Len())
 	for i := 0; i < items.Len(); i++ {
-		result[i] = items.Index(i).Addr().Interface().(runtime.Object)
+		item, err := runtime.EnsureDecodedObject(items.Index(i).Addr().Interface().(runtime.Object))
+		if err != nil {
+			return nil, err
+		}
+		result[i] = item
 	}
 	return result, nil
 }

@@ -114,7 +114,7 @@ func createHandler(r rest.NamedCreater, scope *RequestScope, admit admission.Int
 		options.TypeMeta.SetGroupVersionKind(metav1.SchemeGroupVersion.WithKind("CreateOptions"))
 
 		defaultGVK := scope.Kind
-		original := r.New()
+		original, _ := runtime.EnsureDecodedObject(r.New())
 
 		validationDirective := fieldValidation(options.FieldValidation)
 		decodeSerializer := s.Serializer
@@ -143,6 +143,11 @@ func createHandler(r rest.NamedCreater, scope *RequestScope, admit admission.Int
 		objGV := gvk.GroupVersion()
 		if !scope.AcceptsGroupVersion(objGV) {
 			err = errors.NewBadRequest(fmt.Sprintf("the API version in the data (%s) does not match the expected API version (%v)", objGV.String(), gv.String()))
+			scope.err(err, w, req)
+			return
+		}
+		obj, err = runtime.EnsureDecodedObject(obj)
+		if err != nil {
 			scope.err(err, w, req)
 			return
 		}

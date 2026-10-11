@@ -604,6 +604,8 @@ func AddHandlers(h printers.PrintHandler) {
 	// Errors are suppressed as TableHandler already logs internally
 	_ = h.TableHandler(podColumnDefinitions, printPodList)
 	_ = h.TableHandler(podColumnDefinitions, printPod)
+	_ = h.TableHandler(podColumnDefinitions, printPodListAccessor)
+	_ = h.TableHandler(podColumnDefinitions, printPodAccessor)
 
 	_ = h.TableHandler(podTemplateColumnDefinitions, printPodTemplate)
 	_ = h.TableHandler(podTemplateColumnDefinitions, printPodTemplateList)
@@ -944,9 +946,14 @@ var (
 )
 
 func printPodList(podList *api.PodList, options printers.GenerateOptions) ([]metav1.TableRow, error) {
-	rows := make([]metav1.TableRow, 0, len(podList.Items))
-	for i := range podList.Items {
-		r, err := printPod(&podList.Items[i], options)
+	return printPodListAccessor(podList, options)
+}
+
+func printPodListAccessor(podList api.PodListAccessor, options printers.GenerateOptions) ([]metav1.TableRow, error) {
+	n := podList.Len()
+	rows := make([]metav1.TableRow, 0, n)
+	for i := 0; i < n; i++ {
+		r, err := printPodAccessor(podList.PodAt(i), options)
 		if err != nil {
 			return nil, err
 		}
@@ -974,10 +981,12 @@ func printPodAccessor(pod api.PodAccessor, options printers.GenerateOptions) ([]
 		row.Conditions = podFailedConditions
 	}
 
-	if pod.GetDeletionTimestamp() != nil && sum.RawStatusReason == node.NodeUnreachablePodReason {
-		reason = "Unknown"
-	} else if pod.GetDeletionTimestamp() != nil && !podutilv1.IsPodPhaseTerminal(apiv1.PodPhase(sum.Phase)) {
-		reason = "Terminating"
+	if pod.HasDeletionTimestamp() {
+		if sum.RawStatusReason == node.NodeUnreachablePodReason {
+			reason = "Unknown"
+		} else if !podutilv1.IsPodPhaseTerminal(apiv1.PodPhase(sum.Phase)) {
+			reason = "Terminating"
+		}
 	}
 
 	restartsStr := strconv.Itoa(sum.Restarts)

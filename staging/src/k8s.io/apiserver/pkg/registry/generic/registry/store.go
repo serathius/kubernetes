@@ -594,6 +594,11 @@ func (e *Store) createWithGenerateNameRetry(ctx context.Context, obj runtime.Obj
 
 func (e *Store) create(ctx context.Context, obj runtime.Object, createValidation rest.ValidateObjectFunc, options *metav1.CreateOptions) (runtime.Object, error) {
 	var finishCreate FinishFunc = finishNothing
+	var err error
+	obj, err = runtime.EnsureDecodedObject(obj)
+	if err != nil {
+		return nil, err
+	}
 
 	// Init metadata as early as possible.
 	if objectMeta, err := meta.Accessor(obj); err != nil {
@@ -678,12 +683,17 @@ func (e *Store) create(ctx context.Context, obj runtime.Object, createValidation
 // the existing object's deletionTimestamp is set, and
 // the existing object's deletionGracePeriodSeconds is 0 or nil
 func ShouldDeleteDuringUpdate(ctx context.Context, key string, obj, existing runtime.Object) bool {
-	newMeta, err := meta.Accessor(obj)
+	oldMeta, err := meta.Accessor(existing)
 	if err != nil {
 		utilruntime.HandleError(err)
 		return false
 	}
-	oldMeta, err := meta.Accessor(existing)
+	if fastOld, ok := oldMeta.(interface{ HasDeletionTimestamp() bool }); ok {
+		if !fastOld.HasDeletionTimestamp() {
+			return false
+		}
+	}
+	newMeta, err := meta.Accessor(obj)
 	if err != nil {
 		utilruntime.HandleError(err)
 		return false
@@ -790,8 +800,17 @@ func (e *Store) Update(ctx context.Context, name string, objInfo rest.UpdatedObj
 			}
 		}
 
+		existing, err = runtime.EnsureDecodedObject(existing)
+		if err != nil {
+			return nil, nil, err
+		}
+
 		// Given the existing object, get the new object
 		obj, err := objInfo.UpdatedObject(ctx, existing)
+		if err != nil {
+			return nil, nil, err
+		}
+		obj, err = runtime.EnsureDecodedObject(obj)
 		if err != nil {
 			return nil, nil, err
 		}

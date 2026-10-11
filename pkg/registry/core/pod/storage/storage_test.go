@@ -70,6 +70,15 @@ func newStorage(t *testing.T) (*REST, *BindingREST, *StatusREST, *etcd3testing.E
 	return storage.Pod, storage.Binding, storage.Status, server
 }
 
+func mustDecodePod(t *testing.T, obj runtime.Object) *api.Pod {
+	t.Helper()
+	dec, err := runtime.EnsureDecodedObject(obj)
+	if err != nil {
+		t.Fatalf("unexpected error decoding pod: %v", err)
+	}
+	return dec.(*api.Pod)
+}
+
 func validNewPod() *api.Pod {
 	enableServiceLinks := v1.DefaultEnableServiceLinks
 
@@ -236,7 +245,7 @@ func TestCreateSetsFields(t *testing.T) {
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
-	actual := object.(*api.Pod)
+	actual := mustDecodePod(t, object)
 	if actual.Name != pod.Name {
 		t.Errorf("unexpected pod: %#v", actual)
 	}
@@ -668,7 +677,7 @@ func TestEtcdCreateClearsNominatedNodeName(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Unexpected error %v", err)
 			}
-			boundPod := obj.(*api.Pod)
+			boundPod := mustDecodePod(t, obj)
 
 			if featureGateEnabled {
 				if boundPod.Status.NominatedNodeName != "" {
@@ -759,7 +768,7 @@ func TestEtcdCreateWithContainersNotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error %v", err)
 	}
-	pod := obj.(*api.Pod)
+	pod := mustDecodePod(t, obj)
 
 	if !(pod.Annotations != nil && pod.Annotations["annotation1"] == "value1") {
 		t.Fatalf("Pod annotations don't match the expected: %v", pod.Annotations)
@@ -973,8 +982,8 @@ func TestEtcdCreateBindingWithUIDAndResourceVersion(t *testing.T) {
 
 		if pod, err := storage.Get(ctx, pod.Name, &metav1.GetOptions{}); err != nil {
 			t.Errorf("%s: unexpected error: %v", k, err)
-		} else if pod.(*api.Pod).Spec.NodeName != testCase.expectedNodeName {
-			t.Errorf("%s: expected: %v, got: %v", k, pod.(*api.Pod).Spec.NodeName, testCase.expectedNodeName)
+		} else if mustDecodePod(t, pod).Spec.NodeName != testCase.expectedNodeName {
+			t.Errorf("%s: expected: %v, got: %v", k, mustDecodePod(t, pod).Spec.NodeName, testCase.expectedNodeName)
 		}
 	}
 }
@@ -1066,15 +1075,16 @@ func TestEtcdCreateBinding(t *testing.T) {
 			t.Errorf("%s: unexpected error: %v", k, err)
 		} else if err == nil {
 			// If bind succeeded, verify Host field in pod's Spec and ResourceVersion in Status.
-			pod, err := storage.Get(ctx, pod.ObjectMeta.Name, &metav1.GetOptions{})
+			podObj, err := storage.Get(ctx, pod.ObjectMeta.Name, &metav1.GetOptions{})
 			if err != nil {
 				t.Errorf("%s: unexpected error: %v", k, err)
 			} else {
-				if pod.(*api.Pod).Spec.NodeName != test.binding.Target.Name {
-					t.Errorf("%s: expected: %v, got: %v", k, pod.(*api.Pod).Spec.NodeName, test.binding.Target.Name)
+				decodedPod := mustDecodePod(t, podObj)
+				if decodedPod.Spec.NodeName != test.binding.Target.Name {
+					t.Errorf("%s: expected: %v, got: %v", k, decodedPod.Spec.NodeName, test.binding.Target.Name)
 				}
-				if out.(*metav1.Status).ResourceVersion != pod.(*api.Pod).ResourceVersion {
-					t.Errorf("%s: expected ResourceVersion: %v, got: %v", k, pod.(*api.Pod).ResourceVersion, out.(*metav1.Status).ResourceVersion)
+				if out.(*metav1.Status).ResourceVersion != decodedPod.ResourceVersion {
+					t.Errorf("%s: expected ResourceVersion: %v, got: %v", k, decodedPod.ResourceVersion, out.(*metav1.Status).ResourceVersion)
 				}
 			}
 		}
@@ -1100,7 +1110,7 @@ func TestEtcdUpdateNotScheduled(t *testing.T) {
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
-	podOut := obj.(*api.Pod)
+	podOut := mustDecodePod(t, obj)
 	// validChangedPod only changes the Labels, so were checking the update was valid
 	if !apiequality.Semantic.DeepEqual(podIn.Labels, podOut.Labels) {
 		t.Errorf("objects differ: %v", cmp.Diff(podOut, podIn))
@@ -1173,7 +1183,7 @@ func TestEtcdUpdateScheduled(t *testing.T) {
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 	}
-	podOut := obj.(*api.Pod)
+	podOut := mustDecodePod(t, obj)
 	// Check to verify the Spec and Label updates match from change above.  Those are the fields changed.
 	if !apiequality.Semantic.DeepEqual(podOut.Spec, podIn.Spec) || !apiequality.Semantic.DeepEqual(podOut.Labels, podIn.Labels) {
 		t.Errorf("objects differ: %v", cmp.Diff(podOut, podIn))
@@ -1289,7 +1299,7 @@ func TestEtcdUpdateStatus(t *testing.T) {
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}
-		podOut := obj.(*api.Pod)
+		podOut := mustDecodePod(t, obj)
 		// Check to verify the Label, and Status updates match from change above.  Those are the fields changed.
 		if !apiequality.Semantic.DeepEqual(podOut.Spec, expected.Spec) ||
 			!apiequality.Semantic.DeepEqual(podOut.Labels, expected.Labels) ||
@@ -1332,7 +1342,7 @@ func TestEtcdTerminationGracePeriodSecondsCompatibility(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	served := obj.(*api.Pod)
+	served := mustDecodePod(t, obj)
 	if served.Spec.TerminationGracePeriodSeconds == nil || *served.Spec.TerminationGracePeriodSeconds != 1 {
 		t.Fatalf("expected stored negative grace period clamped to 1 by storage-decode defaulting, got %v", served.Spec.TerminationGracePeriodSeconds)
 	}
@@ -1345,7 +1355,7 @@ func TestEtcdTerminationGracePeriodSecondsCompatibility(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	healed := obj.(*api.Pod)
+	healed := mustDecodePod(t, obj)
 	if healed.Spec.TerminationGracePeriodSeconds == nil || *healed.Spec.TerminationGracePeriodSeconds != 1 {
 		t.Fatalf("expected grace period of 1 after rewrite, got %v", healed.Spec.TerminationGracePeriodSeconds)
 	}
@@ -1369,7 +1379,7 @@ func TestEtcdPodIPsReadCompatibility(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	served := obj.(*api.Pod)
+	served := mustDecodePod(t, obj)
 	if served.Status.PodIP != "10.0.0.1" {
 		t.Errorf("expected podIP 10.0.0.1, got %q", served.Status.PodIP)
 	}
@@ -1409,7 +1419,7 @@ func TestEtcdCreateBindingScrubsLegacyAnnotations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	pod := obj.(*api.Pod)
+	pod := mustDecodePod(t, obj)
 	if _, ok := pod.Annotations["pod.beta.kubernetes.io/init-containers"]; ok {
 		t.Errorf("expected legacy init-container annotation to be scrubbed from binding, got %v", pod.Annotations)
 	}

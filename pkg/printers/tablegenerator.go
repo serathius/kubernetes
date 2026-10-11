@@ -79,6 +79,15 @@ func (h *HumanReadableGenerator) GenerateTable(obj runtime.Object, options Gener
 	t := reflect.TypeOf(obj)
 	handler, ok := h.handlerMap[t]
 	if !ok {
+		for registeredType, candidate := range h.handlerMap {
+			if registeredType.Kind() == reflect.Interface && t.Implements(registeredType) {
+				handler = candidate
+				ok = true
+				break
+			}
+		}
+	}
+	if !ok {
 		return nil, fmt.Errorf("no table handler registered for this type %v", t)
 	}
 

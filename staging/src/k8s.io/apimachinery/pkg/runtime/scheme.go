@@ -204,6 +204,57 @@ func (s *Scheme) AddKnownTypeWithName(gvk schema.GroupVersionKind, obj Object) {
 	}
 }
 
+// LazyObject can be implemented by runtime.Object wrappers that defer full
+// deserialization of protobuf wire bytes until fields beyond ObjectMeta or
+// indexed accessors are needed.
+type LazyObject interface {
+	Object
+	// IsDecoded reports whether the underlying concrete runtime.Object has already been materialized.
+	IsDecoded() bool
+	// EnsureDecodedObject materializes and returns the underlying concrete runtime.Object.
+	EnsureDecodedObject() (Object, error)
+}
+
+// EnsureDecodedObject unwraps obj if it implements LazyObject, or returns obj unchanged.
+func EnsureDecodedObject(obj Object) (Object, error) {
+	if lazy, ok := obj.(LazyObject); ok {
+		return lazy.EnsureDecodedObject()
+	}
+	return obj, nil
+}
+
+// VersionedObjectCreator can be implemented by an internal runtime.Object to provide
+// a custom versioned runtime.Object (such as a lazy wire wrapper) during Decode and ConvertToVersion.
+type VersionedObjectCreator interface {
+	NewVersionedObject(gvk schema.GroupVersionKind) (Object, bool)
+}
+
+// AddAlternativeTypeWithName registers obj's type in typeToGVK for gvk without overwriting
+// the primary gvkToType mapping if gvk is already registered.
+func (s *Scheme) AddAlternativeTypeWithName(gvk schema.GroupVersionKind, obj Object) {
+	s.addObservedVersion(gvk.GroupVersion())
+	t := reflect.TypeOf(obj)
+	if len(gvk.Version) == 0 {
+		panic(fmt.Sprintf("version is required on all types: %s %v", gvk, t))
+	}
+	if t.Kind() != reflect.Pointer {
+		panic("All types must be pointers to structs.")
+	}
+	t = t.Elem()
+	if t.Kind() != reflect.Struct {
+		panic("All types must be pointers to structs.")
+	}
+	if _, found := s.gvkToType[gvk]; !found {
+		s.gvkToType[gvk] = t
+	}
+	for _, existingGvk := range s.typeToGVK[t] {
+		if existingGvk == gvk {
+			return
+		}
+	}
+	s.typeToGVK[t] = append(s.typeToGVK[t], gvk)
+}
+
 // KnownTypes returns the types known for the given version.
 func (s *Scheme) KnownTypes(gv schema.GroupVersion) map[string]reflect.Type {
 	types := make(map[string]reflect.Type)
@@ -551,9 +602,16 @@ func (s *Scheme) convertToVersion(copy bool, in Object, target GroupVersioner) (
 		return copyAndSetTargetKind(copy, in, unversionedKind)
 	}
 
-	out, err := s.New(gvk)
-	if err != nil {
-		return nil, err
+	var out Object
+	var err error
+	if creator, ok := in.(VersionedObjectCreator); ok {
+		out, _ = creator.NewVersionedObject(gvk)
+	}
+	if out == nil {
+		out, err = s.New(gvk)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	if copy {

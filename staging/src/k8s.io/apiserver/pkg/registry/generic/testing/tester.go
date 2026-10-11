@@ -246,7 +246,7 @@ func (t *Tester) getObject(ctx context.Context, obj runtime.Object) (runtime.Obj
 	if err != nil {
 		return nil, err
 	}
-	return result, nil
+	return runtime.EnsureDecodedObject(result)
 }
 
 func (t *Tester) createObject(ctx context.Context, obj runtime.Object) error {

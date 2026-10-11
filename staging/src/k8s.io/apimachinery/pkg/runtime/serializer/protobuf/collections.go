@@ -54,6 +54,9 @@ func getStreamingListData(list runtime.Object) (data streamingListData, err erro
 		return data, errFieldCount
 	}
 	// TypeMeta: validated, but not returned as is not serialized.
+	if !listValue.Field(0).CanInterface() {
+		return data, errTypeMetaField
+	}
 	_, ok := listValue.Field(0).Interface().(metav1.TypeMeta)
 	if !ok {
 		return data, errTypeMetaField
@@ -62,6 +65,9 @@ func getStreamingListData(list runtime.Object) (data streamingListData, err erro
 		return data, errTypeMetaProtobufTag
 	}
 	// ListMeta
+	if !listValue.Field(1).CanInterface() {
+		return data, errListMetaField
+	}
 	listMeta, ok := listValue.Field(1).Interface().(metav1.ListMeta)
 	if !ok {
 		return data, errListMetaField

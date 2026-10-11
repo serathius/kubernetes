@@ -106,6 +106,9 @@ func AnnotateInitialEventsEndBookmark(obj runtime.Object) error {
 // HasInitialEventsEndBookmarkAnnotation checks the presence of the
 // special annotation which marks that the initial events have been sent.
 func HasInitialEventsEndBookmarkAnnotation(obj runtime.Object) (bool, error) {
+	if fast, ok := obj.(interface{ HasAnnotationValue(key, val string) bool }); ok {
+		return fast.HasAnnotationValue(metav1.InitialEventsAnnotationKey, "true"), nil
+	}
 	objMeta, err := meta.Accessor(obj)
 	if err != nil {
 		return false, err

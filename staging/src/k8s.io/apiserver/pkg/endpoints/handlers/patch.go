@@ -382,6 +382,10 @@ func (p *jsonPatcher) applyPatchToCurrentObject(requestContext context.Context, 
 		// happen on the next line
 		panic("PatchOptions required but not provided")
 	}
+	objToUpdate, err = runtime.EnsureDecodedObject(objToUpdate)
+	if err != nil {
+		return nil, err
+	}
 	objToUpdate = p.fieldManager.UpdateNoErrors(currentObject, objToUpdate, managerOrUserAgent(p.options.FieldManager, p.userAgent))
 	return objToUpdate, nil
 }
@@ -471,6 +475,10 @@ func (p *smpPatcher) applyPatchToCurrentObject(requestContext context.Context, c
 		}
 	}
 	versionedObjToUpdate, err := p.creater.New(p.kind)
+	if err != nil {
+		return nil, err
+	}
+	versionedObjToUpdate, err = runtime.EnsureDecodedObject(versionedObjToUpdate)
 	if err != nil {
 		return nil, err
 	}
@@ -705,7 +713,12 @@ func (p *patcher) patchResource(ctx context.Context, scope *RequestScope) (runti
 			fieldManager: scope.FieldManager,
 		}
 	case types.StrategicMergePatchType:
-		schemaReferenceObj, err := p.unsafeConvertor.ConvertToVersion(p.restPatcher.New(), p.kind.GroupVersion())
+		baseObj, _ := runtime.EnsureDecodedObject(p.restPatcher.New())
+		schemaReferenceObj, err := p.unsafeConvertor.ConvertToVersion(baseObj, p.kind.GroupVersion())
+		if err != nil {
+			return nil, false, err
+		}
+		schemaReferenceObj, err = runtime.EnsureDecodedObject(schemaReferenceObj)
 		if err != nil {
 			return nil, false, err
 		}

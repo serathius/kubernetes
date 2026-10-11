@@ -44,6 +44,7 @@ import (
 	policyclient "k8s.io/client-go/kubernetes/typed/policy/v1"
 	podutil "k8s.io/kubernetes/pkg/api/pod"
 	api "k8s.io/kubernetes/pkg/apis/core"
+	"k8s.io/kubernetes/pkg/apis/core/lazypod"
 	"k8s.io/kubernetes/pkg/apis/core/validation"
 	kubefeatures "k8s.io/kubernetes/pkg/features"
 	"k8s.io/kubernetes/pkg/kubelet/client"
@@ -78,10 +79,16 @@ type REST struct {
 
 // NewStorage returns a RESTStorage object that will work against pods.
 func NewStorage(optsGetter generic.RESTOptionsGetter, k client.ConnectionInfoGetter, proxyTransport http.RoundTripper, podDisruptionBudgetClient policyclient.PodDisruptionBudgetsGetter, authorizer authorizer.UnconditionalAuthorizer) (PodStorage, error) {
+	newFunc := func() runtime.Object { return &api.Pod{} }
+	newListFunc := func() runtime.Object { return &api.PodList{} }
+	if utilfeature.DefaultFeatureGate.Enabled(kubefeatures.LazyPodEncoding) {
+		newFunc = func() runtime.Object { return &lazypod.Pod{} }
+		newListFunc = func() runtime.Object { return &lazypod.PodList{} }
+	}
 
 	store := &genericregistry.Store{
-		NewFunc:                   func() runtime.Object { return &api.Pod{} },
-		NewListFunc:               func() runtime.Object { return &api.PodList{} },
+		NewFunc:                   newFunc,
+		NewListFunc:               newListFunc,
 		PredicateFunc:             registrypod.MatchPod,
 		DefaultQualifiedResource:  api.Resource("pods"),
 		SingularQualifiedResource: api.Resource("pod"),
@@ -267,7 +274,6 @@ func (r *BindingREST) setPodNodeAndMetadata(ctx context.Context, podUID types.UI
 		podAnnotations := pod.GetAnnotations()
 		if podAnnotations == nil {
 			podAnnotations = make(map[string]string)
-			pod.SetAnnotations(podAnnotations)
 		}
 		var oldAnnotations map[string]string
 		if len(annotations) > 0 {
@@ -279,6 +285,7 @@ func (r *BindingREST) setPodNodeAndMetadata(ctx context.Context, podUID types.UI
 		// Binding writes bypass the pod strategy (and thus DropDisabledPodFields),
 		// so scrub the merged annotations here the same way.
 		podutil.DropInitContainerAnnotations(podAnnotations)
+		pod.SetAnnotations(podAnnotations)
 		// Copy all labels from the Binding over to the Pod object, overwriting
 		// any existing labels set on the Pod.
 		if utilfeature.DefaultFeatureGate.Enabled(kubefeatures.PodTopologyLabelsAdmission) {
@@ -314,12 +321,12 @@ func copyLabelsWithOverwriting(pod metav1.Object, labels map[string]string) {
 	podLabels := pod.GetLabels()
 	if podLabels == nil {
 		podLabels = make(map[string]string)
-		pod.SetLabels(podLabels)
 	}
 	// Iterate over the binding's labels and copy them across to the Pod.
 	for k, v := range labels {
 		podLabels[k] = v
 	}
+	pod.SetLabels(podLabels)
 }
 
 // assignPod assigns the given pod to the given machine.

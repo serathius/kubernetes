@@ -23,6 +23,7 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/kubernetes/pkg/api/legacyscheme"
 	"k8s.io/kubernetes/pkg/apis/core"
+	"k8s.io/kubernetes/pkg/apis/core/lazypod"
 	"k8s.io/kubernetes/pkg/apis/core/v1"
 )
 
@@ -34,5 +35,6 @@ func init() {
 func Install(scheme *runtime.Scheme) {
 	utilruntime.Must(core.AddToScheme(scheme))
 	utilruntime.Must(v1.AddToScheme(scheme))
+	utilruntime.Must(lazypod.Install(scheme))
 	utilruntime.Must(scheme.SetVersionPriority(v1.SchemeGroupVersion))
 }

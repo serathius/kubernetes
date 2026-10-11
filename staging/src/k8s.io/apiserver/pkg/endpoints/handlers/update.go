@@ -102,7 +102,7 @@ func UpdateResource(r rest.Updater, scope *RequestScope, admit admission.Interfa
 			return
 		}
 		defaultGVK := scope.Kind
-		original := r.New()
+		original, _ := runtime.EnsureDecodedObject(r.New())
 
 		validationDirective := fieldValidation(options.FieldValidation)
 		decodeSerializer := s.Serializer
@@ -131,6 +131,11 @@ func UpdateResource(r rest.Updater, scope *RequestScope, admit admission.Interfa
 		objGV := gvk.GroupVersion()
 		if !scope.AcceptsGroupVersion(objGV) {
 			err = errors.NewBadRequest(fmt.Sprintf("the API version in the data (%s) does not match the expected API version (%s)", objGV, defaultGVK.GroupVersion()))
+			scope.err(err, w, req)
+			return
+		}
+		obj, err = runtime.EnsureDecodedObject(obj)
+		if err != nil {
 			scope.err(err, w, req)
 			return
 		}

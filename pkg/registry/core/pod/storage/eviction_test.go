@@ -214,7 +214,7 @@ func TestEvictionWithETCD(t *testing.T) {
 				if err != nil {
 					t.Fatalf("unexpected error getting pod before eviction: %v", err)
 				}
-				rvBeforeEviction := podBeforeEviction.(*api.Pod).ResourceVersion
+				rvBeforeEviction := podBeforeEviction.(api.PodAccessor).GetResourceVersion()
 
 				client := fake.NewSimpleClientset(pdbsCopy...)
 				evictionRest := newEvictionStorage(storage.Store, client.PolicyV1())
@@ -270,11 +270,11 @@ func TestEvictionWithETCD(t *testing.T) {
 					return
 				}
 
-				if existingPod.(*api.Pod).DeletionTimestamp == nil {
+				if existingPod.(api.PodAccessor).GetDeletionTimestamp() == nil {
 					t.Errorf("expected gracefully deleted pod with deletionTimestamp set, got %#v", existingPod)
 				}
-				if status.ResourceVersion != existingPod.(*api.Pod).ResourceVersion {
-					t.Errorf("expected Status ResourceVersion %q to match gracefully deleted pod ResourceVersion %q", status.ResourceVersion, existingPod.(*api.Pod).ResourceVersion)
+				if status.ResourceVersion != existingPod.(api.PodAccessor).GetResourceVersion() {
+					t.Errorf("expected Status ResourceVersion %q to match gracefully deleted pod ResourceVersion %q", status.ResourceVersion, existingPod.(api.PodAccessor).GetResourceVersion())
 				}
 			})
 		}
@@ -804,8 +804,8 @@ func TestEvictionWithDeleteOptions(t *testing.T) {
 				if !ok {
 					t.Fatalf("expected *metav1.Status, got %T", res)
 				}
-				if status.ResourceVersion != createdObj.(*api.Pod).ResourceVersion {
-					t.Errorf("expected dry-run Status ResourceVersion %q to match pod ResourceVersion %q", status.ResourceVersion, createdObj.(*api.Pod).ResourceVersion)
+				if status.ResourceVersion != createdObj.(api.PodAccessor).GetResourceVersion() {
+					t.Errorf("expected dry-run Status ResourceVersion %q to match pod ResourceVersion %q", status.ResourceVersion, createdObj.(api.PodAccessor).GetResourceVersion())
 				}
 			}
 		})
@@ -876,8 +876,9 @@ func TestEvictionPDBStatus(t *testing.T) {
 				if err != nil {
 					t.Error(err)
 				}
-				(newPod.(*api.Pod)).Status.Phase = api.PodRunning
-				_, _, err = statusStorage.Update(testContext, pod.Name, rest.DefaultUpdatedObjectInfo(newPod),
+				decodedPod := mustDecodePod(t, newPod)
+				decodedPod.Status.Phase = api.PodRunning
+				_, _, err = statusStorage.Update(testContext, pod.Name, rest.DefaultUpdatedObjectInfo(decodedPod),
 					nil, nil, false, &metav1.UpdateOptions{})
 				if err != nil {
 					t.Error(err)
@@ -984,7 +985,7 @@ func TestAddConditionAndDelete(t *testing.T) {
 						t.Fatal(err)
 					}
 				})
-				deleteOptions = tc.makeDeleteOptions(createdObj.(*api.Pod))
+				deleteOptions = tc.makeDeleteOptions(mustDecodePod(t, createdObj))
 			} else {
 				deleteOptions = tc.makeDeleteOptions(nil)
 			}

@@ -424,3 +424,16 @@ func (p *Pod) GetPodTableSummary(wide bool) PodTableSummary {
 
 	return sum
 }
+
+// PodListAccessor abstracts iteration over a list of PodAccessor items.
+type PodListAccessor interface {
+	runtime.Object
+	Len() int
+	PodAt(i int) PodAccessor
+}
+
+var _ PodListAccessor = (*PodList)(nil)
+
+func (l *PodList) Len() int                { return len(l.Items) }
+func (l *PodList) PodAt(i int) PodAccessor { return &l.Items[i] }
+

@@ -879,7 +879,7 @@ func (wc *watchChan) prepareObjs(e *event) (curObj runtime.Object, oldObj runtim
 		if err != nil {
 			return nil, nil, err
 		}
-		curObj, err = decodeObj(wc.watcher.codec, wc.watcher.versioner, data, e.rev)
+		curObj, err = decodeObj(wc.watcher.codec, wc.watcher.versioner, data, e.rev, wc.watcher.newFunc)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -896,7 +896,7 @@ func (wc *watchChan) prepareObjs(e *event) (curObj runtime.Object, oldObj runtim
 		}
 		// Note that this sends the *old* object with the etcd revision for the time at
 		// which it gets deleted.
-		oldObj, err = decodeObj(wc.watcher.codec, wc.watcher.versioner, data, e.rev)
+		oldObj, err = decodeObj(wc.watcher.codec, wc.watcher.versioner, data, e.rev, wc.watcher.newFunc)
 		if err != nil {
 			return nil, nil, wc.watcher.transformIfCorruptObjectError(e, err)
 		}
@@ -926,8 +926,12 @@ func (w *watcher) transformIfCorruptObjectError(e *event, err error) error {
 	return &corruptObjectDeletedError{err: corruptObjErr}
 }
 
-func decodeObj(codec runtime.Codec, versioner storage.Versioner, data []byte, rev int64) (_ runtime.Object, err error) {
-	obj, err := runtime.Decode(codec, []byte(data))
+func decodeObj(codec runtime.Codec, versioner storage.Versioner, data []byte, rev int64, newFunc func() runtime.Object) (_ runtime.Object, err error) {
+	var into runtime.Object
+	if newFunc != nil {
+		into = newFunc()
+	}
+	obj, _, err := codec.Decode(data, nil, into)
 	if err != nil {
 		if fatalOnDecodeError.Load() {
 			// we are running in a test environment and thus an

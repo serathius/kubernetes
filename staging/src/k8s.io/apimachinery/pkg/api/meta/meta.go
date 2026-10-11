@@ -114,6 +114,11 @@ func AsPartialObjectMetadata(m metav1.Object) *metav1.PartialObjectMetadata {
 	case *metav1.ObjectMeta:
 		return &metav1.PartialObjectMetadata{ObjectMeta: *t}
 	default:
+		if extractor, ok := m.(interface{ ExtractObjectMetaInto(*metav1.ObjectMeta) }); ok {
+			partial := &metav1.PartialObjectMetadata{}
+			extractor.ExtractObjectMetaInto(&partial.ObjectMeta)
+			return partial
+		}
 		return &metav1.PartialObjectMetadata{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:                       m.GetName(),

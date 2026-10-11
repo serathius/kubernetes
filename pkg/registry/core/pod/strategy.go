@@ -84,9 +84,17 @@ func (podStrategy) GetResetFields() map[fieldpath.APIVersion]*fieldpath.Set {
 	return fields
 }
 
+func ensureDecodedPod(obj runtime.Object) *api.Pod {
+	dec, err := runtime.EnsureDecodedObject(obj)
+	if err != nil {
+		panic(err)
+	}
+	return dec.(*api.Pod)
+}
+
 // PrepareForCreate clears fields that are not allowed to be set by end users on creation.
 func (podStrategy) PrepareForCreate(ctx context.Context, obj runtime.Object) {
-	pod := obj.(*api.Pod)
+	pod := ensureDecodedPod(obj)
 	pod.Generation = 1
 
 	pod.Status = api.PodStatus{
@@ -106,8 +114,8 @@ func (podStrategy) PrepareForCreate(ctx context.Context, obj runtime.Object) {
 
 // PrepareForUpdate clears fields that are not allowed to be set by end users on update.
 func (podStrategy) PrepareForUpdate(ctx context.Context, obj, old runtime.Object) {
-	newPod := obj.(*api.Pod)
-	oldPod := old.(*api.Pod)
+	newPod := ensureDecodedPod(obj)
+	oldPod := ensureDecodedPod(old)
 	newPod.Status = oldPod.Status
 
 	if utilfeature.DefaultFeatureGate.Enabled(features.PodLevelResourcesFixDefaulting) {
@@ -123,7 +131,7 @@ func (podStrategy) PrepareForUpdate(ctx context.Context, obj, old runtime.Object
 
 // Validate validates a new pod.
 func (podStrategy) Validate(ctx context.Context, obj runtime.Object) field.ErrorList {
-	pod := obj.(*api.Pod)
+	pod := ensureDecodedPod(obj)
 	opts := corevalidation.GetValidationOptionsFromPodSpecAndMeta(&pod.Spec, nil, &pod.ObjectMeta, nil)
 	opts.ResourceIsPod = true
 	return corevalidation.ValidatePodCreate(pod, opts)
@@ -131,7 +139,7 @@ func (podStrategy) Validate(ctx context.Context, obj runtime.Object) field.Error
 
 // WarningsOnCreate returns warnings for the creation of the given object.
 func (podStrategy) WarningsOnCreate(ctx context.Context, obj runtime.Object) []string {
-	newPod := obj.(*api.Pod)
+	newPod := ensureDecodedPod(obj)
 	var warnings []string
 	if msgs := utilvalidation.IsDNS1123Label(newPod.Name); len(msgs) != 0 {
 		warnings = append(warnings, fmt.Sprintf("metadata.name: this is used in the Pod's hostname, which can result in surprising behavior; a DNS label is recommended: %v", msgs))
@@ -152,11 +160,11 @@ func (podStrategy) AllowCreateOnUpdate(ctx context.Context) bool {
 // ValidateUpdate is the default update validation for an end user.
 func (podStrategy) ValidateUpdate(ctx context.Context, obj, old runtime.Object) field.ErrorList {
 	// Allow downward api usage of hugepages on pod update if feature is enabled or if the old pod already had used them.
-	pod := obj.(*api.Pod)
-	oldPod := old.(*api.Pod)
+	pod := ensureDecodedPod(obj)
+	oldPod := ensureDecodedPod(old)
 	opts := corevalidation.GetValidationOptionsFromPodSpecAndMeta(&pod.Spec, &oldPod.Spec, &pod.ObjectMeta, &oldPod.ObjectMeta)
 	opts.ResourceIsPod = true
-	return corevalidation.ValidatePodUpdate(obj.(*api.Pod), old.(*api.Pod), opts)
+	return corevalidation.ValidatePodUpdate(pod, oldPod, opts)
 }
 
 // WarningsOnUpdate returns warnings for the given update.
@@ -226,8 +234,8 @@ func (podStatusStrategy) GetResetFields() map[fieldpath.APIVersion]*fieldpath.Se
 }
 
 func (podStatusStrategy) PrepareForUpdate(ctx context.Context, obj, old runtime.Object) {
-	newPod := obj.(*api.Pod)
-	oldPod := old.(*api.Pod)
+	newPod := ensureDecodedPod(obj)
+	oldPod := ensureDecodedPod(old)
 	newPod.Spec = oldPod.Spec
 	newPod.DeletionTimestamp = nil
 
@@ -286,12 +294,12 @@ func preserveOldObservedGeneration(newPod, oldPod *api.Pod) {
 }
 
 func (podStatusStrategy) ValidateUpdate(ctx context.Context, obj, old runtime.Object) field.ErrorList {
-	pod := obj.(*api.Pod)
-	oldPod := old.(*api.Pod)
+	pod := ensureDecodedPod(obj)
+	oldPod := ensureDecodedPod(old)
 	opts := corevalidation.GetValidationOptionsFromPodSpecAndMeta(&pod.Spec, &oldPod.Spec, &pod.ObjectMeta, &oldPod.ObjectMeta)
 	opts.ResourceIsPod = true
 
-	return corevalidation.ValidatePodStatusUpdate(obj.(*api.Pod), old.(*api.Pod), opts)
+	return corevalidation.ValidatePodStatusUpdate(pod, oldPod, opts)
 }
 
 // WarningsOnUpdate returns warnings for the given update.
@@ -334,8 +342,8 @@ func dropNonEphemeralContainerUpdates(newPod, oldPod *api.Pod) *api.Pod {
 }
 
 func (podEphemeralContainersStrategy) PrepareForUpdate(ctx context.Context, obj, old runtime.Object) {
-	newPod := obj.(*api.Pod)
-	oldPod := old.(*api.Pod)
+	newPod := ensureDecodedPod(obj)
+	oldPod := ensureDecodedPod(old)
 
 	*newPod = *dropNonEphemeralContainerUpdates(newPod, oldPod)
 	podutil.DropDisabledPodFields(newPod, oldPod)
@@ -343,8 +351,8 @@ func (podEphemeralContainersStrategy) PrepareForUpdate(ctx context.Context, obj,
 }
 
 func (podEphemeralContainersStrategy) ValidateUpdate(ctx context.Context, obj, old runtime.Object) field.ErrorList {
-	newPod := obj.(*api.Pod)
-	oldPod := old.(*api.Pod)
+	newPod := ensureDecodedPod(obj)
+	oldPod := ensureDecodedPod(old)
 	opts := corevalidation.GetValidationOptionsFromPodSpecAndMeta(&newPod.Spec, &oldPod.Spec, &newPod.ObjectMeta, &oldPod.ObjectMeta)
 	opts.ResourceIsPod = true
 	return corevalidation.ValidatePodEphemeralContainersUpdate(newPod, oldPod, opts)
@@ -446,8 +454,8 @@ func dropNonResizeUpdatesForVolumes(new, old []api.Volume) []api.Volume {
 }
 
 func (podResizeStrategy) PrepareForUpdate(ctx context.Context, obj, old runtime.Object) {
-	newPod := obj.(*api.Pod)
-	oldPod := old.(*api.Pod)
+	newPod := ensureDecodedPod(obj)
+	oldPod := ensureDecodedPod(old)
 
 	*newPod = *dropNonResizeUpdates(newPod, oldPod)
 
@@ -469,8 +477,8 @@ func (podResizeStrategy) PrepareForUpdate(ctx context.Context, obj, old runtime.
 }
 
 func (podResizeStrategy) ValidateUpdate(ctx context.Context, obj, old runtime.Object) field.ErrorList {
-	newPod := obj.(*api.Pod)
-	oldPod := old.(*api.Pod)
+	newPod := ensureDecodedPod(obj)
+	oldPod := ensureDecodedPod(old)
 	opts := corevalidation.GetValidationOptionsFromPodSpecAndMeta(&newPod.Spec, &oldPod.Spec, &newPod.ObjectMeta, &oldPod.ObjectMeta)
 	opts.ResourceIsPod = true
 	return corevalidation.ValidatePodResize(newPod, oldPod, opts)

@@ -186,10 +186,14 @@ func AdmissionToValidateObjectDeleteFunc(admit admission.Interface, staticAttrib
 		if !mutating && !validating {
 			return nil
 		}
+		decodedOld, err := runtime.EnsureDecodedObject(old)
+		if err != nil {
+			return err
+		}
 		finalAttributes := admission.NewAttributesRecord(
 			nil,
 			// Deep copy the object to avoid accidentally changing the object.
-			old.DeepCopyObject(),
+			decodedOld.DeepCopyObject(),
 			staticAttributes.GetKind(),
 			staticAttributes.GetNamespace(),
 			staticAttributes.GetName(),

@@ -92,6 +92,11 @@ func UseOrCreateObject(t ObjectTyper, c ObjectCreater, gvk schema.GroupVersionKi
 				return obj, nil
 			}
 		}
+		if creator, ok := obj.(VersionedObjectCreator); ok {
+			if versioned, ok := creator.NewVersionedObject(gvk); ok {
+				return versioned, nil
+			}
+		}
 	}
 	return c.New(gvk)
 }
