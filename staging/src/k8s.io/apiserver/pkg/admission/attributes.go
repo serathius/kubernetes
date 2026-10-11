@@ -37,9 +37,11 @@ type attributesRecord struct {
 	operation   Operation
 	options     runtime.Object
 	dryRun      bool
-	object      runtime.Object
-	oldObject   runtime.Object
-	userInfo    user.Info
+	object        runtime.Object
+	oldObject     runtime.Object
+	objectOnce    sync.Once
+	oldObjectOnce sync.Once
+	userInfo      user.Info
 
 	// other elements are always accessed in single goroutine.
 	// But ValidatingAdmissionWebhook add annotations concurrently.
@@ -104,10 +106,24 @@ func (record *attributesRecord) IsDryRun() bool {
 }
 
 func (record *attributesRecord) GetObject() runtime.Object {
+	if record.object != nil {
+		record.objectOnce.Do(func() {
+			if dec, err := runtime.EnsureDecodedObject(record.object); err == nil {
+				record.object = dec
+			}
+		})
+	}
 	return record.object
 }
 
 func (record *attributesRecord) GetOldObject() runtime.Object {
+	if record.oldObject != nil {
+		record.oldObjectOnce.Do(func() {
+			if dec, err := runtime.EnsureDecodedObject(record.oldObject); err == nil {
+				record.oldObject = dec
+			}
+		})
+	}
 	return record.oldObject
 }
 

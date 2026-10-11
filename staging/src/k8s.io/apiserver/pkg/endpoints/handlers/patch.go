@@ -641,6 +641,10 @@ func (p *patcher) applyPatch(ctx context.Context, _, currentObject runtime.Objec
 	} else if !currentObjectHasUID {
 		objToUpdate, patchErr = p.mechanism.createNewObject(ctx)
 	} else {
+		currentObject, err = runtime.EnsureDecodedObject(currentObject)
+		if err != nil {
+			return nil, err
+		}
 		objToUpdate, patchErr = p.mechanism.applyPatchToCurrentObject(ctx, currentObject)
 	}
 

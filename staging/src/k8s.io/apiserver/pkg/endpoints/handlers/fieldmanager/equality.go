@@ -116,6 +116,11 @@ func IgnoreManagedFieldsTimestampsTransformer(
 	newObj runtime.Object,
 	oldObj runtime.Object,
 ) (res runtime.Object, err error) {
+	if lazyNew, ok := newObj.(runtime.LazyObject); ok && !lazyNew.IsDecoded() {
+		if lazyOld, ok := oldObj.(runtime.LazyObject); ok && !lazyOld.IsDecoded() {
+			return newObj, nil
+		}
+	}
 	equalities := getAvoidTimestampEqualities()
 	if len(equalities.Equalities) == 0 {
 		return newObj, nil

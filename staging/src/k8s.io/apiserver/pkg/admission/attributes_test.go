@@ -20,8 +20,43 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	auditinternal "k8s.io/apiserver/pkg/apis/audit"
 )
+
+type fakeLazyObject struct {
+	decoded     runtime.Object
+	decodeCount int
+}
+
+func (f *fakeLazyObject) GetObjectKind() schema.ObjectKind { return schema.EmptyObjectKind }
+func (f *fakeLazyObject) DeepCopyObject() runtime.Object   { return f }
+func (f *fakeLazyObject) IsDecoded() bool                  { return f.decodeCount > 0 }
+func (f *fakeLazyObject) EnsureDecodedObject() (runtime.Object, error) {
+	f.decodeCount++
+	return f.decoded, nil
+}
+
+func TestLazyObjectOnDemandDecodeInAttributes(t *testing.T) {
+	innerObj := &fakeLazyObject{}
+	innerOld := &fakeLazyObject{}
+	lazyObj := &fakeLazyObject{decoded: innerObj}
+	lazyOld := &fakeLazyObject{decoded: innerOld}
+
+	attr := NewAttributesRecord(lazyObj, lazyOld, schema.GroupVersionKind{}, "default", "foo", schema.GroupVersionResource{}, "", Delete, nil, false, nil)
+	assert.Equal(t, 0, lazyObj.decodeCount, "object should not be decoded before GetObject is called")
+	assert.Equal(t, 0, lazyOld.decodeCount, "oldObject should not be decoded before GetOldObject is called")
+
+	assert.Same(t, innerObj, attr.GetObject())
+	assert.Same(t, innerObj, attr.GetObject())
+	assert.Equal(t, 1, lazyObj.decodeCount, "GetObject should decode exactly once")
+	assert.Equal(t, 0, lazyOld.decodeCount, "GetObject should not decode oldObject")
+
+	assert.Same(t, innerOld, attr.GetOldObject())
+	assert.Same(t, innerOld, attr.GetOldObject())
+	assert.Equal(t, 1, lazyOld.decodeCount, "GetOldObject should decode exactly once")
+}
 
 func TestAddAnnotation(t *testing.T) {
 	attr := &attributesRecord{}

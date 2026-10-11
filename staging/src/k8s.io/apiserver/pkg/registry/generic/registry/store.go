@@ -800,19 +800,20 @@ func (e *Store) Update(ctx context.Context, name string, objInfo rest.UpdatedObj
 			}
 		}
 
-		existing, err = runtime.EnsureDecodedObject(existing)
-		if err != nil {
-			return nil, nil, err
-		}
-
 		// Given the existing object, get the new object
 		obj, err := objInfo.UpdatedObject(ctx, existing)
 		if err != nil {
 			return nil, nil, err
 		}
-		obj, err = runtime.EnsureDecodedObject(obj)
-		if err != nil {
-			return nil, nil, err
+		if lazyObj, isLazy := obj.(runtime.LazyObject); !isLazy || lazyObj.IsDecoded() {
+			existing, err = runtime.EnsureDecodedObject(existing)
+			if err != nil {
+				return nil, nil, err
+			}
+			obj, err = runtime.EnsureDecodedObject(obj)
+			if err != nil {
+				return nil, nil, err
+			}
 		}
 
 		// If AllowUnconditionalUpdate() is true and the object specified by

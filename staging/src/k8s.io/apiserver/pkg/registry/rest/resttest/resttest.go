@@ -330,6 +330,14 @@ func (t *Tester) testCreateDryRunEquals(obj runtime.Object) {
 	defer t.delete(ctx, created)
 
 	// Set resource version which might be unset in created object.
+	created, err = runtime.EnsureDecodedObject(created)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	createdFake, err = runtime.EnsureDecodedObject(createdFake)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
 	createdMeta := t.getObjectMetaOrFail(created)
 	createdFakeMeta := t.getObjectMetaOrFail(createdFake)
 	createdMeta.SetCreationTimestamp(createdFakeMeta.GetCreationTimestamp())
@@ -360,6 +368,10 @@ func (t *Tester) testCreateEquals(obj runtime.Object, getFn GetFunc) {
 	}
 
 	// Set resource version which might be unset in created object.
+	created, err = runtime.EnsureDecodedObject(created)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
 	createdMeta := t.getObjectMetaOrFail(created)
 	gotMeta := t.getObjectMetaOrFail(got)
 	createdMeta.SetResourceVersion(gotMeta.GetResourceVersion())
@@ -563,6 +575,10 @@ func (t *Tester) testUpdateEquals(obj runtime.Object, createFn CreateFunc, getFn
 		t.Errorf("unexpected error: %v", err)
 	}
 	// Set resource version which might be unset in created object.
+	updated, err = runtime.EnsureDecodedObject(updated)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
 	updatedMeta := t.getObjectMetaOrFail(updated)
 	gotMeta := t.getObjectMetaOrFail(got)
 	updatedMeta.SetResourceVersion(gotMeta.GetResourceVersion())
@@ -667,8 +683,12 @@ func (t *Tester) testUpdateRetrievesOldObject(obj runtime.Object, createFn Creat
 	// This tests the mechanism used to pass the old and new object to admission
 	calledUpdatedObject := 0
 	noopTransform := func(_ context.Context, updatedObject runtime.Object, oldObject runtime.Object) (runtime.Object, error) {
-		if !reflect.DeepEqual(storedFoo, oldObject) {
-			t.Errorf("Expected\n\t%#v\ngot\n\t%#v", storedFoo, oldObject)
+		oldDecoded, err := runtime.EnsureDecodedObject(oldObject)
+		if err != nil {
+			return nil, err
+		}
+		if !reflect.DeepEqual(storedFoo, oldDecoded) {
+			t.Errorf("Expected\n\t%#v\ngot\n\t%#v", storedFoo, oldDecoded)
 		}
 		if !reflect.DeepEqual(storedFooWithUpdates, updatedObject) {
 			t.Errorf("Expected\n\t%#v\ngot\n\t%#v", storedFooWithUpdates, updatedObject)
@@ -1244,6 +1264,10 @@ func (t *Tester) testGetFound(obj runtime.Object) {
 	t.setObjectMeta(obj, t.namer(1))
 
 	existing, err := t.storage.(rest.Creater).Create(ctx, obj, rest.ValidateAllObjectFunc, &metav1.CreateOptions{})
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	existing, err = runtime.EnsureDecodedObject(existing)
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}

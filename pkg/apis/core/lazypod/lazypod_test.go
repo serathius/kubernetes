@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -508,3 +509,161 @@ func TestPodListProtobufAndTableParity(t *testing.T) {
 	}
 	_ = context.Background()
 }
+
+func BenchmarkLazyPodVsStandardPod(b *testing.B) {
+	t := &testing.T{}
+	_, stdCodecs := newStandardScheme(t)
+	_, lazyCodecs := newLazyScheme(t)
+	stdPBCodec := protobufCodecFor(t, stdCodecs)
+	lazyPBCodec := protobufCodecFor(t, lazyCodecs)
+	stdDecoder := etcd3.NewDefaultDecoder(stdPBCodec, storage.APIObjectVersioner{})
+	lazyDecoder := etcd3.NewDefaultDecoder(lazyPBCodec, storage.APIObjectVersioner{})
+
+	rawPod := testPodFixtures()[2].pod.DeepCopy()
+	corev1.SetObjectDefaults_Pod(rawPod)
+	etcdBytes := encodeRawV1PodToEtcdBytes(t, rawPod)
+	tableGen := printers.NewTableGenerator().With(printersinternal.AddHandlers)
+
+	b.Run("WatchCacheDecodeAndIndex/Standard", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			var pod core.Pod
+			if err := stdDecoder.Decode(etcdBytes, &pod, 100); err != nil {
+				b.Fatal(err)
+			}
+			_ = pod.GetName()
+			_ = pod.GetNamespace()
+			_ = pod.GetLabels()
+			_ = pod.GetSpecNodeName()
+			_ = pod.GetStatusPhase()
+			_ = pod.GetStatusFirstPodIP()
+		}
+	})
+
+	b.Run("WatchCacheDecodeAndIndex/LazyPod", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			var pod lazypod.Pod
+			if err := lazyDecoder.Decode(etcdBytes, &pod, 100); err != nil {
+				b.Fatal(err)
+			}
+			_ = pod.GetName()
+			_ = pod.GetNamespace()
+			_ = pod.GetLabels()
+			_ = pod.GetSpecNodeName()
+			_ = pod.GetStatusPhase()
+			_ = pod.GetStatusFirstPodIP()
+		}
+	})
+
+	b.Run("List100Protobuf/Standard", func(b *testing.B) {
+		b.ReportAllocs()
+		var buf bytes.Buffer
+		for i := 0; i < b.N; i++ {
+			list := &core.PodList{ListMeta: metav1.ListMeta{ResourceVersion: "200"}, Items: make([]core.Pod, 100)}
+			for j := 0; j < 100; j++ {
+				if err := stdDecoder.Decode(etcdBytes, &list.Items[j], int64(100+j)); err != nil {
+					b.Fatal(err)
+				}
+			}
+			buf.Reset()
+			if err := stdPBCodec.Encode(list, &buf); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+
+	b.Run("List100Protobuf/LazyPod", func(b *testing.B) {
+		b.ReportAllocs()
+		var buf bytes.Buffer
+		for i := 0; i < b.N; i++ {
+			list := &lazypod.PodList{ListMeta: metav1.ListMeta{ResourceVersion: "200"}, Items: make([]lazypod.Pod, 100)}
+			for j := 0; j < 100; j++ {
+				if err := lazyDecoder.Decode(etcdBytes, &list.Items[j], int64(100+j)); err != nil {
+					b.Fatal(err)
+				}
+			}
+			buf.Reset()
+			if err := lazyPBCodec.Encode(list, &buf); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+
+	b.Run("List100TableWide/Standard", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			list := &core.PodList{ListMeta: metav1.ListMeta{ResourceVersion: "200"}, Items: make([]core.Pod, 100)}
+			for j := 0; j < 100; j++ {
+				if err := stdDecoder.Decode(etcdBytes, &list.Items[j], int64(100+j)); err != nil {
+					b.Fatal(err)
+				}
+			}
+			if _, err := tableGen.GenerateTable(list, printers.GenerateOptions{Wide: true}); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+
+	b.Run("List100TableWide/LazyPod", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			list := &lazypod.PodList{ListMeta: metav1.ListMeta{ResourceVersion: "200"}, Items: make([]lazypod.Pod, 100)}
+			for j := 0; j < 100; j++ {
+				if err := lazyDecoder.Decode(etcdBytes, &list.Items[j], int64(100+j)); err != nil {
+					b.Fatal(err)
+				}
+			}
+			if _, err := tableGen.GenerateTable(list, printers.GenerateOptions{Wide: true}); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+
+	b.Run("GracefulDeleteRoundTrip/Standard", func(b *testing.B) {
+		b.ReportAllocs()
+		var buf bytes.Buffer
+		now := metav1.NewTime(time.Unix(1700000100, 0).UTC())
+		grace := int64(30)
+		for i := 0; i < b.N; i++ {
+			var pod core.Pod
+			if err := stdDecoder.Decode(etcdBytes, &pod, 100); err != nil {
+				b.Fatal(err)
+			}
+			_ = pod.GetSpecTerminationGracePeriodSeconds()
+			_ = pod.GetSpecNodeName()
+			_ = pod.GetStatusPhase()
+			pod.SetDeletionTimestamp(&now)
+			pod.SetDeletionGracePeriodSeconds(&grace)
+			pod.SetGeneration(pod.GetGeneration() + 1)
+			buf.Reset()
+			if err := stdPBCodec.Encode(&pod, &buf); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+
+	b.Run("GracefulDeleteRoundTrip/LazyPod", func(b *testing.B) {
+		b.ReportAllocs()
+		var buf bytes.Buffer
+		now := metav1.NewTime(time.Unix(1700000100, 0).UTC())
+		grace := int64(30)
+		for i := 0; i < b.N; i++ {
+			var pod lazypod.Pod
+			if err := lazyDecoder.Decode(etcdBytes, &pod, 100); err != nil {
+				b.Fatal(err)
+			}
+			_ = pod.GetSpecTerminationGracePeriodSeconds()
+			_ = pod.GetSpecNodeName()
+			_ = pod.GetStatusPhase()
+			pod.SetDeletionTimestamp(&now)
+			pod.SetDeletionGracePeriodSeconds(&grace)
+			pod.SetGeneration(pod.GetGeneration() + 1)
+			buf.Reset()
+			if err := lazyPBCodec.Encode(&pod, &buf); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+}
+

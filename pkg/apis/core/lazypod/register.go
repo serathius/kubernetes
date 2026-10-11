@@ -20,14 +20,43 @@ import (
 	"unsafe"
 
 	v1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/conversion"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/kubernetes/pkg/apis/core"
 	corev1 "k8s.io/kubernetes/pkg/apis/core/v1"
 )
+
+func init() {
+	utilruntime.Must(apiequality.Semantic.AddFuncs(
+		func(a, b Pod) bool {
+			da, err := a.EnsureDecoded()
+			if err != nil {
+				return false
+			}
+			db, err := b.EnsureDecoded()
+			if err != nil {
+				return false
+			}
+			return a.TypeMeta == b.TypeMeta && apiequality.Semantic.DeepEqual(da, db)
+		},
+		func(a, b V1Pod) bool {
+			da, err := a.EnsureDecoded()
+			if err != nil {
+				return false
+			}
+			db, err := b.EnsureDecoded()
+			if err != nil {
+				return false
+			}
+			return a.TypeMeta == b.TypeMeta && apiequality.Semantic.DeepEqual(da, db)
+		},
+	))
+}
 
 // Install registers the lazy V1Pod (v1, Kind="Pod") and internal lazy Pod (__internal, Kind="Pod")
 // along with wire-level defaulting and zero-copy V1Pod <-> Pod conversions into scheme.

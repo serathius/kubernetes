@@ -166,7 +166,11 @@ func UpdateResource(r rest.Updater, scope *RequestScope, admit admission.Interfa
 		admit = fieldmanager.NewManagedFieldsValidatingAdmissionController(admit)
 		transformers = append(transformers, func(_ context.Context, newObj, liveObj runtime.Object) (runtime.Object, error) {
 			if shouldUpdateManagedFields {
-				return scope.FieldManager.UpdateNoErrors(liveObj, newObj, managerOrUserAgent(options.FieldManager, req.UserAgent())), nil
+				decodedLiveObj, err := runtime.EnsureDecodedObject(liveObj)
+				if err != nil {
+					return nil, err
+				}
+				return scope.FieldManager.UpdateNoErrors(decodedLiveObj, newObj, managerOrUserAgent(options.FieldManager, req.UserAgent())), nil
 			}
 			return newObj, nil
 		})

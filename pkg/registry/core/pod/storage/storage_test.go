@@ -46,9 +46,12 @@ import (
 	storeerr "k8s.io/apiserver/pkg/storage/errors"
 	etcd3testing "k8s.io/apiserver/pkg/storage/etcd3/testing"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	"k8s.io/client-go/kubernetes/fake"
 	featuregatetesting "k8s.io/component-base/featuregate/testing"
+	"k8s.io/kubernetes/pkg/api/legacyscheme"
 	podtest "k8s.io/kubernetes/pkg/api/pod/testing"
 	api "k8s.io/kubernetes/pkg/apis/core"
+	"k8s.io/kubernetes/pkg/apis/policy"
 	kubefeatures "k8s.io/kubernetes/pkg/features"
 	"k8s.io/kubernetes/pkg/registry/registrytest"
 	"k8s.io/kubernetes/pkg/securitycontext"
@@ -216,10 +219,7 @@ func TestIgnoreDeleteNotFound(t *testing.T) {
 	if !called {
 		t.Fatalf("expect the overriding Delete method to be called")
 	}
-	deletedPod, ok := obj.(*api.Pod)
-	if !ok {
-		t.Fatalf("expect a pod is returned")
-	}
+	deletedPod := mustDecodePod(t, obj)
 	if deletedPod.DeletionTimestamp == nil {
 		t.Errorf("expect the DeletionTimestamp to be set")
 	}
@@ -655,7 +655,7 @@ func TestEtcdCreateClearsNominatedNodeName(t *testing.T) {
 			}
 
 			// Set NominatedNodeName via status update
-			createdPod := created.(*api.Pod)
+			createdPod := mustDecodePod(t, created)
 			createdPod.Status.NominatedNodeName = "nominated-node"
 			_, _, err = statusStorage.Update(ctx, createdPod.Name, rest.DefaultUpdatedObjectInfo(createdPod),
 				rest.ValidateAllObjectFunc, rest.ValidateAllObjectUpdateFunc, false, &metav1.UpdateOptions{})
@@ -972,9 +972,10 @@ func TestEtcdCreateBindingWithUIDAndResourceVersion(t *testing.T) {
 			t.Fatalf("%s: unexpected error: %v", k, err)
 		}
 
+		decodedCreated := mustDecodePod(t, podCreated)
 		binding := validNewBinding()
-		binding.UID = testCase.podUIDGetter(podCreated.(*api.Pod))
-		binding.ResourceVersion = testCase.podResourceVersionGetter(podCreated.(*api.Pod))
+		binding.UID = testCase.podUIDGetter(decodedCreated)
+		binding.ResourceVersion = testCase.podResourceVersionGetter(decodedCreated)
 
 		if _, err := bindingStorage.Create(ctx, binding.Name, binding, rest.ValidateAllObjectFunc, &metav1.CreateOptions{}); !testCase.errOK(err) {
 			t.Errorf("%s: unexpected error: %v", k, err)
@@ -1517,5 +1518,126 @@ func TestBindingValidation(t *testing.T) {
 				t.Fatalf("expected error containing %q, got %v", tc.expectError, err.Error())
 			}
 		})
+	}
+}
+
+func TestLazyPodZeroDecodeWritePaths(t *testing.T) {
+	etcdStorage, server := registrytest.NewEtcdStorage(t, "")
+	defer server.Terminate(t)
+	pbInfo, ok := runtime.SerializerInfoForMediaType(legacyscheme.Codecs.SupportedMediaTypes(), runtime.ContentTypeProtobuf)
+	if !ok {
+		t.Fatalf("protobuf serializer not found")
+	}
+	etcdStorage.Codec = legacyscheme.Codecs.CodecForVersions(pbInfo.Serializer, pbInfo.Serializer, v1.SchemeGroupVersion, runtime.InternalGroupVersioner)
+
+	restOptions := generic.RESTOptions{
+		StorageConfig:           etcdStorage,
+		Decorator:               generic.UndecoratedStorage,
+		DeleteCollectionWorkers: 3,
+		ResourcePrefix:          "pods",
+	}
+	podStorage, err := NewStorage(restOptions, nil, nil, fake.NewSimpleClientset().PolicyV1(), nil)
+	if err != nil {
+		t.Fatalf("unexpected error from REST storage: %v", err)
+	}
+	storage := podStorage.Pod
+	bindingStorage := podStorage.Binding
+	evictionStorage := podStorage.Eviction
+	defer storage.Store.DestroyFunc()
+	ctx := genericregistrytest.NewNamespaceScopeContext(storage.Store, metav1.NamespaceDefault)
+
+	// 1. Create an unscheduled pod.
+	podIn := validNewPod()
+	if _, err := storage.Create(ctx, podIn, rest.ValidateAllObjectFunc, &metav1.CreateOptions{}); err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+
+	// Track every LazyObject allocated by storage.Store and evictionStorage.store from this point on.
+	var allocated []runtime.LazyObject
+	origNewFunc := storage.Store.NewFunc
+	trackingNewFunc := func() runtime.Object {
+		obj := origNewFunc()
+		if lazyObj, ok := obj.(runtime.LazyObject); ok {
+			allocated = append(allocated, lazyObj)
+		}
+		return obj
+	}
+	storage.Store.NewFunc = trackingNewFunc
+	evictionStorage.store.(*genericregistry.Store).NewFunc = trackingNewFunc
+
+	// 2. Bind the pod via BindingREST.
+	if _, err := bindingStorage.Create(ctx, "foo", &api.Binding{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace:   metav1.NamespaceDefault,
+			Name:        "foo",
+			Labels:      map[string]string{"topology.kubernetes.io/zone": "us-central1-a"},
+			Annotations: map[string]string{"bound-by": "scheduler"},
+		},
+		Target: api.ObjectReference{Name: "node-1"},
+	}, rest.ValidateAllObjectFunc, &metav1.CreateOptions{}); err != nil {
+		t.Fatalf("Binding Create failed: %v", err)
+	}
+	for i, obj := range allocated {
+		if obj.IsDecoded() {
+			t.Fatalf("expected zero struct decodes during BindingREST.Create, but allocated object %d was decoded", i)
+		}
+	}
+
+	// Verify Get after binding returns an undecoded LazyObject with bound nodeName.
+	boundObj, err := storage.Get(ctx, "foo", &metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Get after binding failed: %v", err)
+	}
+	boundAcc := boundObj.(api.PodAccessor)
+	if boundAcc.GetSpecNodeName() != "node-1" {
+		t.Fatalf("expected spec.nodeName=node-1, got %q", boundAcc.GetSpecNodeName())
+	}
+
+	// 3. Evict the bound pod via EvictionREST (upserts DisruptionTarget condition + graceful Delete).
+	grace := int64(30)
+	if _, err := evictionStorage.Create(ctx, "foo", &policy.Eviction{
+		ObjectMeta:    metav1.ObjectMeta{Name: "foo", Namespace: metav1.NamespaceDefault},
+		DeleteOptions: &metav1.DeleteOptions{GracePeriodSeconds: &grace},
+	}, rest.ValidateAllObjectFunc, &metav1.CreateOptions{}); err != nil {
+		t.Fatalf("Eviction Create failed: %v", err)
+	}
+	if len(allocated) == 0 {
+		t.Fatalf("expected LazyObjects to be allocated during Binding and Eviction")
+	}
+	for i, obj := range allocated {
+		if obj.IsDecoded() {
+			t.Fatalf("expected zero struct decodes across Binding, Eviction, and Graceful Delete, but allocated object %d/%d was decoded", i, len(allocated))
+		}
+	}
+
+	// Verify the pod in storage has deletionTimestamp, deletionGracePeriodSeconds=30, and DisruptionTarget condition.
+	evictedObj, err := storage.Get(ctx, "foo", &metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Get after eviction failed: %v", err)
+	}
+	lazyEvicted, ok := evictedObj.(runtime.LazyObject)
+	if !ok || lazyEvicted.IsDecoded() {
+		t.Fatalf("expected undecoded LazyObject from Get after eviction, got %T (decoded=%v)", evictedObj, ok && lazyEvicted.IsDecoded())
+	}
+	evictedAcc := evictedObj.(api.PodAccessor)
+	if !evictedAcc.HasDeletionTimestamp() {
+		t.Fatalf("expected deletionTimestamp to be set on evicted pod")
+	}
+	if gp := evictedAcc.GetDeletionGracePeriodSeconds(); gp == nil || *gp != 30 {
+		t.Fatalf("expected deletionGracePeriodSeconds=30, got %v", gp)
+	}
+	if lazyEvicted.IsDecoded() {
+		t.Fatalf("expected metadata checks on evicted pod not to decode LazyObject")
+	}
+	decodedEvicted := mustDecodePod(t, evictedObj)
+	foundDisruptionTarget := false
+	for _, cond := range decodedEvicted.Status.Conditions {
+		if cond.Type == api.DisruptionTarget && cond.Status == api.ConditionTrue {
+			foundDisruptionTarget = true
+			break
+		}
+	}
+	if !foundDisruptionTarget {
+		t.Fatalf("expected DisruptionTarget condition on evicted pod, got %#v", decodedEvicted.Status.Conditions)
 	}
 }

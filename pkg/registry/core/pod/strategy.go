@@ -92,6 +92,12 @@ func ensureDecodedPod(obj runtime.Object) *api.Pod {
 	return dec.(*api.Pod)
 }
 
+func areBothUndecodedLazy(obj, old runtime.Object) bool {
+	lazyObj, ok1 := obj.(runtime.LazyObject)
+	lazyOld, ok2 := old.(runtime.LazyObject)
+	return ok1 && ok2 && !lazyObj.IsDecoded() && !lazyOld.IsDecoded()
+}
+
 // PrepareForCreate clears fields that are not allowed to be set by end users on creation.
 func (podStrategy) PrepareForCreate(ctx context.Context, obj runtime.Object) {
 	pod := ensureDecodedPod(obj)
@@ -234,6 +240,13 @@ func (podStatusStrategy) GetResetFields() map[fieldpath.APIVersion]*fieldpath.Se
 }
 
 func (podStatusStrategy) PrepareForUpdate(ctx context.Context, obj, old runtime.Object) {
+	if areBothUndecodedLazy(obj, old) {
+		newPod := obj.(api.PodAccessor)
+		if newPod.HasDeletionTimestamp() {
+			newPod.SetDeletionTimestamp(nil)
+		}
+		return
+	}
 	newPod := ensureDecodedPod(obj)
 	oldPod := ensureDecodedPod(old)
 	newPod.Spec = oldPod.Spec
@@ -294,6 +307,9 @@ func preserveOldObservedGeneration(newPod, oldPod *api.Pod) {
 }
 
 func (podStatusStrategy) ValidateUpdate(ctx context.Context, obj, old runtime.Object) field.ErrorList {
+	if areBothUndecodedLazy(obj, old) {
+		return nil
+	}
 	pod := ensureDecodedPod(obj)
 	oldPod := ensureDecodedPod(old)
 	opts := corevalidation.GetValidationOptionsFromPodSpecAndMeta(&pod.Spec, &oldPod.Spec, &pod.ObjectMeta, &oldPod.ObjectMeta)
@@ -304,6 +320,9 @@ func (podStatusStrategy) ValidateUpdate(ctx context.Context, obj, old runtime.Ob
 
 // WarningsOnUpdate returns warnings for the given update.
 func (podStatusStrategy) WarningsOnUpdate(ctx context.Context, obj, old runtime.Object) []string {
+	if areBothUndecodedLazy(obj, old) {
+		return nil
+	}
 	pod := obj.(api.PodAccessor)
 	var warnings []string
 

@@ -78,7 +78,7 @@ func (h *HumanReadableGenerator) With(fns ...func(PrintHandler)) *HumanReadableG
 func (h *HumanReadableGenerator) GenerateTable(obj runtime.Object, options GenerateOptions) (*metav1.Table, error) {
 	t := reflect.TypeOf(obj)
 	handler, ok := h.handlerMap[t]
-	if !ok {
+	if !ok && t != nil {
 		for registeredType, candidate := range h.handlerMap {
 			if registeredType.Kind() == reflect.Interface && t.Implements(registeredType) {
 				handler = candidate
