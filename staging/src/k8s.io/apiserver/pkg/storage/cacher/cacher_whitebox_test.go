@@ -3507,3 +3507,202 @@ func TestGetListWithShardedListAndWatch(t *testing.T) {
 		})
 	}
 }
+
+func TestWatchCacheStallResumeBackgroundResync(t *testing.T) {
+	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.WatchCacheStallResume, true)
+
+	backingStorage := &cachertesting.MockStorage{}
+	fakeClock := testingclock.NewFakeClock(time.Now())
+	cacher, _, err := newTestCacherWithoutSyncing(backingStorage, fakeClock)
+	require.NoError(t, err)
+	defer cacher.Stop()
+	require.NoError(t, cacher.ready.wait(context.Background()))
+
+	require.NoError(t, cacher.watchCache.Replace(nil, "100"))
+
+	addPodEvent := func(index int, rv uint64) {
+		pod := makeTestPodDetails(fmt.Sprintf("pod-%d", index), rv, "node-1", map[string]string{"app": "test"})
+		require.NoError(t, cacher.watchCache.Add(pod))
+	}
+
+	addPodEvent(1, 101)
+	addPodEvent(2, 102)
+	addPodEvent(3, 103)
+
+	watcher, err := cacher.Watch(context.Background(), "/pods/ns", storage.ListOptions{
+		ResourceVersion: "100",
+		Predicate:       storage.Everything,
+		Recursive:       true,
+	})
+	require.NoError(t, err)
+	defer watcher.Stop()
+
+	cacher.Lock()
+	require.Len(t, cacher.unsyncedWatchers.allWatchers, 1)
+	require.Empty(t, cacher.watchers.allWatchers)
+	cacher.Unlock()
+
+	// Add an event while watcher is still unsynced; it should not be delivered until background resync.
+	addPodEvent(4, 104)
+
+	select {
+	case event := <-watcher.ResultChan():
+		t.Fatalf("unexpected event before background resync tick: %#v", event)
+	default:
+	}
+
+	fakeClock.Step(watcherResyncPeriod)
+
+	for i := 1; i <= 4; i++ {
+		select {
+		case event := <-watcher.ResultChan():
+			require.Equal(t, watch.Added, event.Type)
+			accessor, err := meta.Accessor(event.Object)
+			require.NoError(t, err)
+			require.Equal(t, fmt.Sprintf("pod-%d", i), accessor.GetName())
+			require.Equal(t, strconv.Itoa(100+i), accessor.GetResourceVersion())
+		case <-time.After(5 * time.Second):
+			t.Fatalf("timed out waiting for pod-%d", i)
+		}
+	}
+
+	cacher.Lock()
+	require.Empty(t, cacher.unsyncedWatchers.allWatchers)
+	require.Len(t, cacher.watchers.allWatchers, 1)
+	cacher.Unlock()
+
+	// Subsequent live events should be delivered immediately without stepping the clock.
+	addPodEvent(5, 105)
+	select {
+	case event := <-watcher.ResultChan():
+		require.Equal(t, watch.Added, event.Type)
+		accessor, err := meta.Accessor(event.Object)
+		require.NoError(t, err)
+		require.Equal(t, "pod-5", accessor.GetName())
+		require.Equal(t, "105", accessor.GetResourceVersion())
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for live pod-5")
+	}
+}
+
+func TestWatchCacheStallResumePartialResyncWhenBufferFull(t *testing.T) {
+	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.WatchCacheStallResume, true)
+
+	backingStorage := &cachertesting.MockStorage{}
+	fakeClock := testingclock.NewFakeClock(time.Now())
+	cacher, _, err := newTestCacherWithoutSyncing(backingStorage, fakeClock)
+	require.NoError(t, err)
+	defer cacher.Stop()
+	require.NoError(t, cacher.ready.wait(context.Background()))
+
+	require.NoError(t, cacher.watchCache.Replace(nil, "100"))
+
+	const totalEvents = 35
+	for i := 1; i <= totalEvents; i++ {
+		pod := makeTestPodDetails(fmt.Sprintf("pod-%d", i), uint64(100+i), "node-1", nil)
+		require.NoError(t, cacher.watchCache.Add(pod))
+	}
+
+	watcher, err := cacher.Watch(context.Background(), "/pods/ns", storage.ListOptions{
+		ResourceVersion: "100",
+		Predicate:       storage.Everything,
+		Recursive:       true,
+	})
+	require.NoError(t, err)
+	defer watcher.Stop()
+
+	// Trigger the first resync pass without draining watcher.ResultChan() so watcher.input fills up.
+	fakeClock.Step(watcherResyncPeriod)
+
+	require.Eventually(t, func() bool {
+		cacher.Lock()
+		defer cacher.Unlock()
+		for _, uw := range cacher.unsyncedWatchers.allWatchers {
+			return uw.stalled && uw.resourceVersion > 100 && uw.resourceVersion < 100+totalEvents
+		}
+		return false
+	}, 5*time.Second, 10*time.Millisecond)
+
+	cacher.Lock()
+	require.Len(t, cacher.unsyncedWatchers.allWatchers, 1)
+	require.Empty(t, cacher.watchers.allWatchers)
+	cacher.Unlock()
+
+	// Drain events and advance the clock to let subsequent resync ticks finish catching up.
+	received := 0
+	for received < totalEvents {
+		select {
+		case event := <-watcher.ResultChan():
+			received++
+			require.Equal(t, watch.Added, event.Type)
+			accessor, err := meta.Accessor(event.Object)
+			require.NoError(t, err)
+			require.Equal(t, fmt.Sprintf("pod-%d", received), accessor.GetName())
+			require.Equal(t, strconv.Itoa(100+received), accessor.GetResourceVersion())
+		default:
+			fakeClock.Step(watcherResyncPeriod)
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+
+	cacher.Lock()
+	require.Empty(t, cacher.unsyncedWatchers.allWatchers)
+	require.Len(t, cacher.watchers.allWatchers, 1)
+	cacher.Unlock()
+}
+
+func TestWatchCacheStallResumeExpiredRV(t *testing.T) {
+	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.WatchCacheStallResume, true)
+
+	backingStorage := &cachertesting.MockStorage{}
+	fakeClock := testingclock.NewFakeClock(time.Now())
+	cacher, _, err := newTestCacherWithoutSyncing(backingStorage, fakeClock)
+	require.NoError(t, err)
+	defer cacher.Stop()
+	require.NoError(t, cacher.ready.wait(context.Background()))
+
+	require.NoError(t, cacher.watchCache.Replace(nil, "100"))
+
+	watcher, err := cacher.Watch(context.Background(), "/pods/ns", storage.ListOptions{
+		ResourceVersion: "50",
+		Predicate:       storage.Everything,
+		Recursive:       true,
+	})
+	require.NoError(t, err)
+	defer watcher.Stop()
+
+	cacher.Lock()
+	require.Len(t, cacher.unsyncedWatchers.allWatchers, 1)
+	cacher.Unlock()
+
+	select {
+	case event := <-watcher.ResultChan():
+		t.Fatalf("unexpected event before background resync tick: %#v", event)
+	default:
+	}
+
+	fakeClock.Step(watcherResyncPeriod)
+
+	select {
+	case event, ok := <-watcher.ResultChan():
+		require.True(t, ok)
+		require.Equal(t, watch.Error, event.Type)
+		status, ok := event.Object.(*metav1.Status)
+		require.True(t, ok)
+		require.Equal(t, metav1.StatusReasonExpired, status.Reason)
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for expired RV error event")
+	}
+
+	select {
+	case _, ok := <-watcher.ResultChan():
+		require.False(t, ok)
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for watcher result channel to close")
+	}
+
+	cacher.Lock()
+	require.Empty(t, cacher.unsyncedWatchers.allWatchers)
+	cacher.Unlock()
+}
+

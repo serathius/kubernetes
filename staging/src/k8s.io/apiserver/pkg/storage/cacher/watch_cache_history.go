@@ -211,41 +211,59 @@ func (w *watchCacheHistory) suggestedWatchChannelSize(indexExists, triggerUsed b
 	return min(chanSize, maxChanSize)
 }
 
-// GetIntervalLocked returns a watchCacheInterval that can be used to
-// retrieve events since a certain resourceVersion. This function assumes to
-// be called under the lock.
-func (w *watchCacheHistory) GetIntervalLocked(resourceVersion uint64, listResourceVersion uint64, locker sync.Locker) (*watchCacheInterval, error) {
+// oldestResourceVersionLocked returns the oldest starting resourceVersion
+// from which watch events can be delivered from the history buffer.
+// Assumes that lock is held.
+func (w *watchCacheHistory) oldestResourceVersionLocked(listResourceVersion uint64) (uint64, error) {
 	size := w.endIndex - w.startIndex
-	var oldest uint64
+	var oldestEventRV uint64
 	switch {
 	case listResourceVersion > 0 && !w.removedEventSinceRelist:
 		// If no event was removed from the buffer since last relist, the oldest watch
 		// event we can deliver is one greater than the resource version of the list.
-		oldest = listResourceVersion + 1
+		oldestEventRV = listResourceVersion + 1
 	case size > 0:
 		// If the previous condition is not satisfied: either some event was already
 		// removed from the buffer or we've never completed a list (the latter can
 		// only happen in unit tests that populate the buffer without performing
 		// list/replace operations), the oldest watch event we can deliver is the first
 		// one in the buffer.
-		oldest = w.cache[w.startIndex%w.capacity].ResourceVersion
+		oldestEventRV = w.cache[w.startIndex%w.capacity].ResourceVersion
 	default:
-		return nil, fmt.Errorf("watch cache isn't correctly initialized")
+		return 0, fmt.Errorf("watch cache isn't correctly initialized")
 	}
+	return oldestEventRV - 1, nil
+}
 
-	if resourceVersion < oldest-1 {
-		return nil, errors.NewResourceExpired(fmt.Sprintf("too old resource version: %d (%d)", resourceVersion, oldest-1))
-	}
-
-	// Binary search the smallest index at which resourceVersion is greater than the given one.
+// searchIndexLocked binary searches the smallest index in [startIndex, endIndex]
+// at which resourceVersion is greater than the given one. Assumes that lock is held.
+func (w *watchCacheHistory) searchIndexLocked(resourceVersion uint64) int {
+	size := w.endIndex - w.startIndex
 	f := func(i int) bool {
 		return w.cache[(w.startIndex+i)%w.capacity].ResourceVersion > resourceVersion
 	}
-	first := sort.Search(size, f)
-	indexerFunc := func(i int) *watchCacheEvent {
-		return w.cache[i%w.capacity]
+	return w.startIndex + sort.Search(size, f)
+}
+
+func (w *watchCacheHistory) getEventLocked(index int) *watchCacheEvent {
+	return w.cache[index%w.capacity]
+}
+
+// GetIntervalLocked returns a watchCacheInterval that can be used to
+// retrieve events since a certain resourceVersion. This function assumes to
+// be called under the lock.
+func (w *watchCacheHistory) GetIntervalLocked(resourceVersion uint64, listResourceVersion uint64, locker sync.Locker) (*watchCacheInterval, error) {
+	oldest, err := w.oldestResourceVersionLocked(listResourceVersion)
+	if err != nil {
+		return nil, err
 	}
-	ci := newCacheInterval(w.startIndex+first, w.endIndex, indexerFunc, w.config.indexValidator, resourceVersion, locker)
+
+	if resourceVersion < oldest {
+		return nil, errors.NewResourceExpired(fmt.Sprintf("too old resource version: %d (%d)", resourceVersion, oldest))
+	}
+
+	firstIndex := w.searchIndexLocked(resourceVersion)
+	ci := newCacheInterval(firstIndex, w.endIndex, w.getEventLocked, w.config.indexValidator, resourceVersion, locker)
 	return ci, nil
 }
 

@@ -76,6 +76,14 @@ type cacheWatcher struct {
 	// and send all event in the input buffer.
 	drainInputBuffer bool
 
+	// unsynced indicates whether the watcher is currently waiting for background
+	// resynchronization in Cacher.unsyncedWatchers. Protected by Cacher.Lock().
+	unsynced bool
+
+	// errEvent holds an error event to send after draining input when the watcher
+	// is terminated due to an expired resourceVersion during background resync.
+	errEvent *watchCacheEvent
+
 	// bookmarkAfterResourceVersion holds an RV that indicates
 	// when we should start delivering bookmark events.
 	// If this field holds the value of 0 that means
@@ -344,6 +352,17 @@ func (c *cacheWatcher) setDrainInputBufferLocked(drain bool) {
 	c.drainInputBuffer = drain
 }
 
+// stopExpiredLocked records an error object to be delivered after draining buffered events.
+// Protected by Cacher.Lock().
+func (c *cacheWatcher) stopExpiredLocked(errObject runtime.Object) {
+	c.errEvent = &watchCacheEvent{
+		Type:   watch.Error,
+		Object: errObject,
+	}
+	c.setDrainInputBufferLocked(true)
+	c.stopLocked()
+}
+
 // isDoneChannelClosed checks if c.done channel is closed
 func (c *cacheWatcher) isDoneChannelClosedLocked() bool {
 	select {
@@ -371,6 +390,9 @@ func updateResourceVersion(object runtime.Object, versioner storage.Versioner, r
 }
 
 func (c *cacheWatcher) convertToWatchEvent(event *watchCacheEvent) *watch.Event {
+	if event.Type == watch.Error {
+		return &watch.Event{Type: watch.Error, Object: event.Object}
+	}
 	if event.Type == watch.Bookmark {
 		e := &watch.Event{Type: watch.Bookmark, Object: event.Object.DeepCopyObject()}
 		if !c.wasBookmarkAfterRvSent() {
@@ -538,10 +560,18 @@ func (c *cacheWatcher) processInterval(ctx context.Context, cacheInterval *watch
 	if cacheInterval.initialEventsEndBookmark != nil {
 		c.sendWatchCacheEvent(cacheInterval.initialEventsEndBookmark)
 	}
-	c.process(ctx, resourceVersion)
+	c.doProcess(ctx, resourceVersion)
 }
 
 func (c *cacheWatcher) process(ctx context.Context, resourceVersion uint64) {
+	defer utilruntime.HandleCrashWithContext(ctx)
+	defer close(c.result)
+	defer c.Stop()
+
+	c.doProcess(ctx, resourceVersion)
+}
+
+func (c *cacheWatcher) doProcess(ctx context.Context, resourceVersion uint64) {
 	// At this point we already start processing incoming watch events.
 	// However, the init event can still be processed because their serialization
 	// and sending to the client happens asynchrnously.
@@ -550,19 +580,32 @@ func (c *cacheWatcher) process(ctx context.Context, resourceVersion uint64) {
 	//   process, but we're leaving this to the tuning phase.
 	utilflowcontrol.WatchInitialized(ctx)
 
+	initResourceVersion := resourceVersion
 	for {
 		select {
 		case event, ok := <-c.input:
 			if !ok {
+				if c.errEvent != nil {
+					c.sendWatchCacheEvent(c.errEvent)
+				}
+				return
+			}
+			if event.Type == watch.Error {
+				c.sendWatchCacheEvent(event)
 				return
 			}
 			dequeuedAt := c.clock.Now()
-			// only send events newer than resourceVersion
-			// or a bookmark event with an RV equal to resourceVersion
-			// if we haven't sent one to the client
-			if event.ResourceVersion > resourceVersion || (event.Type == watch.Bookmark && event.ResourceVersion == resourceVersion && !c.wasBookmarkAfterRvSent()) {
+			// Only send events newer than resourceVersion, or a bookmark event
+			// at resourceVersion if we either progressed past initResourceVersion
+			// or still need to send the initial bookmarkAfterResourceVersion.
+			if event.Type != watch.Bookmark && event.ResourceVersion > resourceVersion {
 				builtAt, sentAt := c.sendWatchCacheEvent(event)
 				c.observeDispatchMetrics(event, dequeuedAt, builtAt, sentAt)
+				resourceVersion = event.ResourceVersion
+			} else if event.Type == watch.Bookmark && event.ResourceVersion >= resourceVersion && (event.ResourceVersion > initResourceVersion || !c.wasBookmarkAfterRvSent()) {
+				builtAt, sentAt := c.sendWatchCacheEvent(event)
+				c.observeDispatchMetrics(event, dequeuedAt, builtAt, sentAt)
+				resourceVersion = event.ResourceVersion
 			}
 		case <-ctx.Done():
 			return
@@ -571,7 +614,7 @@ func (c *cacheWatcher) process(ctx context.Context, resourceVersion uint64) {
 }
 
 func (c *cacheWatcher) observeDispatchMetrics(event *watchCacheEvent, dequeuedAt, builtAt, sentAt time.Time) {
-	if event.Type == watch.Bookmark || sentAt.IsZero() {
+	if event.Type == watch.Bookmark || sentAt.IsZero() || event.timeline[metrics.PointWatcherEnqueued].IsZero() {
 		return
 	}
 	// The pre-fanout points are marked in processEvent; complete the per-watcher

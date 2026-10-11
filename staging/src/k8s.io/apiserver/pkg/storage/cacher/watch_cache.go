@@ -662,26 +662,32 @@ func (w *watchCache) suggestedWatchChannelSize(indexExists, triggerUsed bool) in
 	return w.history.suggestedWatchChannelSize(indexExists, triggerUsed)
 }
 
+// shouldGetInitialEventsFromStore returns true if the watch request requires
+// initial events from the current store state rather than historical events.
+func shouldGetInitialEventsFromStore(resourceVersion uint64, opts storage.ListOptions) bool {
+	if opts.SendInitialEvents != nil && *opts.SendInitialEvents {
+		return true
+	}
+	// resourceVersion = 0 with SendInitialEvents = nil means that we don't require
+	// any specific starting point and we would like to start watching from ~now.
+	// However, to keep backward compatibility, we additionally need to return the
+	// current state and only then start watching from that point.
+	//
+	// TODO: In v2 api, we should stop returning the current state - #13969.
+	return resourceVersion == 0 && opts.SendInitialEvents == nil
+}
+
 // getAllEventsSinceLocked returns a watchCacheInterval that can be used to
 // retrieve events since a certain resourceVersion. This function assumes to
 // be called under the watchCache lock.
 func (w *watchCache) getAllEventsSinceLocked(resourceVersion uint64, key string, opts storage.ListOptions) (*watchCacheInterval, error) {
-	_, matchesSingle := opts.Predicate.MatchesSingle()
-	matchesSingle = matchesSingle && !opts.Recursive
-	if opts.SendInitialEvents != nil && *opts.SendInitialEvents {
+	if shouldGetInitialEventsFromStore(resourceVersion, opts) {
+		_, matchesSingle := opts.Predicate.MatchesSingle()
+		matchesSingle = matchesSingle && !opts.Recursive
 		return w.getIntervalFromStoreLocked(key, matchesSingle)
 	}
 
 	if resourceVersion == 0 {
-		if opts.SendInitialEvents == nil {
-			// resourceVersion = 0 means that we don't require any specific starting point
-			// and we would like to start watching from ~now.
-			// However, to keep backward compatibility, we additionally need to return the
-			// current state and only then start watching from that point.
-			//
-			// TODO: In v2 api, we should stop returning the current state - #13969.
-			return w.getIntervalFromStoreLocked(key, matchesSingle)
-		}
 		// SendInitialEvents = false and resourceVersion = 0
 		// means that the request would like to start watching
 		// from Any resourceVersion
