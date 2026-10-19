@@ -577,41 +577,8 @@ func (s *store) GuaranteedUpdate(
 			continue
 		}
 
-		span.AddEvent("About to Encode")
-		data, err := runtime.Encode(s.codec, ret)
-		if err != nil {
-			span.AddEvent("Encode failed", attribute.Int("len", len(data)), attribute.String("err", err.Error()))
-			return err
-		}
-		span.AddEvent("Encode succeeded", attribute.Int("len", len(data)))
-		if !origState.stale && bytes.Equal(data, origState.data) {
-			// if we skipped the original Get in this loop, we must refresh from
-			// etcd in order to be sure the data in the store is equivalent to
-			// our desired serialization
-			if !origStateIsCurrent {
-				origState, err = getCurrentState()
-				if err != nil {
-					return err
-				}
-				origStateIsCurrent = true
-				if !bytes.Equal(data, origState.data) {
-					// original data changed, restart loop
-					continue
-				}
-			}
-			// recheck that the data from etcd is not stale before short-circuiting a write
-			if !origState.stale {
-				err = s.decoder.Decode(origState.data, destination, origState.rev)
-				if err != nil {
-					recordDecodeError(s.groupResource, preparedKey)
-					return err
-				}
-				return nil
-			}
-		}
-
 		var success bool
-		origState, success, err = s.updateOnce(ctx, span, preparedKey, destination, origState, data, ttl, v, ignoreNotFound)
+		origState, success, err = s.updateOnce(ctx, span, preparedKey, destination, origState, origStateIsCurrent, ret, ttl, v, ignoreNotFound, getCurrentState)
 		if err != nil {
 			return err
 		}
@@ -622,7 +589,46 @@ func (s *store) GuaranteedUpdate(
 	}
 }
 
-func (s *store) updateOnce(ctx context.Context, span *tracing.Span, preparedKey string, destination runtime.Object, origState *objState, data []byte, ttl uint64, v reflect.Value, ignoreNotFound bool) (state *objState, success bool, err error) {
+func (s *store) updateOnce(ctx context.Context, span *tracing.Span, preparedKey string, destination runtime.Object, origState *objState, origStateIsCurrent bool, ret runtime.Object, ttl uint64, v reflect.Value, ignoreNotFound bool, getCurrentState func() (*objState, error)) (state *objState, success bool, err error) {
+	span.AddEvent("About to Encode")
+	data, err := runtime.Encode(s.codec, ret)
+	if err != nil {
+		span.AddEvent("Encode failed", attribute.Int("len", len(data)), attribute.String("err", err.Error()))
+		return origState, success, err
+	}
+	span.AddEvent("Encode succeeded", attribute.Int("len", len(data)))
+
+	// If we skipped the original Get in this loop, we must refresh from
+	// etcd in order to be sure the data in the store is equivalent to
+	// our desired serialization before short-circuiting a write.
+	if !origState.stale && bytes.Equal(data, origState.data) && !origStateIsCurrent {
+		origState, err = getCurrentState()
+		if err != nil {
+			return origState, success, err
+		}
+		if !bytes.Equal(data, origState.data) {
+			// original data changed, restart loop
+			return origState, success, nil
+		}
+	}
+	if origState.stale || !bytes.Equal(data, origState.data) {
+		origState, success, err = s.optimisticPut(ctx, span, preparedKey, origState, data, ttl, v, ignoreNotFound)
+		if err != nil || !success {
+			return origState, success, err
+		}
+	}
+
+	err = s.decoder.Decode(origState.data, destination, origState.rev)
+	if err != nil {
+		span.AddEvent("Decode failed", attribute.Int("len", len(origState.data)), attribute.String("err", err.Error()))
+		recordDecodeError(s.groupResource, preparedKey)
+		return origState, success, err
+	}
+	span.AddEvent("Decode succeeded", attribute.Int("len", len(origState.data)))
+	return origState, success, nil
+}
+
+func (s *store) optimisticPut(ctx context.Context, span *tracing.Span, preparedKey string, origState *objState, data []byte, ttl uint64, v reflect.Value, ignoreNotFound bool) (state *objState, success bool, err error) {
 	newData, err := s.transformer.TransformToStorage(ctx, data, authenticatedDataString(preparedKey))
 	if err != nil {
 		span.AddEvent("TransformToStorage failed", attribute.String("err", err.Error()))
@@ -663,14 +669,7 @@ func (s *store) updateOnce(ctx context.Context, span *tracing.Span, preparedKey 
 		return origState, false, nil
 	}
 
-	err = s.decoder.Decode(data, destination, txnResp.Revision)
-	if err != nil {
-		span.AddEvent("Decode failed", attribute.Int("len", len(data)), attribute.String("err", err.Error()))
-		recordDecodeError(s.groupResource, preparedKey)
-		return origState, success, err
-	}
-	span.AddEvent("Decode succeeded", attribute.Int("len", len(data)))
-	return origState, success, nil
+	return &objState{data: data, rev: txnResp.Revision}, success, nil
 }
 
 func getNewItemFunc(listObj runtime.Object, v reflect.Value) func() runtime.Object {
