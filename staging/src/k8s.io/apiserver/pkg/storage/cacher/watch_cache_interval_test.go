@@ -587,7 +587,7 @@ func TestCacheIntervalSourceSelection(t *testing.T) {
 				Recursive: false,
 				Predicate: storage.SelectionPredicate{Field: fields.SelectorFromSet(fields.Set{"metadata.name": "pod1"})},
 			},
-			wantLazySnapshot: false,
+			wantLazySnapshot: true,
 			wantKeys:         []string{"/prefix/ns/pod1"},
 		},
 		{
@@ -597,7 +597,7 @@ func TestCacheIntervalSourceSelection(t *testing.T) {
 				Recursive: false,
 				Predicate: storage.SelectionPredicate{Field: fields.SelectorFromSet(fields.Set{"metadata.name": "pod1", "metadata.namespace": "ns"})},
 			},
-			wantLazySnapshot: false,
+			wantLazySnapshot: true,
 			wantKeys:         []string{"/prefix/ns/pod1"},
 		},
 		{
@@ -607,7 +607,7 @@ func TestCacheIntervalSourceSelection(t *testing.T) {
 				Recursive: false,
 				Predicate: storage.Everything,
 			},
-			wantLazySnapshot: false,
+			wantLazySnapshot: true,
 			wantKeys:         []string{"/prefix/ns/pod1"},
 		},
 		{
@@ -617,7 +617,7 @@ func TestCacheIntervalSourceSelection(t *testing.T) {
 				Recursive: false,
 				Predicate: storage.SelectionPredicate{Field: fields.SelectorFromSet(fields.Set{"metadata.namespace": "ns"})},
 			},
-			wantLazySnapshot: false,
+			wantLazySnapshot: true,
 			wantKeys:         []string{"/prefix/ns/pod1"},
 		},
 		{
@@ -727,7 +727,7 @@ func TestCacheIntervalSourceSelection(t *testing.T) {
 				Recursive: false,
 				Predicate: storage.Everything,
 			},
-			wantLazySnapshot: false,
+			wantLazySnapshot: true,
 			wantKeys:         nil,
 		},
 		{
@@ -737,7 +737,7 @@ func TestCacheIntervalSourceSelection(t *testing.T) {
 				Recursive: false,
 				Predicate: storage.SelectionPredicate{Field: fields.SelectorFromSet(fields.Set{"metadata.namespace": "ns"})},
 			},
-			wantLazySnapshot: false,
+			wantLazySnapshot: true,
 			wantKeys:         nil,
 		},
 		{
@@ -747,7 +747,7 @@ func TestCacheIntervalSourceSelection(t *testing.T) {
 				Recursive: false,
 				Predicate: storage.SelectionPredicate{Field: fields.SelectorFromSet(fields.Set{"metadata.name": "pod1"})},
 			},
-			wantLazySnapshot: false,
+			wantLazySnapshot: true,
 			wantKeys:         nil,
 		},
 		{
@@ -757,7 +757,7 @@ func TestCacheIntervalSourceSelection(t *testing.T) {
 				Recursive: false,
 				Predicate: storage.SelectionPredicate{Field: fields.SelectorFromSet(fields.Set{"metadata.name": "pod1", "metadata.namespace": "ns"})},
 			},
-			wantLazySnapshot: false,
+			wantLazySnapshot: true,
 			wantKeys:         nil,
 		},
 		{
@@ -767,7 +767,7 @@ func TestCacheIntervalSourceSelection(t *testing.T) {
 				Recursive: false,
 				Predicate: storage.Everything,
 			},
-			wantLazySnapshot: false,
+			wantLazySnapshot: true,
 			wantKeys:         nil,
 		},
 		{
@@ -777,7 +777,7 @@ func TestCacheIntervalSourceSelection(t *testing.T) {
 				Recursive: false,
 				Predicate: storage.SelectionPredicate{Field: fields.SelectorFromSet(fields.Set{"metadata.namespace": "ns"})},
 			},
-			wantLazySnapshot: false,
+			wantLazySnapshot: true,
 			wantKeys:         nil,
 		},
 		{
@@ -787,7 +787,7 @@ func TestCacheIntervalSourceSelection(t *testing.T) {
 				Recursive: false,
 				Predicate: storage.SelectionPredicate{Field: fields.SelectorFromSet(fields.Set{"metadata.name": "pod1"})},
 			},
-			wantLazySnapshot: false,
+			wantLazySnapshot: true,
 			wantKeys:         nil,
 		},
 		{
@@ -797,7 +797,7 @@ func TestCacheIntervalSourceSelection(t *testing.T) {
 				Recursive: false,
 				Predicate: storage.SelectionPredicate{Field: fields.SelectorFromSet(fields.Set{"metadata.name": "pod1", "metadata.namespace": "ns"})},
 			},
-			wantLazySnapshot: false,
+			wantLazySnapshot: true,
 			wantKeys:         nil,
 		},
 	}
@@ -874,7 +874,7 @@ func (s *countingSnapshot) ResourceVersion() uint64 {
 
 func TestLazySnapshotCacheIntervalSourceEmpty(t *testing.T) {
 	snap := &countingSnapshot{}
-	wci := newCacheIntervalFromLazySnapshot(100, snap, "")
+	wci := newCacheIntervalFromLazySnapshot(100, snap, "", true)
 
 	for event, err := range wci.All() {
 		t.Fatalf("empty snapshot yielded (%v, %v)", event, err)
