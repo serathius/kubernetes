@@ -1505,8 +1505,10 @@ func (ec *Controller) syncClaim(ctx context.Context, namespace, name string) err
 					// yet. Removing the pod while the scheduler is
 					// scheduling it would be bad. We have to be
 					// absolutely sure and thus have to check with
-					// the API server.
-					pod, err := ec.kubeClient.CoreV1().Pods(claim.Namespace).Get(ctx, reservedFor.Name, metav1.GetOptions{})
+					// the API server. Checking at least at
+					// claim.ResourceVersion suffices because the pod
+					// had to exist before its UID was added to ReservedFor.
+					pod, err := ec.kubeClient.CoreV1().Pods(claim.Namespace).Get(ctx, reservedFor.Name, metav1.GetOptions{ResourceVersion: claim.ResourceVersion})
 					if err != nil && !apierrors.IsNotFound(err) {
 						return err
 					}
@@ -1558,8 +1560,10 @@ func (ec *Controller) syncClaim(ctx context.Context, namespace, name string) err
 					// yet. Removing the PodGroup while the scheduler is
 					// scheduling its Pods would be bad. We have to be
 					// absolutely sure and thus have to check with
-					// the API server.
-					podGroup, err := ec.kubeClient.SchedulingV1beta1().PodGroups(claim.Namespace).Get(ctx, reservedFor.Name, metav1.GetOptions{})
+					// the API server. Checking at least at
+					// claim.ResourceVersion suffices because the PodGroup
+					// had to exist before its UID was added to ReservedFor.
+					podGroup, err := ec.kubeClient.SchedulingV1beta1().PodGroups(claim.Namespace).Get(ctx, reservedFor.Name, metav1.GetOptions{ResourceVersion: claim.ResourceVersion})
 					if err != nil && !apierrors.IsNotFound(err) {
 						return err
 					}
