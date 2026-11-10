@@ -108,7 +108,7 @@ func NewScheme() (*runtime.Scheme, serializer.CodecFactory, error) {
 // when the pod is in lazy wire form, or falls back to struct defaulting if already decoded.
 func SetObjectDefaults_V1Pod(in *V1Pod) {
 	if in.wire != nil && in.decoded == nil {
-		in.wire.DefaultOnWire()
+		in.ensureWire().DefaultOnWire()
 		return
 	}
 	if in.decoded != nil {
@@ -121,6 +121,12 @@ func SetObjectDefaults_V1Pod(in *V1Pod) {
 func Convert_v1_Pod_To_core_Pod(in *V1Pod, out *Pod, _ conversion.Scope) error {
 	if in.wire != nil && in.decoded == nil {
 		out.wire = in.wire
+		if in.wireOwn == in {
+			in.wireOwn = nil
+			out.wireOwn = out
+		} else {
+			out.wireOwn = nil
+		}
 		out.decoded = nil
 		return nil
 	}
@@ -129,8 +135,10 @@ func Convert_v1_Pod_To_core_Pod(in *V1Pod, out *Pod, _ conversion.Scope) error {
 		return err
 	}
 	out.wire = nil
-	out.decoded = (*core.Pod)(unsafe.Pointer(decodedV1))
-	out.decoded.TypeMeta = out.TypeMeta
+	out.wireOwn = nil
+	podCopy := *(*core.Pod)(unsafe.Pointer(decodedV1))
+	podCopy.TypeMeta = out.TypeMeta
+	out.decoded = &podCopy
 	return nil
 }
 
@@ -139,13 +147,16 @@ func Convert_v1_Pod_To_core_Pod(in *V1Pod, out *Pod, _ conversion.Scope) error {
 func Convert_core_Pod_To_v1_Pod(in *Pod, out *V1Pod, _ conversion.Scope) error {
 	if in.wire != nil && in.decoded == nil {
 		out.wire = in.wire
+		out.wireOwn = nil
 		out.decoded = nil
 		return nil
 	}
+	out.wire = nil
+	out.wireOwn = nil
 	if in.decoded != nil {
-		out.wire = nil
-		out.decoded = (*v1.Pod)(unsafe.Pointer(in.decoded))
-		out.decoded.TypeMeta = out.TypeMeta
+		v1Copy := *(*v1.Pod)(unsafe.Pointer(in.decoded))
+		v1Copy.TypeMeta = out.TypeMeta
+		out.decoded = &v1Copy
 	}
 	return nil
 }

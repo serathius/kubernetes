@@ -28,6 +28,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	cbordirect "k8s.io/apimachinery/pkg/runtime/serializer/cbor/direct"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/json"
 	"k8s.io/kubernetes/pkg/apis/core"
@@ -46,6 +47,7 @@ import (
 type V1Pod struct {
 	metav1.TypeMeta `json:",inline"`
 	wire            *WirePod
+	wireOwn         *V1Pod
 	decoded         *v1.Pod
 }
 
@@ -62,7 +64,9 @@ var (
 
 // NewV1PodFromWire creates a lazy V1Pod backed by raw Protobuf bytes.
 func NewV1PodFromWire(raw []byte) *V1Pod {
-	return &V1Pod{wire: NewWirePod(raw)}
+	p := &V1Pod{wire: NewWirePod(raw)}
+	p.wireOwn = p
+	return p
 }
 
 // NewV1PodFromDecoded creates a V1Pod backed by an eagerly decoded *v1.Pod.
@@ -105,6 +109,7 @@ func (p *V1Pod) EnsureDecoded() (*v1.Pod, error) {
 	v1Pod.TypeMeta = p.TypeMeta
 	p.decoded = v1Pod
 	p.wire = nil
+	p.wireOwn = nil
 	return p.decoded, nil
 }
 
@@ -146,6 +151,7 @@ func (p *V1Pod) DeepCopy() *V1Pod {
 	}
 	if p.wire != nil {
 		out.wire = p.wire.Clone()
+		out.wireOwn = out
 	}
 	return out
 }
@@ -161,8 +167,9 @@ func (p *V1Pod) Unmarshal(dAtA []byte) error {
 	rawCopy := make([]byte, len(dAtA))
 	copy(rawCopy, dAtA)
 	p.decoded = nil
-	if p.wire == nil {
+	if p.wire == nil || p.wireOwn != p {
 		p.wire = NewWirePod(rawCopy)
+		p.wireOwn = p
 	} else {
 		p.wire.Reset(rawCopy)
 	}
@@ -231,6 +238,29 @@ func (p *V1Pod) UnmarshalJSON(data []byte) error {
 	p.TypeMeta = pod.TypeMeta
 	p.decoded = pod
 	p.wire = nil
+	p.wireOwn = nil
+	return nil
+}
+
+// MarshalCBOR implements cbor.Marshaler.
+func (p *V1Pod) MarshalCBOR() ([]byte, error) {
+	dec, err := p.EnsureDecoded()
+	if err != nil {
+		return nil, err
+	}
+	return cbordirect.Marshal(dec)
+}
+
+// UnmarshalCBOR implements cbor.Unmarshaler.
+func (p *V1Pod) UnmarshalCBOR(data []byte) error {
+	pod := &v1.Pod{}
+	if err := cbordirect.Unmarshal(data, pod); err != nil {
+		return err
+	}
+	p.TypeMeta = pod.TypeMeta
+	p.decoded = pod
+	p.wire = nil
+	p.wireOwn = nil
 	return nil
 }
 
@@ -256,6 +286,12 @@ func (p *V1Pod) ExtractObjectMetaInto(out *metav1.ObjectMeta) {
 func (p *V1Pod) ensureWire() *WirePod {
 	if p.wire == nil {
 		p.wire = NewWirePod(nil)
+		p.wireOwn = p
+		return p.wire
+	}
+	if p.wireOwn != p {
+		p.wire = p.wire.Clone()
+		p.wireOwn = p
 	}
 	return p.wire
 }
@@ -507,8 +543,8 @@ func (p *V1Pod) SetManagedFields(managedFields []metav1.ManagedFieldsEntry) {
 // +k8s:deepcopy-gen=false
 type V1PodList struct {
 	metav1.TypeMeta `json:",inline"`
-	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []V1Pod `json:"items"`
+	metav1.ListMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
+	Items           []V1Pod `json:"items" protobuf:"bytes,2,rep,name=items"`
 }
 
 var (
@@ -673,6 +709,7 @@ func (l *V1PodList) Unmarshal(dAtA []byte) error {
 type Pod struct {
 	metav1.TypeMeta
 	wire    *WirePod
+	wireOwn *Pod
 	decoded *core.Pod
 }
 
@@ -686,7 +723,9 @@ var (
 
 // NewPodFromWire creates an internal lazy Pod backed by raw v1.Pod Protobuf bytes.
 func NewPodFromWire(raw []byte) *Pod {
-	return &Pod{wire: NewWirePod(raw)}
+	p := &Pod{wire: NewWirePod(raw)}
+	p.wireOwn = p
+	return p
 }
 
 // NewPodFromDecoded creates an internal Pod backed by an eagerly decoded *core.Pod.
@@ -727,11 +766,11 @@ func (p *Pod) EnsureDecoded() (*core.Pod, error) {
 	if err != nil {
 		return nil, err
 	}
-	p.wire.decodedV1 = nil
 	internalPod := (*core.Pod)(unsafe.Pointer(v1Pod))
 	internalPod.TypeMeta = p.TypeMeta
 	p.decoded = internalPod
 	p.wire = nil
+	p.wireOwn = nil
 	return p.decoded, nil
 }
 
@@ -773,6 +812,7 @@ func (p *Pod) DeepCopy() *Pod {
 	}
 	if p.wire != nil {
 		out.wire = p.wire.Clone()
+		out.wireOwn = out
 	}
 	return out
 }
@@ -799,6 +839,12 @@ func (p *Pod) ExtractObjectMetaInto(out *metav1.ObjectMeta) {
 func (p *Pod) ensureWire() *WirePod {
 	if p.wire == nil {
 		p.wire = NewWirePod(nil)
+		p.wireOwn = p
+		return p.wire
+	}
+	if p.wireOwn != p {
+		p.wire = p.wire.Clone()
+		p.wireOwn = p
 	}
 	return p.wire
 }

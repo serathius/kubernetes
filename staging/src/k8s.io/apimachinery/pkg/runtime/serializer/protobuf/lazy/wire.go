@@ -105,19 +105,41 @@ type WireObjectMeta struct {
 
 // InitFromParent initializes WireObjectMeta over a parent message's raw bytes.
 func (m *WireObjectMeta) InitFromParent(parentRaw []byte, metaFieldNum protowire.Number) {
+	fieldNum := metaFieldNum
+	if fieldNum == 0 {
+		fieldNum = MetadataFieldNumber
+	}
+	*m = WireObjectMeta{
+		parentRaw:    parentRaw,
+		metaFieldNum: fieldNum,
+		metaBytes:    SubMessage(parentRaw, fieldNum),
+		scanned:      true,
+	}
+}
+
+// InitFromParentWithBytes initializes WireObjectMeta with pre-extracted ObjectMeta sub-message bytes.
+func (m *WireObjectMeta) InitFromParentWithBytes(parentRaw, metaBytes []byte, metaFieldNum protowire.Number) {
+	if metaFieldNum == 0 {
+		metaFieldNum = MetadataFieldNumber
+	}
 	*m = WireObjectMeta{
 		parentRaw:    parentRaw,
 		metaFieldNum: metaFieldNum,
+		metaBytes:    metaBytes,
+		scanned:      true,
 	}
 }
 
 // CloneWithParent returns a deep copy of WireObjectMeta bound to newParentRaw.
 func (m *WireObjectMeta) CloneWithParent(newParentRaw []byte, metaFieldNum protowire.Number) WireObjectMeta {
+	if metaFieldNum == 0 {
+		metaFieldNum = MetadataFieldNumber
+	}
 	cp := m.Clone()
 	cp.parentRaw = newParentRaw
 	cp.metaFieldNum = metaFieldNum
-	cp.metaBytes = nil
-	cp.scanned = false
+	cp.metaBytes = SubMessage(newParentRaw, metaFieldNum)
+	cp.scanned = true
 	return cp
 }
 
@@ -125,14 +147,6 @@ func (m *WireObjectMeta) CloneWithParent(newParentRaw []byte, metaFieldNum proto
 func (m *WireObjectMeta) Bytes() []byte {
 	if m == nil {
 		return nil
-	}
-	if !m.scanned {
-		fieldNum := m.metaFieldNum
-		if fieldNum == 0 {
-			fieldNum = MetadataFieldNumber
-		}
-		m.metaBytes = SubMessage(m.parentRaw, fieldNum)
-		m.scanned = true
 	}
 	return m.metaBytes
 }
@@ -148,6 +162,8 @@ func (m *WireObjectMeta) ClearDirty() {
 		*m = WireObjectMeta{
 			parentRaw:    m.parentRaw,
 			metaFieldNum: m.metaFieldNum,
+			metaBytes:    m.metaBytes,
+			scanned:      m.scanned,
 		}
 	}
 }
@@ -161,6 +177,8 @@ func (m *WireObjectMeta) Clone() WireObjectMeta {
 		return WireObjectMeta{
 			parentRaw:    m.parentRaw,
 			metaFieldNum: m.metaFieldNum,
+			metaBytes:    m.metaBytes,
+			scanned:      m.scanned,
 		}
 	}
 	cp := *m
@@ -196,18 +214,20 @@ func (m *WireObjectMeta) Clone() WireObjectMeta {
 	return cp
 }
 
-func (m *WireObjectMeta) GetName() string                       { return m.Name(m.Bytes()) }
-func (m *WireObjectMeta) GetGenerateName() string               { return m.GenerateName(m.Bytes()) }
-func (m *WireObjectMeta) GetNamespace() string                  { return m.Namespace(m.Bytes()) }
-func (m *WireObjectMeta) GetSelfLink() string                   { return m.SelfLink(m.Bytes()) }
-func (m *WireObjectMeta) GetUID() types.UID                     { return m.UID(m.Bytes()) }
-func (m *WireObjectMeta) GetResourceVersion() string            { return m.ResourceVersion(m.Bytes()) }
-func (m *WireObjectMeta) GetGeneration() int64                  { return m.Generation(m.Bytes()) }
-func (m *WireObjectMeta) GetCreationTimestamp() metav1.Time     { return m.CreationTimestamp(m.Bytes()) }
-func (m *WireObjectMeta) GetDeletionTimestamp() *metav1.Time    { return m.DeletionTimestamp(m.Bytes()) }
-func (m *WireObjectMeta) GetDeletionGracePeriodSeconds() *int64 { return m.DeletionGracePeriodSeconds(m.Bytes()) }
-func (m *WireObjectMeta) GetLabels() map[string]string          { return m.Labels(m.Bytes()) }
-func (m *WireObjectMeta) GetAnnotations() map[string]string     { return m.Annotations(m.Bytes()) }
+func (m *WireObjectMeta) GetName() string                    { return m.Name(m.Bytes()) }
+func (m *WireObjectMeta) GetGenerateName() string            { return m.GenerateName(m.Bytes()) }
+func (m *WireObjectMeta) GetNamespace() string               { return m.Namespace(m.Bytes()) }
+func (m *WireObjectMeta) GetSelfLink() string                { return m.SelfLink(m.Bytes()) }
+func (m *WireObjectMeta) GetUID() types.UID                  { return m.UID(m.Bytes()) }
+func (m *WireObjectMeta) GetResourceVersion() string         { return m.ResourceVersion(m.Bytes()) }
+func (m *WireObjectMeta) GetGeneration() int64               { return m.Generation(m.Bytes()) }
+func (m *WireObjectMeta) GetCreationTimestamp() metav1.Time  { return m.CreationTimestamp(m.Bytes()) }
+func (m *WireObjectMeta) GetDeletionTimestamp() *metav1.Time { return m.DeletionTimestamp(m.Bytes()) }
+func (m *WireObjectMeta) GetDeletionGracePeriodSeconds() *int64 {
+	return m.DeletionGracePeriodSeconds(m.Bytes())
+}
+func (m *WireObjectMeta) GetLabels() map[string]string      { return m.Labels(m.Bytes()) }
+func (m *WireObjectMeta) GetAnnotations() map[string]string { return m.Annotations(m.Bytes()) }
 func (m *WireObjectMeta) GetOwnerReferences() []metav1.OwnerReference {
 	return m.OwnerReferences(m.Bytes())
 }
@@ -795,6 +815,16 @@ func (m *WireObjectMeta) SpliceIntoRaw(raw []byte) []byte {
 	if m == nil || m.dirty == 0 {
 		return raw
 	}
+	out := m.splicedRaw(raw)
+	m.InitFromParent(out, m.metaFieldNum)
+	return out
+}
+
+// splicedRaw returns raw with pending ObjectMeta mutations spliced in without mutating m.
+func (m *WireObjectMeta) splicedRaw(raw []byte) []byte {
+	if m == nil || m.dirty == 0 {
+		return raw
+	}
 	offset := 0
 	for offset < len(raw) {
 		fieldStart := offset
@@ -818,7 +848,6 @@ func (m *WireObjectMeta) SpliceIntoRaw(raw []byte) []byte {
 			out = protowire.AppendTag(out, MetadataFieldNumber, protowire.BytesType)
 			out = protowire.AppendBytes(out, newMeta)
 			out = append(out, raw[offset:]...)
-			m.ClearDirty()
 			return out
 		}
 	}
@@ -828,7 +857,6 @@ func (m *WireObjectMeta) SpliceIntoRaw(raw []byte) []byte {
 	out = protowire.AppendTag(out, MetadataFieldNumber, protowire.BytesType)
 	out = protowire.AppendBytes(out, newMeta)
 	out = append(out, raw...)
-	m.ClearDirty()
 	return out
 }
 
@@ -908,30 +936,29 @@ func findMetaRVSpan(metaBytes []byte) (int, int) {
 }
 
 // SerializedSize returns the exact protobuf wire size of raw after applying any pending
-// ObjectMeta mutations, returning a possibly-updated raw slice when general meta fields are spliced.
-func (m *WireObjectMeta) SerializedSize(raw []byte) ([]byte, int) {
+// ObjectMeta mutations without mutating m.
+func (m *WireObjectMeta) SerializedSize(raw []byte) int {
 	if m.dirty == 0 {
-		return raw, len(raw)
+		return len(raw)
 	}
 	if m.dirty == dirtyMetaResourceVersion {
 		loc := m.computeRVSpliceOffsets(raw)
 		newMetaFieldLen := 1 + protowire.SizeBytes(loc.newMetaLen)
 		if !loc.foundMeta {
-			return raw, newMetaFieldLen + len(raw)
+			return newMetaFieldLen + len(raw)
 		}
-		return raw, loc.metaFieldStart + newMetaFieldLen + (len(raw) - loc.metaFieldEnd)
+		return loc.metaFieldStart + newMetaFieldLen + (len(raw) - loc.metaFieldEnd)
 	}
-	updated := m.SpliceIntoRaw(raw)
-	return updated, len(updated)
+	return len(m.splicedRaw(raw))
 }
 
-// MarshalToSizedBuffer writes raw with any pending ObjectMeta mutations to the end of dAtA,
-// splicing resourceVersion directly into dAtA without intermediate heap allocations.
-func (m *WireObjectMeta) MarshalToSizedBuffer(dAtA []byte, raw []byte) ([]byte, int, error) {
+// MarshalToSizedBuffer writes raw with any pending ObjectMeta mutations to the end of dAtA
+// without mutating m, splicing resourceVersion directly into dAtA without intermediate heap allocations.
+func (m *WireObjectMeta) MarshalToSizedBuffer(dAtA []byte, raw []byte) (int, error) {
 	if m.dirty == 0 {
 		n := len(raw)
 		copy(dAtA[len(dAtA)-n:], raw)
-		return raw, n, nil
+		return n, nil
 	}
 	if m.dirty == dirtyMetaResourceVersion {
 		loc := m.computeRVSpliceOffsets(raw)
@@ -960,15 +987,14 @@ func (m *WireObjectMeta) MarshalToSizedBuffer(dAtA []byte, raw []byte) ([]byte, 
 			dst = protowire.AppendString(dst, m.resourceVersion)
 			dst = append(dst, raw...)
 		}
-		return raw, totalSize, nil
+		return totalSize, nil
 	}
 
-	updated := m.SpliceIntoRaw(raw)
+	updated := m.splicedRaw(raw)
 	n := len(updated)
 	copy(dAtA[len(dAtA)-n:], updated)
-	return updated, n, nil
+	return n, nil
 }
-
 
 // SubMessage returns the payload of the first length-delimited field with tag topField in raw.
 func SubMessage(raw []byte, topField protowire.Number) []byte {

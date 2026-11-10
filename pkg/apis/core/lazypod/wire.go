@@ -116,36 +116,55 @@ type WirePod struct {
 	raw  []byte
 	meta lazy.WireObjectMeta
 
-	spec cachedSubMsg
-	stat cachedSubMsg
+	specBytes   []byte
+	statusBytes []byte
 
-	hasNodeName       bool
-	nodeName          string
-	hasNodeNameMod    bool
-	hasPhase          bool
-	phase             core.PodPhase
-	hasPodIP          bool
-	podIP             string
-	hasNominatedNode    bool
+	nodeName            string
+	hasNodeNameMod      bool
 	nominatedNodeName   string
 	hasNominatedNodeMod bool
 
 	hasConditionsMod  bool
 	conditionsEncoded []byte
 
-	defaults  *wireDefaultPlan
-	decodedV1 *v1.Pod
+	defaults *wireDefaultPlan
 }
 
-type cachedSubMsg struct {
-	scanned bool
-	content []byte
+func scanPodTopLevel(raw []byte) (metaBytes, specBytes, statusBytes []byte) {
+	offset := 0
+	for offset < len(raw) {
+		num, typ, tagLen := protowire.ConsumeTag(raw[offset:])
+		if tagLen < 0 {
+			break
+		}
+		offset += tagLen
+		valLen := protowire.ConsumeFieldValue(num, typ, raw[offset:])
+		if valLen < 0 {
+			break
+		}
+		if typ == protowire.BytesType {
+			content, _ := protowire.ConsumeBytes(raw[offset : offset+valLen])
+			switch num {
+			case podFieldMetadata:
+				metaBytes = content
+			case podFieldSpec:
+				specBytes = content
+			case podFieldStatus:
+				statusBytes = content
+			}
+		}
+		offset += valLen
+	}
+	return metaBytes, specBytes, statusBytes
 }
 
 // NewWirePod creates a WirePod over raw v1.Pod Protobuf bytes (without the k8s\x00 magic prefix).
 func NewWirePod(raw []byte) *WirePod {
 	w := &WirePod{raw: raw}
-	w.meta.InitFromParent(raw, podFieldMetadata)
+	metaBytes, specBytes, statusBytes := scanPodTopLevel(raw)
+	w.specBytes = specBytes
+	w.statusBytes = statusBytes
+	w.meta.InitFromParentWithBytes(raw, metaBytes, podFieldMetadata)
 	return w
 }
 
@@ -156,17 +175,14 @@ func (w *WirePod) Clone() *WirePod {
 	}
 	rawCopy := make([]byte, len(w.raw))
 	copy(rawCopy, w.raw)
+	_, specBytes, statusBytes := scanPodTopLevel(rawCopy)
 	cp := &WirePod{
 		raw:                 rawCopy,
 		meta:                w.meta.CloneWithParent(rawCopy, podFieldMetadata),
-		hasNodeName:         w.hasNodeName,
+		specBytes:           specBytes,
+		statusBytes:         statusBytes,
 		nodeName:            w.nodeName,
 		hasNodeNameMod:      w.hasNodeNameMod,
-		hasPhase:            w.hasPhase,
-		phase:               w.phase,
-		hasPodIP:            w.hasPodIP,
-		podIP:               w.podIP,
-		hasNominatedNode:    w.hasNominatedNode,
 		nominatedNodeName:   w.nominatedNodeName,
 		hasNominatedNodeMod: w.hasNominatedNodeMod,
 		hasConditionsMod:    w.hasConditionsMod,
@@ -175,32 +191,26 @@ func (w *WirePod) Clone() *WirePod {
 	if w.hasConditionsMod && w.conditionsEncoded != nil {
 		cp.conditionsEncoded = append([]byte(nil), w.conditionsEncoded...)
 	}
-	if w.decodedV1 != nil {
-		cp.decodedV1 = w.decodedV1.DeepCopy()
-	}
 	return cp
 }
 
 // Reset clears the WirePod and reinitializes it over raw.
 func (w *WirePod) Reset(raw []byte) {
-	*w = WirePod{raw: raw}
-	w.meta.InitFromParent(raw, podFieldMetadata)
+	metaBytes, specBytes, statusBytes := scanPodTopLevel(raw)
+	*w = WirePod{
+		raw:         raw,
+		specBytes:   specBytes,
+		statusBytes: statusBytes,
+	}
+	w.meta.InitFromParentWithBytes(raw, metaBytes, podFieldMetadata)
 }
 
 func (w *WirePod) subMessage(topField protowire.Number) []byte {
 	switch topField {
 	case podFieldSpec:
-		if !w.spec.scanned {
-			w.spec.content = lazy.SubMessage(w.raw, podFieldSpec)
-			w.spec.scanned = true
-		}
-		return w.spec.content
+		return w.specBytes
 	case podFieldStatus:
-		if !w.stat.scanned {
-			w.stat.content = lazy.SubMessage(w.raw, podFieldStatus)
-			w.stat.scanned = true
-		}
-		return w.stat.content
+		return w.statusBytes
 	default:
 		return lazy.SubMessage(w.raw, topField)
 	}
@@ -313,47 +323,34 @@ func spliceRepeatedRawField(msgBytes []byte, targetNum protowire.Number, encoded
 
 // NodeName extracts spec.nodeName from the wire.
 func (w *WirePod) NodeName() string {
-	if !w.hasNodeName {
-		w.nodeName = lazy.ExtractFirstStringField(w.subMessage(podFieldSpec), specFieldNodeName)
-		w.hasNodeName = true
+	if w.hasNodeNameMod {
+		return w.nodeName
 	}
-	return w.nodeName
+	return lazy.ExtractFirstStringField(w.subMessage(podFieldSpec), specFieldNodeName)
 }
 
 // SetNodeName updates spec.nodeName on the wire without decoding the pod.
 func (w *WirePod) SetNodeName(n string) {
 	w.nodeName = n
-	w.hasNodeName = true
 	w.hasNodeNameMod = true
-	w.decodedV1 = nil
 }
 
 // Phase extracts status.phase from the wire.
 func (w *WirePod) Phase() core.PodPhase {
-	if !w.hasPhase {
-		w.phase = core.PodPhase(lazy.ExtractFirstStringField(w.subMessage(podFieldStatus), statusFieldPhase))
-		w.hasPhase = true
-	}
-	return w.phase
+	return core.PodPhase(lazy.ExtractFirstStringField(w.subMessage(podFieldStatus), statusFieldPhase))
 }
 
 // PodIP extracts status.podIP from the wire, falling back to status.podIPs[0].ip when defaulted.
 func (w *WirePod) PodIP() string {
-	if !w.hasPodIP {
-		if w.defaults != nil && w.defaults.status.hasPodIP {
-			w.podIP = w.defaults.status.podIP
-			w.hasPodIP = true
-			return w.podIP
-		}
-		st := w.subMessage(podFieldStatus)
-		ip := lazy.ExtractFirstStringField(st, statusFieldPodIP)
-		if ip == "" {
-			ip = extractFirstPodIPFromList(st)
-		}
-		w.podIP = ip
-		w.hasPodIP = true
+	if w.defaults != nil && w.defaults.status.hasPodIP {
+		return w.defaults.status.podIP
 	}
-	return w.podIP
+	st := w.subMessage(podFieldStatus)
+	ip := lazy.ExtractFirstStringField(st, statusFieldPodIP)
+	if ip == "" {
+		ip = extractFirstPodIPFromList(st)
+	}
+	return ip
 }
 
 // StatusFirstPodIP returns status.podIPs[0].ip without falling back to status.podIP.
@@ -390,19 +387,16 @@ func extractFirstPodIPFromList(statusBytes []byte) string {
 
 // NominatedNodeName extracts status.nominatedNodeName from the wire.
 func (w *WirePod) NominatedNodeName() string {
-	if !w.hasNominatedNode {
-		w.nominatedNodeName = lazy.ExtractFirstStringField(w.subMessage(podFieldStatus), statusFieldNominatedNodeName)
-		w.hasNominatedNode = true
+	if w.hasNominatedNodeMod {
+		return w.nominatedNodeName
 	}
-	return w.nominatedNodeName
+	return lazy.ExtractFirstStringField(w.subMessage(podFieldStatus), statusFieldNominatedNodeName)
 }
 
 // SetNominatedNodeName updates status.nominatedNodeName on the wire without decoding the pod.
 func (w *WirePod) SetNominatedNodeName(n string) {
 	w.nominatedNodeName = n
-	w.hasNominatedNode = true
 	w.hasNominatedNodeMod = true
-	w.decodedV1 = nil
 }
 
 // RestartPolicy extracts spec.restartPolicy from the wire, including any pending wire defaults.
@@ -474,7 +468,6 @@ func extractOptionalInt64Field(msg []byte, targetNum protowire.Number) *int64 {
 func (w *WirePod) HasSchedulingGates() bool {
 	return lazy.HasField(w.subMessage(podFieldSpec), specFieldSchedulingGates)
 }
-
 
 // IsPodReady reports whether status.conditions contains a Ready=True condition and every spec.readinessGates condition is True.
 func (w *WirePod) IsPodReady() bool {
@@ -564,7 +557,6 @@ func (w *WirePod) UpsertStatusCondition(cond core.PodCondition) bool {
 	if w == nil {
 		return false
 	}
-	w.decodedV1 = nil
 	statusBytes := w.subMessage(podFieldStatus)
 	if w.hasConditionsMod {
 		statusBytes = w.conditionsEncoded
@@ -1314,14 +1306,12 @@ func (w *WirePod) ensureDefaultPlan() *wireDefaultPlan {
 func (w *WirePod) markSpecDefaultDirty() *specOverrides {
 	p := w.ensureDefaultPlan()
 	p.specDirty = true
-	w.decodedV1 = nil
 	return &p.spec
 }
 
 func (w *WirePod) markStatusDefaultDirty() *statusOverrides {
 	p := w.ensureDefaultPlan()
 	p.statusDirty = true
-	w.decodedV1 = nil
 	return &p.status
 }
 
@@ -2129,11 +2119,11 @@ func (d *wireVolumeDefaulter) SetProjectedDefaultMode(m int32) {
 // Wire Splicing for Spec & Status Defaulting + Mutations
 // ============================================================================
 
-func (w *WirePod) materializeDefaultsAndMods() {
+func (w *WirePod) effectiveRaw() []byte {
 	hasSpecDef := w.defaults != nil && w.defaults.specDirty
 	hasStatDef := w.defaults != nil && w.defaults.statusDirty
 	if !hasSpecDef && !hasStatDef && !w.hasNodeNameMod && !w.hasNominatedNodeMod && !w.hasConditionsMod {
-		return
+		return w.raw
 	}
 
 	b := w.raw
@@ -2232,17 +2222,7 @@ func (w *WirePod) materializeDefaultsAndMods() {
 		out = protowire.AppendBytes(out, statusContent)
 	}
 
-	w.raw = out
-	w.spec = cachedSubMsg{}
-	w.stat = cachedSubMsg{}
-	if w.defaults != nil {
-		w.defaults.specDirty = false
-		w.defaults.statusDirty = false
-	}
-	w.hasNodeNameMod = false
-	w.hasNominatedNodeMod = false
-	w.hasConditionsMod = false
-	w.conditionsEncoded = nil
+	return out
 }
 
 func (w *WirePod) spliceSpecDefaults(specBytes []byte) []byte {
@@ -2250,14 +2230,14 @@ func (w *WirePod) spliceSpecDefaults(specBytes []byte) []byte {
 	out := make([]byte, 0, len(specBytes)+96)
 
 	var (
-		emittedRestartPolicy       bool
-		emittedTermGrace           bool
-		emittedDNSPolicy           bool
-		emittedServiceAccountName  bool
-		emittedDeprecatedSA        bool
-		emittedSecurityContext     bool
-		emittedSchedulerName       bool
-		emittedEnableServiceLinks  bool
+		emittedRestartPolicy      bool
+		emittedTermGrace          bool
+		emittedDNSPolicy          bool
+		emittedServiceAccountName bool
+		emittedDeprecatedSA       bool
+		emittedSecurityContext    bool
+		emittedSchedulerName      bool
+		emittedEnableServiceLinks bool
 	)
 
 	emitDirtyUpTo := func(limitNum protowire.Number) {
@@ -2950,57 +2930,45 @@ func (w *WirePod) spliceStatusDefaults(statusBytes []byte) []byte {
 	return out
 }
 
-// SerializedSize returns the exact Protobuf wire size of the Pod, materializing any pending
-// defaults/modifications and accounting for any pending ObjectMeta mutations.
+// SerializedSize returns the exact Protobuf wire size of the Pod, accounting for any pending
+// defaults, modifications, and ObjectMeta mutations without mutating w.
 func (w *WirePod) SerializedSize() int {
 	if w == nil {
 		return 0
 	}
-	w.materializeDefaultsAndMods()
-	raw, size := w.meta.SerializedSize(w.raw)
-	w.raw = raw
-	return size
+	return w.meta.SerializedSize(w.effectiveRaw())
 }
 
 // MarshalToSizedBuffer writes the v1.Pod wire bytes to the end of dAtA, splicing pending
-// defaults, modifications, and ObjectMeta mutations directly into dAtA without intermediate heap allocations.
+// defaults, modifications, and ObjectMeta mutations directly into dAtA without mutating w.
 func (w *WirePod) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	if w == nil {
 		return 0, nil
 	}
-	w.materializeDefaultsAndMods()
-	raw, n, err := w.meta.MarshalToSizedBuffer(dAtA, w.raw)
-	w.raw = raw
-	return n, err
+	return w.meta.MarshalToSizedBuffer(dAtA, w.effectiveRaw())
 }
 
-// Bytes returns the raw v1.Pod Protobuf wire bytes, splicing in any modified fields.
+// Bytes returns the v1.Pod Protobuf wire bytes with any modified fields spliced in without mutating w.
 func (w *WirePod) Bytes() []byte {
 	if w == nil {
 		return nil
 	}
-	size := w.SerializedSize()
+	raw := w.effectiveRaw()
 	if !w.meta.IsDirty() {
-		return w.raw
+		return raw
 	}
-	buf := make([]byte, size)
-	_, _ = w.MarshalToSizedBuffer(buf)
-	w.raw = buf
-	w.meta.ClearDirty()
-	return w.raw
+	buf := make([]byte, w.meta.SerializedSize(raw))
+	_, _ = w.meta.MarshalToSizedBuffer(buf, raw)
+	return buf
 }
 
 // DecodeToV1Pod unmarshals the wire bytes into a *v1.Pod, applying any pending ObjectMeta mutations.
 func (w *WirePod) DecodeToV1Pod() (*v1.Pod, error) {
-	if w.decodedV1 != nil {
-		return w.decodedV1, nil
-	}
-	w.materializeDefaultsAndMods()
+	raw := w.effectiveRaw()
 	v1Pod := &v1.Pod{}
-	if err := v1Pod.Unmarshal(w.raw); err != nil {
+	if err := v1Pod.Unmarshal(raw); err != nil {
 		return nil, err
 	}
 	w.meta.ApplyToObjectMeta(&v1Pod.ObjectMeta)
-	w.decodedV1 = v1Pod
 	return v1Pod, nil
 }

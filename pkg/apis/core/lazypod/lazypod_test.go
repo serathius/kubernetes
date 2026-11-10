@@ -19,6 +19,8 @@ package lazypod_test
 import (
 	"bytes"
 	"context"
+	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -32,6 +34,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
+	"k8s.io/apimachinery/pkg/runtime/serializer/cbor"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apiserver/pkg/storage"
 	"k8s.io/apiserver/pkg/storage/etcd3"
@@ -44,6 +47,16 @@ import (
 	registrypod "k8s.io/kubernetes/pkg/registry/core/pod"
 )
 
+type writeCountingBuffer struct {
+	bytes.Buffer
+	writes int
+}
+
+func (b *writeCountingBuffer) Write(p []byte) (int, error) {
+	b.writes++
+	return b.Buffer.Write(p)
+}
+
 func newStandardScheme(t *testing.T) (*runtime.Scheme, serializer.CodecFactory) {
 	t.Helper()
 	scheme := runtime.NewScheme()
@@ -54,7 +67,12 @@ func newStandardScheme(t *testing.T) (*runtime.Scheme, serializer.CodecFactory) 
 	if err := corev1.AddToScheme(scheme); err != nil {
 		t.Fatalf("failed to add core/v1 to standard scheme: %v", err)
 	}
-	return scheme, serializer.NewCodecFactory(scheme)
+	return scheme, serializer.NewCodecFactory(
+		scheme,
+		serializer.WithStreamingCollectionEncodingToJSON(),
+		serializer.WithStreamingCollectionEncodingToProtobuf(),
+		serializer.WithSerializer(cbor.NewSerializerInfo),
+	)
 }
 
 func newLazyScheme(t *testing.T) (*runtime.Scheme, serializer.CodecFactory) {
@@ -80,6 +98,15 @@ func jsonCodecFor(t *testing.T, codecs serializer.CodecFactory) runtime.Codec {
 	info, ok := runtime.SerializerInfoForMediaType(codecs.SupportedMediaTypes(), runtime.ContentTypeJSON)
 	if !ok {
 		t.Fatalf("json serializer not found in CodecFactory")
+	}
+	return codecs.CodecForVersions(info.Serializer, info.Serializer, v1.SchemeGroupVersion, core.SchemeGroupVersion)
+}
+
+func cborCodecFor(t *testing.T, codecs serializer.CodecFactory) runtime.Codec {
+	t.Helper()
+	info, ok := runtime.SerializerInfoForMediaType(codecs.SupportedMediaTypes(), runtime.ContentTypeCBOR)
+	if !ok {
+		t.Fatalf("cbor serializer not found in CodecFactory")
 	}
 	return codecs.CodecForVersions(info.Serializer, info.Serializer, v1.SchemeGroupVersion, core.SchemeGroupVersion)
 }
@@ -295,11 +322,13 @@ func TestEtcd3ReadDefaultingAndRVSplicing1To1Parity(t *testing.T) {
 	_, stdCodecs := newStandardScheme(t)
 	stdPBCodec := protobufCodecFor(t, stdCodecs)
 	stdJSONCodec := jsonCodecFor(t, stdCodecs)
+	stdCBORCodec := cborCodecFor(t, stdCodecs)
 	stdDecoder := etcd3.NewDefaultDecoder(stdPBCodec, storage.APIObjectVersioner{})
 
 	_, lazyCodecs := newLazyScheme(t)
 	lazyPBCodec := protobufCodecFor(t, lazyCodecs)
 	lazyJSONCodec := jsonCodecFor(t, lazyCodecs)
+	lazyCBORCodec := cborCodecFor(t, lazyCodecs)
 	lazyDecoder := etcd3.NewDefaultDecoder(lazyPBCodec, storage.APIObjectVersioner{})
 
 	const modRev int64 = 987654
@@ -397,17 +426,46 @@ func TestEtcd3ReadDefaultingAndRVSplicing1To1Parity(t *testing.T) {
 				}
 			}
 
-			// Verify JSON encoding parity (decodes on demand).
-			lazyCopy := lazyInternal.DeepCopy()
+			// Verify JSON encoding parity (decodes on demand without mutating source WirePod).
+			shallowJSONCopy := &lazypod.Pod{}
+			reflect.ValueOf(shallowJSONCopy).Elem().Set(reflect.ValueOf(lazyInternal).Elem())
 			var stdJSONBuf, lazyJSONBuf bytes.Buffer
 			if err := stdJSONCodec.Encode(stdInternal, &stdJSONBuf); err != nil {
 				t.Fatalf("stdJSONCodec.Encode failed: %v", err)
 			}
-			if err := lazyJSONCodec.Encode(lazyCopy, &lazyJSONBuf); err != nil {
+			if err := lazyJSONCodec.Encode(shallowJSONCopy, &lazyJSONBuf); err != nil {
 				t.Fatalf("lazyJSONCodec.Encode failed: %v", err)
 			}
 			if !bytes.Equal(stdJSONBuf.Bytes(), lazyJSONBuf.Bytes()) {
 				t.Fatalf("JSON output mismatch:\n%s", cmp.Diff(stdJSONBuf.String(), lazyJSONBuf.String()))
+			}
+
+			// Verify CBOR encoding & decoding parity via direct MarshalCBOR/UnmarshalCBOR.
+			shallowCBORCopy := &lazypod.Pod{}
+			reflect.ValueOf(shallowCBORCopy).Elem().Set(reflect.ValueOf(lazyInternal).Elem())
+			var stdCBORBuf, lazyCBORBuf bytes.Buffer
+			if err := stdCBORCodec.Encode(stdInternal, &stdCBORBuf); err != nil {
+				t.Fatalf("stdCBORCodec.Encode failed: %v", err)
+			}
+			if err := lazyCBORCodec.Encode(shallowCBORCopy, &lazyCBORBuf); err != nil {
+				t.Fatalf("lazyCBORCodec.Encode failed: %v", err)
+			}
+			if !bytes.Equal(stdCBORBuf.Bytes(), lazyCBORBuf.Bytes()) {
+				t.Fatalf("CBOR output mismatch: std len=%d, lazy len=%d", stdCBORBuf.Len(), lazyCBORBuf.Len())
+			}
+			decodedFromCBOR, _, err := lazyCBORCodec.Decode(lazyCBORBuf.Bytes(), nil, &lazypod.Pod{})
+			if err != nil {
+				t.Fatalf("lazyCBORCodec.Decode failed: %v", err)
+			}
+			unwrappedCBOR, err := runtime.EnsureDecodedObject(decodedFromCBOR)
+			if err != nil {
+				t.Fatalf("EnsureDecodedObject(CBOR) failed: %v", err)
+			}
+			if !apiequality.Semantic.DeepEqual(stdInternal, unwrappedCBOR) {
+				t.Fatalf("CBOR round-trip mismatch:\n%s", cmp.Diff(stdInternal, unwrappedCBOR))
+			}
+			if !lazyInternal.IsLazy() {
+				t.Fatalf("expected lazyInternal.IsLazy() == true after shallow JSON/CBOR encodes")
 			}
 
 			// Verify EnsureDecodedObject unwraps *lazypod.Pod into an identical *core.Pod.
@@ -454,12 +512,15 @@ func TestPodListProtobufAndTableParity(t *testing.T) {
 		lazyList.Items = append(lazyList.Items, lp)
 	}
 
-	var stdBuf, lazyBuf bytes.Buffer
+	var stdBuf, lazyBuf writeCountingBuffer
 	if err := stdPBCodec.Encode(stdList, &stdBuf); err != nil {
 		t.Fatalf("stdPBCodec.Encode(PodList) failed: %v", err)
 	}
 	if err := lazyPBCodec.Encode(lazyList, &lazyBuf); err != nil {
 		t.Fatalf("lazyPBCodec.Encode(PodList) failed: %v", err)
+	}
+	if lazyBuf.writes <= 1 || lazyBuf.writes != stdBuf.writes {
+		t.Fatalf("expected streaming collection writes matching standard (%d), got %d", stdBuf.writes, lazyBuf.writes)
 	}
 	for i := range lazyList.Items {
 		if !lazyList.Items[i].IsLazy() {
@@ -508,6 +569,89 @@ func TestPodListProtobufAndTableParity(t *testing.T) {
 		t.Fatalf("EnsureDecodedObject(PodList) mismatch:\n%s", cmp.Diff(stdList, decodedList))
 	}
 	_ = context.Background()
+}
+
+func TestShallowCopyAndConcurrentAccessIsolation(t *testing.T) {
+	_, lazyCodecs := newLazyScheme(t)
+	lazyPBCodec := protobufCodecFor(t, lazyCodecs)
+	lazyJSONCodec := jsonCodecFor(t, lazyCodecs)
+	lazyCBORCodec := cborCodecFor(t, lazyCodecs)
+	lazyDecoder := etcd3.NewDefaultDecoder(lazyPBCodec, storage.APIObjectVersioner{})
+
+	unbound := testPodFixtures()[0].pod.DeepCopy()
+	etcdBytes := encodeRawV1PodToEtcdBytes(t, unbound)
+
+	cached := &lazypod.Pod{}
+	if err := lazyDecoder.Decode(etcdBytes, cached, 500); err != nil {
+		t.Fatalf("lazy Decode failed: %v", err)
+	}
+
+	var workers sync.WaitGroup
+	for g := 0; g < 24; g++ {
+		workers.Add(1)
+		go func(id int) {
+			defer workers.Done()
+			for iter := 0; iter < 20; iter++ {
+				// Simulate Cacher.Get shallow struct copy (reflect.Value.Set).
+				bindCopy := &lazypod.Pod{}
+				reflect.ValueOf(bindCopy).Elem().Set(reflect.ValueOf(cached).Elem())
+				if bindCopy.GetSpecNodeName() != "" {
+					t.Errorf("worker %d: cached pod leaked nodeName %q", id, bindCopy.GetSpecNodeName())
+					return
+				}
+				bindCopy.SetSpecNodeName("worker-node-bound")
+				bindCopy.SetAnnotations(map[string]string{"bound": "true"})
+				bindCopy.UpsertStatusCondition(core.PodCondition{
+					Type:   core.PodScheduled,
+					Status: core.ConditionTrue,
+				})
+
+				delCopy := &lazypod.Pod{}
+				reflect.ValueOf(delCopy).Elem().Set(reflect.ValueOf(cached).Elem())
+				now := metav1.Now()
+				zero := int64(0)
+				_ = delCopy.GetDeletionGracePeriodSeconds()
+				delCopy.SetDeletionTimestamp(&now)
+				delCopy.SetDeletionGracePeriodSeconds(&zero)
+				if id%2 == 0 {
+					delCopy.SetDeletionGracePeriodSeconds(nil)
+				}
+				_ = delCopy.GetDeletionGracePeriodSeconds()
+
+				readCopy := &lazypod.Pod{}
+				reflect.ValueOf(readCopy).Elem().Set(reflect.ValueOf(cached).Elem())
+				var buf bytes.Buffer
+				if err := lazyPBCodec.Encode(readCopy, &buf); err != nil {
+					t.Errorf("worker %d PB Encode failed: %v", id, err)
+					return
+				}
+				buf.Reset()
+				if err := lazyJSONCodec.Encode(readCopy, &buf); err != nil {
+					t.Errorf("worker %d JSON Encode failed: %v", id, err)
+					return
+				}
+				buf.Reset()
+				if err := lazyCBORCodec.Encode(readCopy, &buf); err != nil {
+					t.Errorf("worker %d CBOR Encode failed: %v", id, err)
+					return
+				}
+			}
+		}(g)
+	}
+	workers.Wait()
+
+	if !cached.IsLazy() {
+		t.Fatalf("expected cached pod to remain lazy")
+	}
+	if got := cached.GetSpecNodeName(); got != "" {
+		t.Fatalf("cached pod nodeName mutated to %q, want empty", got)
+	}
+	if got := cached.GetDeletionTimestamp(); got != nil {
+		t.Fatalf("cached pod deletionTimestamp mutated to %v, want nil", got)
+	}
+	if got := cached.GetDeletionGracePeriodSeconds(); got != nil {
+		t.Fatalf("cached pod deletionGracePeriodSeconds mutated to %v, want nil", got)
+	}
 }
 
 func BenchmarkLazyPodVsStandardPod(b *testing.B) {
@@ -666,4 +810,3 @@ func BenchmarkLazyPodVsStandardPod(b *testing.B) {
 		}
 	})
 }
-
