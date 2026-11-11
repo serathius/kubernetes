@@ -132,9 +132,12 @@ func (p *Plugin) Admit(ctx context.Context, attributes admission.Attributes, o a
 		return nil
 	}
 
-	pod, ok := attributes.GetObject().(api.PodAccessor)
+	pod, ok := admission.RawObjectFrom(attributes).(api.PodAccessor)
 	if !ok {
-		return errors.NewBadRequest(fmt.Sprintf("expected *api.Pod but got %T", attributes.GetObject()))
+		pod, ok = attributes.GetObject().(api.PodAccessor)
+		if !ok {
+			return errors.NewBadRequest(fmt.Sprintf("expected *api.Pod but got %T", attributes.GetObject()))
+		}
 	}
 
 	pod.EnsureDefaultFaultTolerations(p.notReadyToleration, p.unreachableToleration)

@@ -181,6 +181,13 @@ func (p *podEvaluator) Handles(a admission.Attributes) bool {
 	switch a.GetSubresource() {
 	case "":
 		if op == admission.Update {
+			if podAcc, ok1 := admission.RawObjectFrom(a).(api.PodAccessor); ok1 {
+				if oldAcc, ok2 := admission.RawOldObjectFrom(a).(api.PodAccessor); ok2 {
+					oldADS := oldAcc.GetSpecActiveDeadlineSeconds()
+					newADS := podAcc.GetSpecActiveDeadlineSeconds()
+					return (oldADS != nil && *oldADS >= 0) != (newADS != nil && *newADS >= 0)
+				}
+			}
 			pod, err1 := toExternalPodOrError(a.GetObject())
 			oldPod, err2 := toExternalPodOrError(a.GetOldObject())
 			if err1 != nil || err2 != nil {

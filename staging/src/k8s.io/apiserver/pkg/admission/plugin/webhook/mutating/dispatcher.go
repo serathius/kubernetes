@@ -103,6 +103,9 @@ func (v *versionedAttributeAccessor) VersionedAttribute(gvk schema.GroupVersionK
 var _ generic.Dispatcher = &mutatingDispatcher{}
 
 func (a *mutatingDispatcher) Dispatch(ctx context.Context, attr admission.Attributes, o admission.ObjectInterfaces, hooks []webhook.WebhookAccessor) error {
+	if len(hooks) == 0 {
+		return nil
+	}
 	reinvokeCtx := attr.GetReinvocationContext()
 	var webhookReinvokeCtx *webhookReinvokeContext
 	if v := reinvokeCtx.Value(PluginName); v != nil {
@@ -112,13 +115,15 @@ func (a *mutatingDispatcher) Dispatch(ctx context.Context, attr admission.Attrib
 		reinvokeCtx.SetValue(PluginName, webhookReinvokeCtx)
 	}
 
-	if reinvokeCtx.IsReinvoke() && webhookReinvokeCtx.IsOutputChangedSinceLastWebhookInvocation(attr.GetObject()) {
+	if reinvokeCtx.IsReinvoke() && len(webhookReinvokeCtx.previouslyInvokedReinvocableWebhooks) > 0 && webhookReinvokeCtx.IsOutputChangedSinceLastWebhookInvocation(attr.GetObject()) {
 		// If the object has changed, we know the in-tree plugin re-invocations have mutated the object,
 		// and we need to reinvoke all eligible webhooks.
 		webhookReinvokeCtx.RequireReinvokingPreviouslyInvokedPlugins()
 	}
 	defer func() {
-		webhookReinvokeCtx.SetLastWebhookInvocationOutput(attr.GetObject())
+		if len(webhookReinvokeCtx.previouslyInvokedReinvocableWebhooks) > 0 {
+			webhookReinvokeCtx.SetLastWebhookInvocationOutput(attr.GetObject())
+		}
 	}()
 	v := &versionedAttributeAccessor{
 		attr:             attr,

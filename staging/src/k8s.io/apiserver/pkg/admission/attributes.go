@@ -29,14 +29,16 @@ import (
 )
 
 type attributesRecord struct {
-	kind        schema.GroupVersionKind
-	namespace   string
-	name        string
-	resource    schema.GroupVersionResource
-	subresource string
-	operation   Operation
-	options     runtime.Object
-	dryRun      bool
+	kind          schema.GroupVersionKind
+	namespace     string
+	name          string
+	resource      schema.GroupVersionResource
+	subresource   string
+	operation     Operation
+	options       runtime.Object
+	dryRun        bool
+	rawObject     runtime.Object
+	rawOldObject  runtime.Object
 	object        runtime.Object
 	oldObject     runtime.Object
 	objectOnce    sync.Once
@@ -66,6 +68,8 @@ func NewAttributesRecord(object runtime.Object, oldObject runtime.Object, kind s
 		operation:           operation,
 		options:             operationOptions,
 		dryRun:              dryRun,
+		rawObject:           object,
+		rawOldObject:        oldObject,
 		object:              object,
 		oldObject:           oldObject,
 		userInfo:            userInfo,
@@ -125,6 +129,39 @@ func (record *attributesRecord) GetOldObject() runtime.Object {
 		})
 	}
 	return record.oldObject
+}
+
+func (record *attributesRecord) GetRawObject() runtime.Object {
+	return record.rawObject
+}
+
+func (record *attributesRecord) GetRawOldObject() runtime.Object {
+	return record.rawOldObject
+}
+
+// RawObjectGetter can be implemented by Attributes to expose the underlying
+// object and oldObject without forcing LazyObject decoding.
+type RawObjectGetter interface {
+	GetRawObject() runtime.Object
+	GetRawOldObject() runtime.Object
+}
+
+// RawObjectFrom returns the underlying object without forcing LazyObject decoding
+// if a implements RawObjectGetter, or falls back to a.GetObject().
+func RawObjectFrom(a Attributes) runtime.Object {
+	if raw, ok := a.(RawObjectGetter); ok {
+		return raw.GetRawObject()
+	}
+	return a.GetObject()
+}
+
+// RawOldObjectFrom returns the underlying oldObject without forcing LazyObject decoding
+// if a implements RawObjectGetter, or falls back to a.GetOldObject().
+func RawOldObjectFrom(a Attributes) runtime.Object {
+	if raw, ok := a.(RawObjectGetter); ok {
+		return raw.GetRawOldObject()
+	}
+	return a.GetOldObject()
 }
 
 func (record *attributesRecord) GetUserInfo() user.Info {

@@ -66,11 +66,6 @@ type DeclarativeValidation struct {
 }
 
 func (d DeclarativeValidation) ValidateDeclaratively(ctx context.Context, obj, oldObj runtime.Object, validationErrs field.ErrorList, opType operation.Type, config DeclarativeValidationConfig) field.ErrorList {
-	if lazyObj, ok := obj.(runtime.LazyObject); ok && !lazyObj.IsDecoded() {
-		if lazyOld, ok := oldObj.(runtime.LazyObject); ok && !lazyOld.IsDecoded() {
-			return validationErrs
-		}
-	}
 	if d.Scheme == nil {
 		validationErrs = append(validationErrs, field.InternalError(nil, fmt.Errorf("cannot validate declaratively without a scheme")))
 		return validationErrs

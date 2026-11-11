@@ -17,16 +17,21 @@ limitations under the License.
 package lazypod
 
 import (
+	"bytes"
+	"context"
+	"fmt"
 	"unsafe"
 
 	v1 "k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
+	"k8s.io/apimachinery/pkg/api/operation"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/conversion"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/kubernetes/pkg/apis/core"
 	corev1 "k8s.io/kubernetes/pkg/apis/core/v1"
 )
@@ -34,6 +39,14 @@ import (
 func init() {
 	utilruntime.Must(apiequality.Semantic.AddFuncs(
 		func(a, b Pod) bool {
+			if a.TypeMeta != b.TypeMeta {
+				return false
+			}
+			if a.wire != nil && a.decoded == nil && b.wire != nil && b.decoded == nil {
+				if bytes.Equal(a.wire.Bytes(), b.wire.Bytes()) {
+					return true
+				}
+			}
 			da, err := a.EnsureDecoded()
 			if err != nil {
 				return false
@@ -42,9 +55,17 @@ func init() {
 			if err != nil {
 				return false
 			}
-			return a.TypeMeta == b.TypeMeta && apiequality.Semantic.DeepEqual(da, db)
+			return apiequality.Semantic.DeepEqual(da, db)
 		},
 		func(a, b V1Pod) bool {
+			if a.TypeMeta != b.TypeMeta {
+				return false
+			}
+			if a.wire != nil && a.decoded == nil && b.wire != nil && b.decoded == nil {
+				if bytes.Equal(a.wire.Bytes(), b.wire.Bytes()) {
+					return true
+				}
+			}
 			da, err := a.EnsureDecoded()
 			if err != nil {
 				return false
@@ -53,9 +74,83 @@ func init() {
 			if err != nil {
 				return false
 			}
-			return a.TypeMeta == b.TypeMeta && apiequality.Semantic.DeepEqual(da, db)
+			return apiequality.Semantic.DeepEqual(da, db)
 		},
 	))
+}
+
+func decodeV1PodNonMutating(p *V1Pod) (*v1.Pod, error) {
+	if p == nil {
+		return nil, nil
+	}
+	if p.decoded != nil {
+		return p.decoded, nil
+	}
+	if p.wire == nil {
+		return &v1.Pod{TypeMeta: p.TypeMeta}, nil
+	}
+	dec, err := p.wire.DecodeToV1Pod()
+	if err != nil {
+		return nil, err
+	}
+	dec.TypeMeta = p.TypeMeta
+	return dec, nil
+}
+
+func validateV1PodDeclaratively(ctx context.Context, op operation.Operation, obj, oldObj interface{}) field.ErrorList {
+	switch op.Request.SubresourcePath() {
+	case "/", "/ephemeralcontainers", "/eviction", "/resize", "/status":
+	default:
+		return field.ErrorList{
+			field.InternalError(nil, fmt.Errorf("no validation found for %T, subresource: %v", obj, op.Request.SubresourcePath())),
+		}
+	}
+
+	newLazy, ok := obj.(*V1Pod)
+	if !ok || newLazy == nil {
+		return nil
+	}
+	var oldLazy *V1Pod
+	if oldObj != nil {
+		oldLazy, _ = oldObj.(*V1Pod)
+	}
+
+	if op.Type == operation.Update && oldLazy != nil && newLazy.IsLazy() && oldLazy.IsLazy() && newLazy.HasEqualSpecWireBytes(oldLazy) {
+		projNew := &v1.Pod{TypeMeta: newLazy.TypeMeta}
+		projOld := &v1.Pod{TypeMeta: oldLazy.TypeMeta}
+		metaEqual := !newLazy.wire.meta.IsDirty() && !oldLazy.wire.meta.IsDirty() &&
+			bytes.Equal(newLazy.wire.meta.Bytes(), oldLazy.wire.meta.Bytes())
+		if !metaEqual {
+			newLazy.ExtractObjectMetaInto(&projNew.ObjectMeta)
+			oldLazy.ExtractObjectMetaInto(&projOld.ObjectMeta)
+		}
+		newStatusBytes := newLazy.wire.EffectiveSubMessage(podFieldStatus)
+		oldStatusBytes := oldLazy.wire.EffectiveSubMessage(podFieldStatus)
+		if !bytes.Equal(newStatusBytes, oldStatusBytes) {
+			if err := newLazy.wire.ExtractV1StatusInto(&projNew.Status); err != nil {
+				return field.ErrorList{field.InternalError(field.NewPath("status"), err)}
+			}
+			if err := oldLazy.wire.ExtractV1StatusInto(&projOld.Status); err != nil {
+				return field.ErrorList{field.InternalError(field.NewPath("status"), err)}
+			}
+		}
+		return corev1.Validate_Pod(ctx, op, nil, projNew, projOld)
+	}
+
+	decNew, err := decodeV1PodNonMutating(newLazy)
+	if err != nil {
+		return field.ErrorList{field.InternalError(nil, err)}
+	}
+	var decOld *v1.Pod
+	if oldLazy != nil {
+		decOld, err = decodeV1PodNonMutating(oldLazy)
+		if err != nil {
+			return field.ErrorList{field.InternalError(nil, err)}
+		}
+	} else if oldPod, ok := oldObj.(*v1.Pod); ok {
+		decOld = oldPod
+	}
+	return corev1.Validate_Pod(ctx, op, nil, decNew, decOld)
 }
 
 // Install registers the lazy V1Pod (v1, Kind="Pod") and internal lazy Pod (__internal, Kind="Pod")
@@ -69,6 +164,7 @@ func Install(scheme *runtime.Scheme) error {
 	scheme.AddTypeDefaultingFunc(&V1Pod{}, func(obj interface{}) {
 		SetObjectDefaults_V1Pod(obj.(*V1Pod))
 	})
+	scheme.AddValidationFunc((*V1Pod)(nil), validateV1PodDeclaratively)
 
 	if err := scheme.AddGeneratedConversionFunc((*V1Pod)(nil), (*Pod)(nil), func(a, b interface{}, scope conversion.Scope) error {
 		return Convert_v1_Pod_To_core_Pod(a.(*V1Pod), b.(*Pod), scope)
@@ -87,6 +183,54 @@ func Install(scheme *runtime.Scheme) error {
 	}
 	if err := scheme.AddGeneratedConversionFunc((*V1PodList)(nil), (*PodList)(nil), func(a, b interface{}, scope conversion.Scope) error {
 		return Convert_v1_PodList_To_core_PodList(a.(*V1PodList), b.(*PodList), scope)
+	}); err != nil {
+		return err
+	}
+	if err := scheme.AddGeneratedConversionFunc((*V1Pod)(nil), (*core.Pod)(nil), func(a, b interface{}, _ conversion.Scope) error {
+		dec, err := a.(*V1Pod).EnsureDecoded()
+		if err != nil {
+			return err
+		}
+		out := b.(*core.Pod)
+		tm := out.TypeMeta
+		*out = *(*core.Pod)(unsafe.Pointer(dec))
+		out.TypeMeta = tm
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := scheme.AddGeneratedConversionFunc((*core.Pod)(nil), (*V1Pod)(nil), func(a, b interface{}, _ conversion.Scope) error {
+		out := b.(*V1Pod)
+		v1Copy := *(*v1.Pod)(unsafe.Pointer(a.(*core.Pod)))
+		v1Copy.TypeMeta = out.TypeMeta
+		out.wire = nil
+		out.wireOwn = nil
+		out.decoded = &v1Copy
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := scheme.AddGeneratedConversionFunc((*Pod)(nil), (*v1.Pod)(nil), func(a, b interface{}, _ conversion.Scope) error {
+		dec, err := a.(*Pod).EnsureDecoded()
+		if err != nil {
+			return err
+		}
+		out := b.(*v1.Pod)
+		tm := out.TypeMeta
+		*out = *(*v1.Pod)(unsafe.Pointer(dec))
+		out.TypeMeta = tm
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := scheme.AddGeneratedConversionFunc((*v1.Pod)(nil), (*Pod)(nil), func(a, b interface{}, _ conversion.Scope) error {
+		out := b.(*Pod)
+		podCopy := *(*core.Pod)(unsafe.Pointer(a.(*v1.Pod)))
+		podCopy.TypeMeta = out.TypeMeta
+		out.wire = nil
+		out.wireOwn = nil
+		out.decoded = &podCopy
+		return nil
 	}); err != nil {
 		return err
 	}

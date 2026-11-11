@@ -164,6 +164,11 @@ func (r *REST) Categories() []string {
 	return []string{"all"}
 }
 
+// AllowsLazyUpdate enables lazy wire-backed updates on pods.
+func (r *REST) AllowsLazyUpdate() bool {
+	return true
+}
+
 // BindingREST implements the REST endpoint for binding pods to nodes when etcd is in use.
 type BindingREST struct {
 	store *genericregistry.Store
@@ -384,7 +389,12 @@ type StatusREST struct {
 
 // New creates a new pod resource
 func (r *StatusREST) New() runtime.Object {
-	return &api.Pod{}
+	return r.store.New()
+}
+
+// AllowsLazyUpdate enables lazy wire-backed updates on pods/status.
+func (r *StatusREST) AllowsLazyUpdate() bool {
+	return true
 }
 
 // Destroy cleans up resources on shutdown.
@@ -428,7 +438,7 @@ func (r *EphemeralContainersREST) Get(ctx context.Context, name string, options 
 
 // New creates a new pod resource
 func (r *EphemeralContainersREST) New() runtime.Object {
-	return &api.Pod{}
+	return r.store.New()
 }
 
 // Destroy cleans up resources on shutdown.
@@ -458,7 +468,7 @@ func (r *ResizeREST) Get(ctx context.Context, name string, options *metav1.GetOp
 
 // New creates a new pod resource
 func (r *ResizeREST) New() runtime.Object {
-	return &api.Pod{}
+	return r.store.New()
 }
 
 // Destroy cleans up resources on shutdown.

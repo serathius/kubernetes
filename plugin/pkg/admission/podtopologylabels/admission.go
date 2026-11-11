@@ -153,7 +153,7 @@ func (p *Plugin) admitBinding(ctx context.Context, a admission.Attributes, o adm
 }
 
 func (p *Plugin) admitPod(ctx context.Context, a admission.Attributes, o admission.ObjectInterfaces) error {
-	pod := podutil.MustAccessor(a.GetObject())
+	pod := podutil.MustAccessor(admission.RawObjectFrom(a))
 	if pod.GetSpecNodeName() == "" {
 		// pod has not been scheduled yet
 		return nil
@@ -228,9 +228,10 @@ func (p *Plugin) shouldAdmit(a admission.Attributes) (bool, admitFunc, error) {
 
 	switch a.GetSubresource() {
 	case "": // regular Pod endpoint
-		_, err := podutil.Accessor(a.GetObject())
+		rawObj := admission.RawObjectFrom(a)
+		_, err := podutil.Accessor(rawObj)
 		if err != nil {
-			return false, nil, fmt.Errorf("expected Pod but got %T", a.GetObject())
+			return false, nil, fmt.Errorf("expected Pod but got %T", rawObj)
 		}
 		return true, p.admitPod, nil
 	case "binding":

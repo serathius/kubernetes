@@ -1541,18 +1541,25 @@ func TestLazyPodZeroDecodeWritePaths(t *testing.T) {
 		t.Fatalf("unexpected error from REST storage: %v", err)
 	}
 	storage := podStorage.Pod
+	statusStorage := podStorage.Status
 	bindingStorage := podStorage.Binding
 	evictionStorage := podStorage.Eviction
 	defer storage.Store.DestroyFunc()
 	ctx := genericregistrytest.NewNamespaceScopeContext(storage.Store, metav1.NamespaceDefault)
 
-	// 1. Create an unscheduled pod.
+	// 1. Create an unscheduled pod with an ownerReference.
 	podIn := validNewPod()
+	podIn.OwnerReferences = []metav1.OwnerReference{{
+		APIVersion: "apps/v1",
+		Kind:       "ReplicaSet",
+		Name:       "rs-1",
+		UID:        types.UID("11111111-1111-1111-1111-111111111111"),
+	}}
 	if _, err := storage.Create(ctx, podIn, rest.ValidateAllObjectFunc, &metav1.CreateOptions{}); err != nil {
 		t.Fatalf("Create failed: %v", err)
 	}
 
-	// Track every LazyObject allocated by storage.Store and evictionStorage.store from this point on.
+	// Track every LazyObject allocated by storage.Store, statusStorage.store, and evictionStorage.store from this point on.
 	var allocated []runtime.LazyObject
 	origNewFunc := storage.Store.NewFunc
 	trackingNewFunc := func() runtime.Object {
@@ -1563,6 +1570,7 @@ func TestLazyPodZeroDecodeWritePaths(t *testing.T) {
 		return obj
 	}
 	storage.Store.NewFunc = trackingNewFunc
+	statusStorage.store.NewFunc = trackingNewFunc
 	evictionStorage.store.(*genericregistry.Store).NewFunc = trackingNewFunc
 
 	// 2. Bind the pod via BindingREST.
@@ -1592,6 +1600,168 @@ func TestLazyPodZeroDecodeWritePaths(t *testing.T) {
 	if boundAcc.GetSpecNodeName() != "node-1" {
 		t.Fatalf("expected spec.nodeName=node-1, got %q", boundAcc.GetSpecNodeName())
 	}
+
+	// 2b. Update status via StatusREST using a lazy wire-decoded Pod without decoding PodSpec.
+	statusReqV1 := &v1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace:         metav1.NamespaceDefault,
+			Name:              "foo",
+			DeletionTimestamp: &metav1.Time{Time: time.Now()},
+			OwnerReferences:   nil, // StatusREST must preserve existing OwnerReferences
+		},
+		Status: v1.PodStatus{
+			Phase:   v1.PodRunning,
+			PodIP:   "10.244.0.9",
+			PodIPs:  []v1.PodIP{{IP: "10.244.0.9"}},
+			Message: "kubelet-ready",
+			// Omit QOSClass so StatusREST backfills oldPod.Status.QOSClass.
+		},
+	}
+	statusReqBytes, err := runtime.Encode(etcdStorage.Codec, statusReqV1)
+	if err != nil {
+		t.Fatalf("encode statusReqV1 failed: %v", err)
+	}
+	lazyStatusInput := statusStorage.New()
+	if err := runtime.DecodeInto(etcdStorage.Codec, statusReqBytes, lazyStatusInput); err != nil {
+		t.Fatalf("decode lazyStatusInput failed: %v", err)
+	}
+	statusOut, _, err := statusStorage.Update(ctx, "foo", rest.DefaultUpdatedObjectInfo(lazyStatusInput),
+		rest.ValidateAllObjectFunc, rest.ValidateAllObjectUpdateFunc, false, &metav1.UpdateOptions{})
+	if err != nil {
+		t.Fatalf("StatusREST.Update failed: %v", err)
+	}
+	for i, obj := range allocated {
+		if obj.IsDecoded() {
+			t.Fatalf("expected zero struct decodes during StatusREST.Update, but allocated object %d was decoded", i)
+		}
+	}
+	statusOutAcc := statusOut.(api.PodAccessor)
+	if statusOutAcc.GetStatusPhase() != api.PodRunning || statusOutAcc.GetStatusFirstPodIP() != "10.244.0.9" {
+		t.Fatalf("unexpected status after lazy StatusREST.Update: phase=%q ip=%q", statusOutAcc.GetStatusPhase(), statusOutAcc.GetStatusFirstPodIP())
+	}
+	if statusOutAcc.HasDeletionTimestamp() {
+		t.Fatalf("expected StatusREST.Update to clear DeletionTimestamp on input")
+	}
+	if len(statusOutAcc.GetOwnerReferences()) != 1 || statusOutAcc.GetOwnerReferences()[0].Name != "rs-1" {
+		t.Fatalf("expected StatusREST.Update to preserve OwnerReferences, got %#v", statusOutAcc.GetOwnerReferences())
+	}
+
+	// Verify StatusREST.Update still enforces status validation on lazy inputs (e.g. mutating immutable QOSClass).
+	badStatusV1 := statusReqV1.DeepCopy()
+	badStatusV1.Status.QOSClass = v1.PodQOSGuaranteed
+	badStatusBytes, err := runtime.Encode(etcdStorage.Codec, badStatusV1)
+	if err != nil {
+		t.Fatalf("encode badStatusV1 failed: %v", err)
+	}
+	badLazyStatus := statusStorage.New()
+	if err := runtime.DecodeInto(etcdStorage.Codec, badStatusBytes, badLazyStatus); err != nil {
+		t.Fatalf("decode badLazyStatus failed: %v", err)
+	}
+	if _, _, err := statusStorage.Update(ctx, "foo", rest.DefaultUpdatedObjectInfo(badLazyStatus),
+		rest.ValidateAllObjectFunc, rest.ValidateAllObjectUpdateFunc, false, &metav1.UpdateOptions{}); !errors.IsInvalid(err) {
+		t.Fatalf("expected Invalid error for immutable qosClass change on lazy status update, got %v", err)
+	}
+	// Reset allocated tracking because validation-error fallback may decode bad inputs.
+	allocated = allocated[:0]
+
+	// 2c. Apply a metadata-only update via external V1Pod LazyScopedPatcher + ConvertToVersion (SMP path) without decoding PodSpec.
+	metaUpdated, _, err := storage.Update(ctx, "foo", rest.DefaultUpdatedObjectInfo(nil, func(_ context.Context, _, oldObj runtime.Object) (runtime.Object, error) {
+		v1Obj, err := legacyscheme.Scheme.UnsafeConvertToVersion(oldObj, v1.SchemeGroupVersion)
+		if err != nil {
+			return nil, err
+		}
+		scoped := v1Obj.(runtime.LazyScopedPatcher)
+		baseObj, err := scoped.ExtractScopedPatchBase(true, false, true)
+		if err != nil {
+			return nil, err
+		}
+		metaAcc := baseObj.(metav1.Object)
+		ann := metaAcc.GetAnnotations()
+		if ann == nil {
+			ann = map[string]string{}
+		}
+		ann["patched-meta"] = "v1"
+		metaAcc.SetAnnotations(ann)
+		splicedV1, err := scoped.SpliceScopedPatchResult(baseObj, true, false)
+		if err != nil {
+			return nil, err
+		}
+		hubObj, err := legacyscheme.Scheme.UnsafeConvertToVersion(splicedV1, api.SchemeGroupVersion)
+		if err != nil {
+			return nil, err
+		}
+		if lazyHub, ok := hubObj.(runtime.LazyObject); !ok || lazyHub.IsDecoded() {
+			return nil, fmt.Errorf("expected undecoded lazy hub Pod from UnsafeConvertToVersion, got %T (decoded=%v)", hubObj, ok && lazyHub.IsDecoded())
+		}
+		return hubObj, nil
+	}), rest.ValidateAllObjectFunc, rest.ValidateAllObjectUpdateFunc, false, &metav1.UpdateOptions{})
+	if err != nil {
+		t.Fatalf("metadata-only Update failed: %v", err)
+	}
+	for i, obj := range allocated {
+		if obj.IsDecoded() {
+			t.Fatalf("expected zero struct decodes during metadata-only Update, but allocated object %d was decoded", i)
+		}
+	}
+	metaAcc := metaUpdated.(api.PodAccessor)
+	if metaAcc.GetAnnotations()["patched-meta"] != "v1" {
+		t.Fatalf("expected patched-meta=v1, got %#v", metaAcc.GetAnnotations())
+	}
+	if metaAcc.GetGeneration() != 1 {
+		t.Fatalf("expected generation=1 on metadata-only Update, got %d", metaAcc.GetGeneration())
+	}
+	if metaAcc.GetStatusPhase() != api.PodRunning {
+		t.Fatalf("expected status.phase=Running preserved on metadata-only Update, got %q", metaAcc.GetStatusPhase())
+	}
+
+	// 2d. Apply a main-resource Protobuf PUT update with unchanged Spec (and stale client Status) without decoding PodSpec.
+	if !storage.AllowsLazyUpdate() {
+		t.Fatalf("expected main-resource Pod REST storage to allow lazy updates")
+	}
+	putBaseBytes, err := runtime.Encode(etcdStorage.Codec, metaUpdated)
+	if err != nil {
+		t.Fatalf("encode metaUpdated failed: %v", err)
+	}
+	putReqV1 := &v1.Pod{}
+	if err := runtime.DecodeInto(etcdStorage.Codec, putBaseBytes, putReqV1); err != nil {
+		t.Fatalf("decode putReqV1 failed: %v", err)
+	}
+	if putReqV1.Annotations == nil {
+		putReqV1.Annotations = map[string]string{}
+	}
+	putReqV1.Annotations["put-meta"] = "v2"
+	// Stale status in main-resource PUT must be overwritten with live Status without decoding Spec.
+	putReqV1.Status.Phase = v1.PodPending
+	putReqBytes, err := runtime.Encode(etcdStorage.Codec, putReqV1)
+	if err != nil {
+		t.Fatalf("encode putReqV1 failed: %v", err)
+	}
+	allocated = allocated[:0]
+	lazyPutReq := storage.New()
+	if err := runtime.DecodeInto(etcdStorage.Codec, putReqBytes, lazyPutReq); err != nil {
+		t.Fatalf("decode lazyPutReq failed: %v", err)
+	}
+	putUpdated, _, err := storage.Update(ctx, "foo", rest.DefaultUpdatedObjectInfo(lazyPutReq),
+		rest.ValidateAllObjectFunc, rest.ValidateAllObjectUpdateFunc, false, &metav1.UpdateOptions{})
+	if err != nil {
+		t.Fatalf("main-resource lazy PUT Update failed: %v", err)
+	}
+	for i, obj := range allocated {
+		if obj.IsDecoded() {
+			t.Fatalf("expected zero struct decodes during main-resource lazy PUT with unchanged Spec, but allocated object %d was decoded", i)
+		}
+	}
+	putAcc := putUpdated.(api.PodAccessor)
+	if putAcc.GetAnnotations()["put-meta"] != "v2" {
+		t.Fatalf("expected put-meta=v2, got %#v", putAcc.GetAnnotations())
+	}
+	if putAcc.GetStatusPhase() != api.PodRunning {
+		t.Fatalf("expected status.phase=Running preserved on main-resource PUT, got %q", putAcc.GetStatusPhase())
+	}
+	if putAcc.GetGeneration() != 1 {
+		t.Fatalf("expected generation=1 on unchanged-Spec PUT, got %d", putAcc.GetGeneration())
+	}
+	allocated = allocated[:0]
 
 	// 3. Evict the bound pod via EvictionREST (upserts DisruptionTarget condition + graceful Delete).
 	grace := int64(30)

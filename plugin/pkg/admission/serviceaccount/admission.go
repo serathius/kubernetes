@@ -142,11 +142,11 @@ func (s *Plugin) ValidateInitialization() error {
 
 // Admit verifies if the pod should be admitted
 func (s *Plugin) Admit(ctx context.Context, a admission.Attributes, o admission.ObjectInterfaces) (err error) {
-	if shouldIgnore(a) {
-		return nil
-	}
 	if a.GetOperation() != admission.Create {
 		// we only mutate pods during create requests
+		return nil
+	}
+	if shouldIgnore(a) {
 		return nil
 	}
 	pod := a.GetObject().(*api.Pod)
@@ -184,6 +184,10 @@ func (s *Plugin) Admit(ctx context.Context, a admission.Attributes, o admission.
 
 // Validate the data we obtained
 func (s *Plugin) Validate(ctx context.Context, a admission.Attributes, o admission.ObjectInterfaces) (err error) {
+	if a.GetOperation() != admission.Create && !(a.GetOperation() == admission.Update && a.GetSubresource() == "ephemeralcontainers") {
+		// we only validate pod specs during create or ephemeralcontainers update requests
+		return nil
+	}
 	if shouldIgnore(a) {
 		return nil
 	}
@@ -192,11 +196,6 @@ func (s *Plugin) Validate(ctx context.Context, a admission.Attributes, o admissi
 
 	if a.GetOperation() == admission.Update && a.GetSubresource() == "ephemeralcontainers" {
 		return s.limitEphemeralContainerSecretReferences(pod, a)
-	}
-
-	if a.GetOperation() != admission.Create {
-		// we only validate pod specs during create requests
-		return nil
 	}
 
 	// Mirror pods have restrictions on what they can reference

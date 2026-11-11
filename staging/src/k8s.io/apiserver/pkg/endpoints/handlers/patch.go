@@ -334,6 +334,45 @@ type jsonPatcher struct {
 }
 
 func (p *jsonPatcher) applyPatchToCurrentObject(requestContext context.Context, currentObject runtime.Object) (runtime.Object, error) {
+	if p.options == nil {
+		// Provide a more informative error for the crash that would
+		// happen on the next line
+		panic("PatchOptions required but not provided")
+	}
+	if scoped, ok := currentObject.(runtime.LazyScopedPatcher); ok && !scoped.IsDecoded() {
+		if includeMetadata, includeStatus, dropManagedFields, scopedOK := isScopedJSPatch(p.patchBytes, p.patchType, p.subresource); scopedOK {
+			baseObj, err := scoped.ExtractScopedPatchBase(includeMetadata, includeStatus, dropManagedFields)
+			if err != nil {
+				return nil, err
+			}
+			currentObjJS, err := runtime.Encode(p.codec, baseObj)
+			if err != nil {
+				return nil, err
+			}
+			patchedObjJS, appliedStrictErrs, err := p.applyJSPatch(currentObjJS)
+			if err != nil {
+				return nil, err
+			}
+			decodedTarget, err := runtime.EnsureDecodedObject(p.restPatcher.New())
+			if err != nil {
+				return nil, err
+			}
+			if err := p.decodePatchedJS(requestContext, patchedObjJS, appliedStrictErrs, decodedTarget); err != nil {
+				return nil, err
+			}
+			objToUpdate, err := scoped.SpliceScopedPatchResult(decodedTarget, includeMetadata, includeStatus)
+			if err != nil {
+				return nil, err
+			}
+			return p.fieldManager.UpdateNoErrors(currentObject, objToUpdate, managerOrUserAgent(p.options.FieldManager, p.userAgent)), nil
+		}
+	}
+
+	var err error
+	currentObject, err = runtime.EnsureDecodedObject(currentObject)
+	if err != nil {
+		return nil, err
+	}
 	// Encode will convert & return a versioned object in JSON.
 	currentObjJS, err := runtime.Encode(p.codec, currentObject)
 	if err != nil {
@@ -348,6 +387,18 @@ func (p *jsonPatcher) applyPatchToCurrentObject(requestContext context.Context, 
 
 	// Construct the resulting typed, unversioned object.
 	objToUpdate := p.restPatcher.New()
+	if err := p.decodePatchedJS(requestContext, patchedObjJS, appliedStrictErrs, objToUpdate); err != nil {
+		return nil, err
+	}
+	objToUpdate, err = runtime.EnsureDecodedObject(objToUpdate)
+	if err != nil {
+		return nil, err
+	}
+	objToUpdate = p.fieldManager.UpdateNoErrors(currentObject, objToUpdate, managerOrUserAgent(p.options.FieldManager, p.userAgent))
+	return objToUpdate, nil
+}
+
+func (p *jsonPatcher) decodePatchedJS(requestContext context.Context, patchedObjJS []byte, appliedStrictErrs []error, objToUpdate runtime.Object) error {
 	if err := runtime.DecodeInto(p.codec, patchedObjJS, objToUpdate); err != nil {
 		strictError, isStrictError := runtime.AsStrictDecodingError(err)
 		switch {
@@ -355,14 +406,14 @@ func (p *jsonPatcher) applyPatchToCurrentObject(requestContext context.Context, 
 			// disregard any appliedStrictErrs, because it's an incomplete
 			// list of strict errors given that we don't know what fields were
 			// unknown because DecodeInto failed. Non-strict errors trump in this case.
-			return nil, errors.NewInvalid(schema.GroupKind{}, "", field.ErrorList{
+			return errors.NewInvalid(schema.GroupKind{}, "", field.ErrorList{
 				field.Invalid(field.NewPath("patch"), string(patchedObjJS), err.Error()),
 			})
 		case p.validationDirective == metav1.FieldValidationWarn:
 			addStrictDecodingWarnings(requestContext, append(appliedStrictErrs, strictError.Errors()...))
 		default:
 			strictDecodingError := runtime.NewStrictDecodingError(append(appliedStrictErrs, strictError.Errors()...))
-			return nil, errors.NewInvalid(schema.GroupKind{}, "", field.ErrorList{
+			return errors.NewInvalid(schema.GroupKind{}, "", field.ErrorList{
 				field.Invalid(field.NewPath("patch"), string(patchedObjJS), strictDecodingError.Error()),
 			})
 		}
@@ -371,23 +422,12 @@ func (p *jsonPatcher) applyPatchToCurrentObject(requestContext context.Context, 
 		case p.validationDirective == metav1.FieldValidationWarn:
 			addStrictDecodingWarnings(requestContext, appliedStrictErrs)
 		default:
-			return nil, errors.NewInvalid(schema.GroupKind{}, "", field.ErrorList{
+			return errors.NewInvalid(schema.GroupKind{}, "", field.ErrorList{
 				field.Invalid(field.NewPath("patch"), string(patchedObjJS), runtime.NewStrictDecodingError(appliedStrictErrs).Error()),
 			})
 		}
 	}
-
-	if p.options == nil {
-		// Provide a more informative error for the crash that would
-		// happen on the next line
-		panic("PatchOptions required but not provided")
-	}
-	objToUpdate, err = runtime.EnsureDecodedObject(objToUpdate)
-	if err != nil {
-		return nil, err
-	}
-	objToUpdate = p.fieldManager.UpdateNoErrors(currentObject, objToUpdate, managerOrUserAgent(p.options.FieldManager, p.userAgent))
-	return objToUpdate, nil
+	return nil
 }
 
 func (p *jsonPatcher) createNewObject(_ context.Context) (runtime.Object, error) {
@@ -461,6 +501,55 @@ type smpPatcher struct {
 }
 
 func (p *smpPatcher) applyPatchToCurrentObject(requestContext context.Context, currentObject runtime.Object) (runtime.Object, error) {
+	patchMap, strictErrs, err := unmarshalSMPPatch(p.patchBytes, p.validationDirective)
+	if err != nil {
+		return nil, err
+	}
+	if lazyCur, ok := currentObject.(runtime.LazyObject); ok && !lazyCur.IsDecoded() {
+		if includeMetadata, includeStatus, scopedOK := isScopedPatchMap(patchMap, p.subresource); scopedOK {
+			currentVersionedObject, err := p.unsafeConvertor.ConvertToVersion(currentObject, p.kind.GroupVersion())
+			if err != nil {
+				return nil, err
+			}
+			if scoped, ok := currentVersionedObject.(runtime.LazyScopedPatcher); ok && !scoped.IsDecoded() {
+				dropManagedFields := !bytes.Contains(p.patchBytes, []byte("managedFields"))
+				baseVersionedObj, err := scoped.ExtractScopedPatchBase(includeMetadata, includeStatus, dropManagedFields)
+				if err != nil {
+					return nil, err
+				}
+				versionedObjToUpdate, err := p.creater.New(p.kind)
+				if err != nil {
+					return nil, err
+				}
+				versionedObjToUpdate, err = runtime.EnsureDecodedObject(versionedObjToUpdate)
+				if err != nil {
+					return nil, err
+				}
+				originalObjMap, err := runtime.DefaultUnstructuredConverter.ToUnstructuredTopLevel(baseVersionedObj, patchMap)
+				if err != nil {
+					return nil, err
+				}
+				reflect.ValueOf(versionedObjToUpdate).Elem().Set(reflect.ValueOf(baseVersionedObj).Elem())
+				if err := applyPatchToObject(requestContext, p.defaulter, originalObjMap, patchMap, versionedObjToUpdate, p.schemaReferenceObj, strictErrs, p.validationDirective, patchMap); err != nil {
+					return nil, err
+				}
+				splicedVersioned, err := scoped.SpliceScopedPatchResult(versionedObjToUpdate, includeMetadata, includeStatus)
+				if err != nil {
+					return nil, err
+				}
+				newObj, err := p.unsafeConvertor.ConvertToVersion(splicedVersioned, p.hubGroupVersion)
+				if err != nil {
+					return nil, err
+				}
+				return p.fieldManager.UpdateNoErrors(currentObject, newObj, managerOrUserAgent(p.options.FieldManager, p.userAgent)), nil
+			}
+		}
+	}
+
+	currentObject, err = runtime.EnsureDecodedObject(currentObject)
+	if err != nil {
+		return nil, err
+	}
 	// Since the patch is applied on versioned objects, we need to convert the
 	// current object to versioned representation first.
 	currentVersionedObject, err := p.unsafeConvertor.ConvertToVersion(currentObject, p.kind.GroupVersion())
@@ -482,7 +571,7 @@ func (p *smpPatcher) applyPatchToCurrentObject(requestContext context.Context, c
 	if err != nil {
 		return nil, err
 	}
-	if err := strategicPatchObject(requestContext, p.defaulter, currentVersionedObject, p.patchBytes, versionedObjToUpdate, p.schemaReferenceObj, p.validationDirective); err != nil {
+	if err := strategicPatchObjectWithMap(requestContext, p.defaulter, currentVersionedObject, patchMap, strictErrs, versionedObjToUpdate, p.schemaReferenceObj, p.validationDirective); err != nil {
 		return nil, err
 	}
 	// Convert the object back to the hub version
@@ -526,6 +615,11 @@ type applyPatcher struct {
 }
 
 func (p *applyPatcher) applyPatchToCurrentObject(requestContext context.Context, obj runtime.Object) (runtime.Object, error) {
+	var err error
+	obj, err = runtime.EnsureDecodedObject(obj)
+	if err != nil {
+		return nil, err
+	}
 	force := false
 	if p.options.Force != nil {
 		force = *p.options.Force
@@ -539,7 +633,7 @@ func (p *applyPatcher) applyPatchToCurrentObject(requestContext context.Context,
 		return nil, errors.NewBadRequest(fmt.Sprintf("error decoding patch: %v", err))
 	}
 
-	obj, err := p.fieldManager.Apply(obj, patchObj, p.options.FieldManager, force)
+	obj, err = p.fieldManager.Apply(obj, patchObj, p.options.FieldManager, force)
 	if err != nil {
 		return obj, err
 	}
@@ -565,6 +659,90 @@ func (p *applyPatcher) createNewObject(requestContext context.Context) (runtime.
 	return p.applyPatchToCurrentObject(requestContext, obj)
 }
 
+func unmarshalSMPPatch(patchBytes []byte, validationDirective string) (map[string]interface{}, []error, error) {
+	patchMap := make(map[string]interface{})
+	if validationDirective == metav1.FieldValidationWarn || validationDirective == metav1.FieldValidationStrict {
+		strictErrs, err := kjson.UnmarshalStrict(patchBytes, &patchMap)
+		if err != nil {
+			return nil, nil, errors.NewBadRequest(err.Error())
+		}
+		return patchMap, strictErrs, nil
+	}
+	if err := kjson.UnmarshalCaseSensitivePreserveInts(patchBytes, &patchMap); err != nil {
+		return nil, nil, errors.NewBadRequest(err.Error())
+	}
+	return patchMap, nil, nil
+}
+
+func isScopedPatchMap(patchMap map[string]interface{}, subresource string) (includeMetadata, includeStatus, ok bool) {
+	if patchMap == nil {
+		return false, false, false
+	}
+	for k, v := range patchMap {
+		if strings.HasPrefix(k, "$") {
+			return false, false, false
+		}
+		switch k {
+		case "metadata":
+			if _, isMap := v.(map[string]interface{}); !isMap {
+				return false, false, false
+			}
+			includeMetadata = true
+		case "status":
+			if subresource != "status" {
+				return false, false, false
+			}
+			if _, isMap := v.(map[string]interface{}); !isMap {
+				return false, false, false
+			}
+			includeStatus = true
+		default:
+			return false, false, false
+		}
+	}
+	return includeMetadata, includeStatus, true
+}
+
+func isScopedJSPatch(patchBytes []byte, patchType types.PatchType, subresource string) (includeMetadata, includeStatus, dropManagedFields, ok bool) {
+	dropManagedFields = !bytes.Contains(patchBytes, []byte("managedFields"))
+	switch patchType {
+	case types.MergePatchType:
+		var patchMap map[string]interface{}
+		if err := json.Unmarshal(patchBytes, &patchMap); err != nil || patchMap == nil {
+			return false, false, false, false
+		}
+		incMeta, incStatus, scopedOK := isScopedPatchMap(patchMap, subresource)
+		return incMeta, incStatus, dropManagedFields, scopedOK
+	case types.JSONPatchType:
+		var ops []jsonPatchOp
+		if err := json.Unmarshal(patchBytes, &ops); err != nil || len(ops) == 0 || len(ops) > maxJSONPatchOperations {
+			return false, false, false, false
+		}
+		checkPath := func(p string) bool {
+			if strings.HasPrefix(p, "/metadata/") {
+				includeMetadata = true
+				return true
+			}
+			if subresource == "status" && (p == "/status" || strings.HasPrefix(p, "/status/")) {
+				includeStatus = true
+				return true
+			}
+			return false
+		}
+		for _, op := range ops {
+			if !checkPath(op.Path) {
+				return false, false, false, false
+			}
+			if op.From != "" && !checkPath(op.From) {
+				return false, false, false, false
+			}
+		}
+		return includeMetadata, includeStatus, dropManagedFields, true
+	default:
+		return false, false, false, false
+	}
+}
+
 // strategicPatchObject applies a strategic merge patch of `patchBytes` to
 // `originalObject` and stores the result in `objToUpdate`.
 // NOTE: Both `originalObject` and `objToUpdate` are supposed to be versioned.
@@ -577,20 +755,24 @@ func strategicPatchObject(
 	schemaReferenceObj runtime.Object,
 	validationDirective string,
 ) error {
-	patchMap := make(map[string]interface{})
-	var strictErrs []error
-	var err error
-	if validationDirective == metav1.FieldValidationWarn || validationDirective == metav1.FieldValidationStrict {
-		strictErrs, err = kjson.UnmarshalStrict(patchBytes, &patchMap)
-		if err != nil {
-			return errors.NewBadRequest(err.Error())
-		}
-	} else {
-		if err = kjson.UnmarshalCaseSensitivePreserveInts(patchBytes, &patchMap); err != nil {
-			return errors.NewBadRequest(err.Error())
-		}
+	patchMap, strictErrs, err := unmarshalSMPPatch(patchBytes, validationDirective)
+	if err != nil {
+		return err
 	}
+	return strategicPatchObjectWithMap(requestContext, defaulter, originalObject, patchMap, strictErrs, objToUpdate, schemaReferenceObj, validationDirective)
+}
 
+func strategicPatchObjectWithMap(
+	requestContext context.Context,
+	defaulter runtime.ObjectDefaulter,
+	originalObject runtime.Object,
+	patchMap map[string]interface{},
+	strictErrs []error,
+	objToUpdate runtime.Object,
+	schemaReferenceObj runtime.Object,
+	validationDirective string,
+) error {
+	var err error
 	var originalObjMap, topLevelKeys map[string]interface{}
 	if canPruneTopLevelPatch(originalObject, objToUpdate, patchMap) {
 		originalObjMap, err = runtime.DefaultUnstructuredConverter.ToUnstructuredTopLevel(originalObject, patchMap)
@@ -641,10 +823,6 @@ func (p *patcher) applyPatch(ctx context.Context, _, currentObject runtime.Objec
 	} else if !currentObjectHasUID {
 		objToUpdate, patchErr = p.mechanism.createNewObject(ctx)
 	} else {
-		currentObject, err = runtime.EnsureDecodedObject(currentObject)
-		if err != nil {
-			return nil, err
-		}
 		objToUpdate, patchErr = p.mechanism.applyPatchToCurrentObject(ctx, currentObject)
 	}
 

@@ -223,6 +223,24 @@ func EnsureDecodedObject(obj Object) (Object, error) {
 	return obj, nil
 }
 
+// LazyUpdateProjector can be implemented by versioned LazyObject wrappers to
+// materialize partial concrete objects for structured-merge-diff Update comparisons,
+// omitting top-level sections that are either ignored or byte-identical on the wire.
+type LazyUpdateProjector interface {
+	LazyObject
+	ProjectForUpdate(peer Object, ignoreSpec, ignoreStatus bool) (projectedSelf, projectedPeer Object, ok bool, err error)
+}
+
+// LazyScopedPatcher can be implemented by LazyObject wrappers to extract a partial
+// concrete object containing ObjectMeta and/or Status for scoped patches,
+// splice the patched fields back onto the wire representation, and compare spec wire bytes.
+type LazyScopedPatcher interface {
+	LazyObject
+	ExtractScopedPatchBase(includeMetadata, includeStatus, dropManagedFields bool) (Object, error)
+	SpliceScopedPatchResult(patched Object, includeMetadata, includeStatus bool) (Object, error)
+	HasEqualSpecWireBytes(other Object) bool
+}
+
 // VersionedObjectCreator can be implemented by an internal runtime.Object to provide
 // a custom versioned runtime.Object (such as a lazy wire wrapper) during Decode and ConvertToVersion.
 type VersionedObjectCreator interface {

@@ -98,6 +98,44 @@ func TestAdmission(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("unchanged managedFields fast path", func(t *testing.T) {
+		validEntries := []metav1.ManagedFieldsEntry{validManagedFieldsEntry}
+		obj := &v1.ConfigMap{}
+		obj.SetManagedFields(validEntries)
+		wrap.admit = func(ctx context.Context, a admission.Attributes, o admission.ObjectInterfaces) error {
+			return nil
+		}
+		attrs := admission.NewAttributesRecord(obj, obj, schema.GroupVersionKind{}, "default", "", schema.GroupVersionResource{}, "", admission.Update, nil, false, nil)
+		if err := ac.(admission.MutationInterface).Admit(context.TODO(), attrs, nil); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(obj.GetManagedFields(), validEntries) {
+			t.Fatalf("expected: \n%v\ngot:\n%v", validEntries, obj.GetManagedFields())
+		}
+	})
+
+	t.Run("in-place invalid entry mutation resets to snapshot", func(t *testing.T) {
+		validEntries := []metav1.ManagedFieldsEntry{validManagedFieldsEntry}
+		expected := []metav1.ManagedFieldsEntry{validManagedFieldsEntry}
+		obj := &v1.ConfigMap{}
+		obj.SetManagedFields(validEntries)
+		wrap.admit = func(ctx context.Context, a admission.Attributes, o admission.ObjectInterfaces) error {
+			accessor, err := meta.Accessor(a.GetObject())
+			if err != nil {
+				return err
+			}
+			accessor.GetManagedFields()[0].APIVersion = ""
+			return nil
+		}
+		attrs := admission.NewAttributesRecord(obj, obj, schema.GroupVersionKind{}, "default", "", schema.GroupVersionResource{}, "", admission.Update, nil, false, nil)
+		if err := ac.(admission.MutationInterface).Admit(context.TODO(), attrs, nil); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(obj.GetManagedFields(), expected) {
+			t.Fatalf("expected: \n%v\ngot:\n%v", expected, obj.GetManagedFields())
+		}
+	})
 }
 
 func replaceManagedFields(with []metav1.ManagedFieldsEntry) func(ctx context.Context, a admission.Attributes, o admission.ObjectInterfaces) error {

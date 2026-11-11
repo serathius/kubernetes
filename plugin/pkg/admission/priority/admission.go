@@ -25,6 +25,7 @@ import (
 	schedulingv1 "k8s.io/api/scheduling/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apiserver/pkg/admission"
 	genericadmissioninitializers "k8s.io/apiserver/pkg/admission/initializer"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
@@ -149,6 +150,13 @@ func (p *Plugin) Validate(ctx context.Context, a admission.Attributes, o admissi
 // admitPod makes sure a new pod does not set spec.Priority field. It also makes sure that the PriorityClassName exists if it is provided and resolves the pod priority from the PriorityClassName.
 func (p *Plugin) admitPod(a admission.Attributes) error {
 	operation := a.GetOperation()
+	if operation == admission.Update {
+		if scoped, ok := admission.RawObjectFrom(a).(runtime.LazyScopedPatcher); ok && !scoped.IsDecoded() {
+			if scoped.HasEqualSpecWireBytes(admission.RawOldObjectFrom(a)) {
+				return nil
+			}
+		}
+	}
 	pod, ok := a.GetObject().(*core.Pod)
 	if !ok {
 		return errors.NewBadRequest("resource was marked with kind Pod but was unable to be converted")

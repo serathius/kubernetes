@@ -52,6 +52,7 @@ import (
 	podutil "k8s.io/kubernetes/pkg/api/pod"
 	api "k8s.io/kubernetes/pkg/apis/core"
 	"k8s.io/kubernetes/pkg/apis/core/helper/qos"
+	"k8s.io/kubernetes/pkg/apis/core/lazypod"
 	corevalidation "k8s.io/kubernetes/pkg/apis/core/validation"
 	"k8s.io/kubernetes/pkg/features"
 	"k8s.io/kubernetes/pkg/kubelet/client"
@@ -92,12 +93,6 @@ func ensureDecodedPod(obj runtime.Object) *api.Pod {
 	return dec.(*api.Pod)
 }
 
-func areBothUndecodedLazy(obj, old runtime.Object) bool {
-	lazyObj, ok1 := obj.(runtime.LazyObject)
-	lazyOld, ok2 := old.(runtime.LazyObject)
-	return ok1 && ok2 && !lazyObj.IsDecoded() && !lazyOld.IsDecoded()
-}
-
 // PrepareForCreate clears fields that are not allowed to be set by end users on creation.
 func (podStrategy) PrepareForCreate(ctx context.Context, obj runtime.Object) {
 	pod := ensureDecodedPod(obj)
@@ -120,6 +115,24 @@ func (podStrategy) PrepareForCreate(ctx context.Context, obj runtime.Object) {
 
 // PrepareForUpdate clears fields that are not allowed to be set by end users on update.
 func (podStrategy) PrepareForUpdate(ctx context.Context, obj, old runtime.Object) {
+	if newLazy, ok1 := obj.(*lazypod.Pod); ok1 && newLazy.IsLazy() {
+		if oldLazy, ok2 := old.(*lazypod.Pod); ok2 && oldLazy.IsLazy() && newLazy.HasEqualSpecWireBytes(oldLazy) {
+			ann := newLazy.GetAnnotations()
+			beforeLen := len(ann)
+			podutil.DropInitContainerAnnotations(ann)
+			if len(ann) != beforeLen {
+				newLazy.SetAnnotations(ann)
+			}
+			if newLazy.HasEqualStatusWireBytes(oldLazy) {
+				return
+			}
+			var newMeta metav1.ObjectMeta
+			newLazy.ExtractObjectMetaInto(&newMeta)
+			if err := newLazy.ReplaceMetaWithOldSpecAndStatus(&newMeta, oldLazy); err == nil {
+				return
+			}
+		}
+	}
 	newPod := ensureDecodedPod(obj)
 	oldPod := ensureDecodedPod(old)
 	newPod.Status = oldPod.Status
@@ -165,6 +178,24 @@ func (podStrategy) AllowCreateOnUpdate(ctx context.Context) bool {
 
 // ValidateUpdate is the default update validation for an end user.
 func (podStrategy) ValidateUpdate(ctx context.Context, obj, old runtime.Object) field.ErrorList {
+	if newLazy, ok1 := obj.(*lazypod.Pod); ok1 && newLazy.IsLazy() {
+		if oldLazy, ok2 := old.(*lazypod.Pod); ok2 && oldLazy.IsLazy() && newLazy.HasEqualSpecWireBytes(oldLazy) {
+			var newMeta, oldMeta metav1.ObjectMeta
+			newLazy.ExtractObjectMetaInto(&newMeta)
+			oldLazy.ExtractObjectMetaForUpdate(&oldMeta, true)
+			if newMeta.Annotations[api.TolerationsAnnotationKey] == "" {
+				fldPath := field.NewPath("metadata")
+				allErrs := corevalidation.ValidateObjectMetaUpdate(&newMeta, &oldMeta, fldPath)
+				allErrs = append(allErrs, corevalidation.ValidateObjectMeta(&newMeta, true, corevalidation.ValidatePodName, fldPath)...)
+				opts := corevalidation.GetValidationOptionsFromPodSpecAndMeta(nil, nil, &newMeta, &oldMeta)
+				opts.ResourceIsPod = true
+				allErrs = append(allErrs, corevalidation.ValidatePodSpecificAnnotationUpdates(newLazy, oldMeta.Annotations, fldPath.Child("annotations"), opts)...)
+				if len(allErrs) == 0 {
+					return nil
+				}
+			}
+		}
+	}
 	// Allow downward api usage of hugepages on pod update if feature is enabled or if the old pod already had used them.
 	pod := ensureDecodedPod(obj)
 	oldPod := ensureDecodedPod(old)
@@ -240,75 +271,214 @@ func (podStatusStrategy) GetResetFields() map[fieldpath.APIVersion]*fieldpath.Se
 }
 
 func (podStatusStrategy) PrepareForUpdate(ctx context.Context, obj, old runtime.Object) {
-	if areBothUndecodedLazy(obj, old) {
-		newPod := obj.(api.PodAccessor)
-		if newPod.HasDeletionTimestamp() {
-			newPod.SetDeletionTimestamp(nil)
+	if newLazy, ok1 := obj.(*lazypod.Pod); ok1 && newLazy.IsLazy() {
+		if oldLazy, ok2 := old.(*lazypod.Pod); ok2 && oldLazy.IsLazy() {
+			newMeta, newStatus, err1 := newLazy.ExtractMetaAndStatusForUpdate(true)
+			oldMeta, oldStatus, err2 := oldLazy.ExtractMetaAndStatusForUpdate(true)
+			if err1 == nil && err2 == nil {
+				oldLazy.CacheDecodedStatus(&oldStatus)
+				changed := preparePodStatusFields(&newMeta, &newStatus, &oldMeta, &oldStatus)
+				tmpNew := api.Pod{ObjectMeta: newMeta, Status: newStatus}
+				tmpOld := api.Pod{ObjectMeta: oldMeta, Status: oldStatus}
+				if podutil.DropDisabledPodStatusFields(&tmpNew, &tmpOld) {
+					changed = true
+				}
+				if !changed && newLazy.HasEqualSpecWireBytes(oldLazy) {
+					newLazy.CacheDecodedStatus(&tmpNew.Status)
+					return
+				}
+				tmpNew.ManagedFields = newLazy.GetManagedFields()
+				if err := newLazy.ReplaceMetaAndStatusFromOldSpec(&tmpNew.ObjectMeta, &tmpNew.Status, oldLazy); err == nil {
+					return
+				}
+			}
 		}
-		return
 	}
 	newPod := ensureDecodedPod(obj)
 	oldPod := ensureDecodedPod(old)
 	newPod.Spec = oldPod.Spec
-	newPod.DeletionTimestamp = nil
+	preparePodStatusFields(&newPod.ObjectMeta, &newPod.Status, &oldPod.ObjectMeta, &oldPod.Status)
+	podutil.DropDisabledPodFields(newPod, oldPod)
+}
+
+func preparePodStatusFields(newMeta *metav1.ObjectMeta, newStatus *api.PodStatus, oldMeta *metav1.ObjectMeta, oldStatus *api.PodStatus) bool {
+	changed := false
+	if newMeta.DeletionTimestamp != nil {
+		newMeta.DeletionTimestamp = nil
+		changed = true
+	}
 
 	// don't allow the pods/status endpoint to touch owner references since old kubelets corrupt them in a way
 	// that breaks garbage collection
-	newPod.OwnerReferences = oldPod.OwnerReferences
+	if !equalOwnerReferences(newMeta.OwnerReferences, oldMeta.OwnerReferences) {
+		newMeta.OwnerReferences = oldMeta.OwnerReferences
+		changed = true
+	}
 	// the Pod QoS is immutable and populated at creation time by the kube-apiserver.
 	// we need to backfill it for backward compatibility because the old kubelet dropped this field when the pod was rejected.
-	if newPod.Status.QOSClass == "" {
-		newPod.Status.QOSClass = oldPod.Status.QOSClass
+	if newStatus.QOSClass == "" && oldStatus.QOSClass != "" {
+		newStatus.QOSClass = oldStatus.QOSClass
+		changed = true
 	}
 
 	// Preserve DRA-related status fields when an old or misbehaving client
 	// strips fields that it does not know about during a pods/status update.
 	// For the slice fields, a non-nil empty slice can still clear the field.
-	if newPod.Status.ResourceClaimStatuses == nil && oldPod.Status.ResourceClaimStatuses != nil {
-		newPod.Status.ResourceClaimStatuses = oldPod.Status.ResourceClaimStatuses
+	if newStatus.ResourceClaimStatuses == nil && oldStatus.ResourceClaimStatuses != nil {
+		newStatus.ResourceClaimStatuses = oldStatus.ResourceClaimStatuses
+		changed = true
 	}
-	if newPod.Status.ExtendedResourceClaimStatus == nil && oldPod.Status.ExtendedResourceClaimStatus != nil {
-		newPod.Status.ExtendedResourceClaimStatus = oldPod.Status.ExtendedResourceClaimStatus
+	if newStatus.ExtendedResourceClaimStatus == nil && oldStatus.ExtendedResourceClaimStatus != nil {
+		newStatus.ExtendedResourceClaimStatus = oldStatus.ExtendedResourceClaimStatus
+		changed = true
 	}
-	if newPod.Status.NodeAllocatableResourceClaimStatuses == nil && oldPod.Status.NodeAllocatableResourceClaimStatuses != nil {
-		newPod.Status.NodeAllocatableResourceClaimStatuses = oldPod.Status.NodeAllocatableResourceClaimStatuses
+	if newStatus.NodeAllocatableResourceClaimStatuses == nil && oldStatus.NodeAllocatableResourceClaimStatuses != nil {
+		newStatus.NodeAllocatableResourceClaimStatuses = oldStatus.NodeAllocatableResourceClaimStatuses
+		changed = true
 	}
 
-	preserveOldObservedGeneration(newPod, oldPod)
-	podutil.DropDisabledPodFields(newPod, oldPod)
+	if preserveOldObservedGenerationStatus(newStatus, oldStatus) {
+		changed = true
+	}
+	return changed
+}
+
+func equalBoolPtr(a, b *bool) bool {
+	if a == b {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return *a == *b
+}
+
+func equalOwnerReferences(a, b []metav1.OwnerReference) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].APIVersion != b[i].APIVersion ||
+			a[i].Kind != b[i].Kind ||
+			a[i].Name != b[i].Name ||
+			a[i].UID != b[i].UID ||
+			!equalBoolPtr(a[i].Controller, b[i].Controller) ||
+			!equalBoolPtr(a[i].BlockOwnerDeletion, b[i].BlockOwnerDeletion) {
+			return false
+		}
+	}
+	return true
 }
 
 // If a client request tries to clear `observedGeneration`, in the pod status or
 // conditions, we preserve the original value.
 func preserveOldObservedGeneration(newPod, oldPod *api.Pod) {
-	if newPod.Status.ObservedGeneration == 0 {
-		newPod.Status.ObservedGeneration = oldPod.Status.ObservedGeneration
+	preserveOldObservedGenerationStatus(&newPod.Status, &oldPod.Status)
+}
+
+func preserveOldObservedGenerationStatus(newStatus, oldStatus *api.PodStatus) bool {
+	changed := false
+	if newStatus.ObservedGeneration == 0 && oldStatus.ObservedGeneration != 0 {
+		newStatus.ObservedGeneration = oldStatus.ObservedGeneration
+		changed = true
+	}
+
+	hasZeroConditionGeneration := false
+	for i := range newStatus.Conditions {
+		if newStatus.Conditions[i].ObservedGeneration == 0 {
+			hasZeroConditionGeneration = true
+			break
+		}
+	}
+	if !hasZeroConditionGeneration {
+		return changed
 	}
 
 	// Remember observedGeneration values from old status conditions.
 	// This is a list per type because validation permits multiple conditions with the same type.
 	oldConditionGenerations := map[api.PodConditionType][]int64{}
-	for _, oldCondition := range oldPod.Status.Conditions {
+	for _, oldCondition := range oldStatus.Conditions {
 		oldConditionGenerations[oldCondition.Type] = append(oldConditionGenerations[oldCondition.Type], oldCondition.ObservedGeneration)
 	}
 
 	// For any conditions in the new status without observedGeneration set, preserve the old value.
-	for i, newCondition := range newPod.Status.Conditions {
+	for i, newCondition := range newStatus.Conditions {
 		oldGeneration := int64(0)
 		if oldGenerations, ok := oldConditionGenerations[newCondition.Type]; ok && len(oldGenerations) > 0 {
 			oldGeneration = oldGenerations[0]
 			oldConditionGenerations[newCondition.Type] = oldGenerations[1:]
 		}
 
-		if newCondition.ObservedGeneration == 0 {
-			newPod.Status.Conditions[i].ObservedGeneration = oldGeneration
+		if newCondition.ObservedGeneration == 0 && oldGeneration != 0 {
+			newStatus.Conditions[i].ObservedGeneration = oldGeneration
+			changed = true
 		}
 	}
+	return changed
+}
+
+func statusUpdateNeedsFullSpec(newMeta *metav1.ObjectMeta, newStatus, oldStatus *api.PodStatus) bool {
+	if len(newStatus.ResourceClaimStatuses) > 0 ||
+		newStatus.ExtendedResourceClaimStatus != nil ||
+		len(newStatus.NodeAllocatableResourceClaimStatuses) > 0 ||
+		len(newStatus.VolumeStatuses) > 0 {
+		return true
+	}
+	if newMeta.Annotations[api.TolerationsAnnotationKey] != "" {
+		return true
+	}
+	for k := range newMeta.Annotations {
+		if strings.HasPrefix(k, apiv1.DeprecatedAppArmorBetaContainerAnnotationKeyPrefix) {
+			return true
+		}
+	}
+	for i := range newStatus.ContainerStatuses {
+		if len(newStatus.ContainerStatuses[i].AllocatedResourcesStatus) > 0 {
+			return true
+		}
+	}
+	for i := range newStatus.InitContainerStatuses {
+		if len(newStatus.InitContainerStatuses[i].AllocatedResourcesStatus) > 0 {
+			return true
+		}
+	}
+	return hasTerminatedToNonTerminatedTransition(newStatus.ContainerStatuses, oldStatus.ContainerStatuses) ||
+		hasTerminatedToNonTerminatedTransition(newStatus.InitContainerStatuses, oldStatus.InitContainerStatuses)
+}
+
+func hasTerminatedToNonTerminatedTransition(newStatuses, oldStatuses []api.ContainerStatus) bool {
+	for i := range oldStatuses {
+		if oldStatuses[i].State.Terminated == nil {
+			continue
+		}
+		for j := range newStatuses {
+			if newStatuses[j].Name == oldStatuses[i].Name && newStatuses[j].State.Terminated == nil {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (podStatusStrategy) ValidateUpdate(ctx context.Context, obj, old runtime.Object) field.ErrorList {
-	if areBothUndecodedLazy(obj, old) {
-		return nil
+	if newLazy, ok1 := obj.(*lazypod.Pod); ok1 && newLazy.IsLazy() {
+		if oldLazy, ok2 := old.(*lazypod.Pod); ok2 && oldLazy.IsLazy() {
+			newMeta, newStatus, err1 := newLazy.ExtractMetaAndStatus()
+			oldMeta, oldStatus, err2 := oldLazy.ExtractMetaAndStatusForUpdate(true)
+			if err1 == nil && err2 == nil && !statusUpdateNeedsFullSpec(&newMeta, &newStatus, &oldStatus) {
+				nodeName, restartPolicy, podOS := oldLazy.SpecSummaryForStatusValidation()
+				minSpec := api.PodSpec{
+					NodeName:      nodeName,
+					RestartPolicy: restartPolicy,
+					OS:            podOS,
+				}
+				tmpNew := &api.Pod{ObjectMeta: newMeta, Spec: minSpec, Status: newStatus}
+				tmpOld := &api.Pod{ObjectMeta: oldMeta, Spec: minSpec, Status: oldStatus}
+				opts := corevalidation.GetValidationOptionsFromPodSpecAndMeta(nil, nil, &newMeta, &oldMeta)
+				opts.ResourceIsPod = true
+				return corevalidation.ValidatePodStatusUpdate(tmpNew, tmpOld, opts)
+			}
+		}
 	}
 	pod := ensureDecodedPod(obj)
 	oldPod := ensureDecodedPod(old)
@@ -320,9 +490,6 @@ func (podStatusStrategy) ValidateUpdate(ctx context.Context, obj, old runtime.Ob
 
 // WarningsOnUpdate returns warnings for the given update.
 func (podStatusStrategy) WarningsOnUpdate(ctx context.Context, obj, old runtime.Object) []string {
-	if areBothUndecodedLazy(obj, old) {
-		return nil
-	}
 	pod := obj.(api.PodAccessor)
 	var warnings []string
 

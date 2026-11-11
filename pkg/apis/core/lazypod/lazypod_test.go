@@ -468,6 +468,37 @@ func TestEtcd3ReadDefaultingAndRVSplicing1To1Parity(t *testing.T) {
 				t.Fatalf("expected lazyInternal.IsLazy() == true after shallow JSON/CBOR encodes")
 			}
 
+			// Verify PodIPs / HostIPs accessors and scoped patch / projection interfaces stay lazy.
+			if !apiequality.Semantic.DeepEqual(stdInternal.GetStatusPodIPs(), lazyInternal.GetStatusPodIPs()) {
+				t.Fatalf("GetStatusPodIPs mismatch:\n%s", cmp.Diff(stdInternal.GetStatusPodIPs(), lazyInternal.GetStatusPodIPs()))
+			}
+			if !apiequality.Semantic.DeepEqual(stdInternal.GetStatusHostIPs(), lazyInternal.GetStatusHostIPs()) {
+				t.Fatalf("GetStatusHostIPs mismatch:\n%s", cmp.Diff(stdInternal.GetStatusHostIPs(), lazyInternal.GetStatusHostIPs()))
+			}
+			baseMetaObj, err := lazyInternal.ExtractScopedPatchBase(true, false, true)
+			if err != nil {
+				t.Fatalf("ExtractScopedPatchBase failed: %v", err)
+			}
+			patchedCore := baseMetaObj.(*core.Pod)
+			if patchedCore.Annotations == nil {
+				patchedCore.Annotations = map[string]string{}
+			}
+			patchedCore.Annotations["lazypod.k8s.io/scoped"] = "ok"
+			splicedObj, err := lazyInternal.SpliceScopedPatchResult(patchedCore, true, false)
+			if err != nil {
+				t.Fatalf("SpliceScopedPatchResult failed: %v", err)
+			}
+			splicedPod := splicedObj.(*lazypod.Pod)
+			if !splicedPod.IsLazy() || !splicedPod.HasEqualSpecWireBytes(lazyInternal) {
+				t.Fatalf("expected splicedPod to remain lazy with equal spec wire bytes")
+			}
+			if got := splicedPod.GetAnnotations()["lazypod.k8s.io/scoped"]; got != "ok" {
+				t.Fatalf("expected spliced annotation, got %q", got)
+			}
+			if !lazyInternal.IsLazy() {
+				t.Fatalf("expected lazyInternal.IsLazy() == true after scoped patch & IP accessors")
+			}
+
 			// Verify EnsureDecodedObject unwraps *lazypod.Pod into an identical *core.Pod.
 			unwrapped, err := runtime.EnsureDecodedObject(lazyInternal)
 			if err != nil {

@@ -590,6 +590,10 @@ func (m *WireObjectMeta) SetManagedFields(managedFields []metav1.ManagedFieldsEn
 
 // ApplyToObjectMeta applies any pending dirty overrides onto a decoded metav1.ObjectMeta.
 func (m *WireObjectMeta) ApplyToObjectMeta(meta *metav1.ObjectMeta) {
+	m.applyToObjectMeta(meta, true)
+}
+
+func (m *WireObjectMeta) applyToObjectMeta(meta *metav1.ObjectMeta, includeManagedFields bool) {
 	if m == nil || m.dirty == 0 {
 		return
 	}
@@ -652,7 +656,7 @@ func (m *WireObjectMeta) ApplyToObjectMeta(meta *metav1.ObjectMeta) {
 	if m.dirty&dirtyMetaFinalizers != 0 {
 		meta.Finalizers = slices.Clone(m.finalizers)
 	}
-	if m.dirty&dirtyMetaManagedFields != 0 {
+	if includeManagedFields && m.dirty&dirtyMetaManagedFields != 0 {
 		if m.managedFields == nil {
 			meta.ManagedFields = nil
 		} else {
@@ -664,13 +668,183 @@ func (m *WireObjectMeta) ApplyToObjectMeta(meta *metav1.ObjectMeta) {
 	}
 }
 
+// TrimManagedFieldsWireBytes returns metaBytes with tag 17 (managedFields) removed,
+// slicing without allocation when managedFields entries appear at the end in canonical tag order.
+func TrimManagedFieldsWireBytes(metaBytes []byte) []byte {
+	firstManagedOffset := -1
+	offset := 0
+	for offset < len(metaBytes) {
+		fieldStart := offset
+		num, typ, tagLen := protowire.ConsumeTag(metaBytes[offset:])
+		if tagLen < 0 {
+			break
+		}
+		offset += tagLen
+		valLen := protowire.ConsumeFieldValue(num, typ, metaBytes[offset:])
+		if valLen < 0 {
+			break
+		}
+		offset += valLen
+		if num == MetaFieldManagedFields {
+			if firstManagedOffset < 0 {
+				firstManagedOffset = fieldStart
+			}
+			continue
+		}
+		if firstManagedOffset >= 0 {
+			filtered := make([]byte, 0, len(metaBytes))
+			filtered = append(filtered, metaBytes[:firstManagedOffset]...)
+			filtered = append(filtered, metaBytes[fieldStart:offset]...)
+			for offset < len(metaBytes) {
+				fs := offset
+				n, t, tl := protowire.ConsumeTag(metaBytes[offset:])
+				if tl < 0 {
+					break
+				}
+				offset += tl
+				vl := protowire.ConsumeFieldValue(n, t, metaBytes[offset:])
+				if vl < 0 {
+					break
+				}
+				offset += vl
+				if n != MetaFieldManagedFields {
+					filtered = append(filtered, metaBytes[fs:offset]...)
+				}
+			}
+			return filtered
+		}
+	}
+	if firstManagedOffset >= 0 {
+		return metaBytes[:firstManagedOffset]
+	}
+	return metaBytes
+}
+
 // ExtractObjectMetaInto unmarshals only the ObjectMeta submessage and applies any dirty overrides.
 func (m *WireObjectMeta) ExtractObjectMetaInto(metaBytes []byte, out *metav1.ObjectMeta) {
 	*out = metav1.ObjectMeta{}
 	if len(metaBytes) > 0 {
+		if m != nil && m.dirty&dirtyMetaManagedFields != 0 {
+			metaBytes = TrimManagedFieldsWireBytes(metaBytes)
+		}
 		_ = out.Unmarshal(metaBytes)
 	}
-	m.ApplyToObjectMeta(out)
+	m.applyToObjectMeta(out, true)
+}
+
+// ExtractObjectMetaWithoutManagedFieldsInto unmarshals ObjectMeta while skipping ManagedFields (tag 17)
+// on both wire bytes and dirty overrides.
+func (m *WireObjectMeta) ExtractObjectMetaWithoutManagedFieldsInto(metaBytes []byte, out *metav1.ObjectMeta) {
+	*out = metav1.ObjectMeta{}
+	if len(metaBytes) > 0 {
+		_ = out.Unmarshal(TrimManagedFieldsWireBytes(metaBytes))
+	}
+	m.applyToObjectMeta(out, false)
+}
+
+// splicedMetaSize returns the exact byte length of SpliceMetaFields(metaBytes) with zero allocations.
+func (m *WireObjectMeta) splicedMetaSize(metaBytes []byte) int {
+	if m == nil || m.dirty == 0 {
+		return len(metaBytes)
+	}
+	size := 0
+	if m.dirty&dirtyMetaName != 0 {
+		size += protowire.SizeTag(MetaFieldName) + protowire.SizeBytes(len(m.name))
+	}
+	if m.dirty&dirtyMetaGenerateName != 0 {
+		size += protowire.SizeTag(MetaFieldGenerateName) + protowire.SizeBytes(len(m.generateName))
+	}
+	if m.dirty&dirtyMetaNamespace != 0 {
+		size += protowire.SizeTag(MetaFieldNamespace) + protowire.SizeBytes(len(m.namespace))
+	}
+	if m.dirty&dirtyMetaSelfLink != 0 {
+		size += protowire.SizeTag(MetaFieldSelfLink) + protowire.SizeBytes(len(m.selfLink))
+	}
+	if m.dirty&dirtyMetaUID != 0 {
+		size += protowire.SizeTag(MetaFieldUID) + protowire.SizeBytes(len(m.uid))
+	}
+	if m.dirty&dirtyMetaResourceVersion != 0 {
+		size += protowire.SizeTag(MetaFieldResourceVersion) + protowire.SizeBytes(len(m.resourceVersion))
+	}
+	if m.dirty&dirtyMetaGeneration != 0 {
+		size += protowire.SizeTag(MetaFieldGeneration) + protowire.SizeVarint(uint64(m.generation))
+	}
+	if m.dirty&dirtyMetaCreationTimestamp != 0 {
+		size += protowire.SizeTag(MetaFieldCreationTimestamp) + protowire.SizeBytes(m.creationTimestamp.Size())
+	}
+	if m.dirty&dirtyMetaDeletionTimestamp != 0 && m.deletionTimestamp != nil {
+		size += protowire.SizeTag(MetaFieldDeletionTimestamp) + protowire.SizeBytes(m.deletionTimestamp.Size())
+	}
+	if m.dirty&dirtyMetaDeletionGracePeriodSeconds != 0 && m.deletionGracePeriodSeconds != nil {
+		size += protowire.SizeTag(MetaFieldDeletionGracePeriodSeconds) + protowire.SizeVarint(uint64(*m.deletionGracePeriodSeconds))
+	}
+	if m.dirty&dirtyMetaLabels != 0 {
+		tagSize := protowire.SizeTag(MetaFieldLabels)
+		for k, v := range m.labels {
+			entryLen := 1 + protowire.SizeBytes(len(k)) + 1 + protowire.SizeBytes(len(v))
+			size += tagSize + protowire.SizeBytes(entryLen)
+		}
+	}
+	if m.dirty&dirtyMetaAnnotations != 0 {
+		tagSize := protowire.SizeTag(MetaFieldAnnotations)
+		for k, v := range m.annotations {
+			entryLen := 1 + protowire.SizeBytes(len(k)) + 1 + protowire.SizeBytes(len(v))
+			size += tagSize + protowire.SizeBytes(entryLen)
+		}
+	}
+	if m.dirty&dirtyMetaOwnerReferences != 0 {
+		tagSize := protowire.SizeTag(MetaFieldOwnerReferences)
+		for i := range m.ownerReferences {
+			size += tagSize + protowire.SizeBytes(m.ownerReferences[i].Size())
+		}
+	}
+	if m.dirty&dirtyMetaFinalizers != 0 {
+		tagSize := protowire.SizeTag(MetaFieldFinalizers)
+		for _, f := range m.finalizers {
+			size += tagSize + protowire.SizeBytes(len(f))
+		}
+	}
+	if m.dirty&dirtyMetaManagedFields != 0 {
+		tagSize := protowire.SizeTag(MetaFieldManagedFields)
+		for i := range m.managedFields {
+			size += tagSize + protowire.SizeBytes(m.managedFields[i].Size())
+		}
+	}
+
+	offset := 0
+	for offset < len(metaBytes) {
+		fieldStart := offset
+		num, typ, tagLen := protowire.ConsumeTag(metaBytes[offset:])
+		if tagLen < 0 {
+			break
+		}
+		offset += tagLen
+		valLen := protowire.ConsumeFieldValue(num, typ, metaBytes[offset:])
+		if valLen < 0 {
+			break
+		}
+		offset += valLen
+
+		if (num == MetaFieldName && m.dirty&dirtyMetaName != 0) ||
+			(num == MetaFieldGenerateName && m.dirty&dirtyMetaGenerateName != 0) ||
+			(num == MetaFieldNamespace && m.dirty&dirtyMetaNamespace != 0) ||
+			(num == MetaFieldSelfLink && m.dirty&dirtyMetaSelfLink != 0) ||
+			(num == MetaFieldUID && m.dirty&dirtyMetaUID != 0) ||
+			(num == MetaFieldResourceVersion && m.dirty&dirtyMetaResourceVersion != 0) ||
+			(num == MetaFieldGeneration && m.dirty&dirtyMetaGeneration != 0) ||
+			(num == MetaFieldCreationTimestamp && m.dirty&dirtyMetaCreationTimestamp != 0) ||
+			(num == MetaFieldDeletionTimestamp && m.dirty&dirtyMetaDeletionTimestamp != 0) ||
+			(num == MetaFieldDeletionGracePeriodSeconds && m.dirty&dirtyMetaDeletionGracePeriodSeconds != 0) ||
+			(num == MetaFieldLabels && m.dirty&dirtyMetaLabels != 0) ||
+			(num == MetaFieldAnnotations && m.dirty&dirtyMetaAnnotations != 0) ||
+			(num == MetaFieldOwnerReferences && m.dirty&dirtyMetaOwnerReferences != 0) ||
+			(num == MetaFieldFinalizers && m.dirty&dirtyMetaFinalizers != 0) ||
+			(num == MetaFieldManagedFields && m.dirty&dirtyMetaManagedFields != 0) {
+			continue
+		}
+		size += offset - fieldStart
+	}
+	return size
 }
 
 // SpliceMetaFields splices any dirty ObjectMeta overrides into metaBytes in canonical protobuf tag order.
@@ -678,7 +852,7 @@ func (m *WireObjectMeta) SpliceMetaFields(metaBytes []byte) []byte {
 	if m == nil || m.dirty == 0 {
 		return metaBytes
 	}
-	out := make([]byte, 0, len(metaBytes)+64)
+	out := make([]byte, 0, m.splicedMetaSize(metaBytes))
 	emitted := uint16(0)
 
 	emitDirtyUpTo := func(limitNum protowire.Number) {
@@ -744,10 +918,12 @@ func (m *WireObjectMeta) SpliceMetaFields(metaBytes []byte) []byte {
 		}
 		if m.dirty&dirtyMetaOwnerReferences != 0 && emitted&dirtyMetaOwnerReferences == 0 && limitNum >= MetaFieldOwnerReferences {
 			for i := range m.ownerReferences {
-				if b, err := m.ownerReferences[i].Marshal(); err == nil {
-					out = protowire.AppendTag(out, MetaFieldOwnerReferences, protowire.BytesType)
-					out = protowire.AppendBytes(out, b)
-				}
+				sz := m.ownerReferences[i].Size()
+				out = protowire.AppendTag(out, MetaFieldOwnerReferences, protowire.BytesType)
+				out = protowire.AppendVarint(out, uint64(sz))
+				pos := len(out)
+				out = slices.Grow(out, sz)[:pos+sz]
+				_, _ = m.ownerReferences[i].MarshalToSizedBuffer(out[pos : pos+sz])
 			}
 			emitted |= dirtyMetaOwnerReferences
 		}
@@ -760,10 +936,12 @@ func (m *WireObjectMeta) SpliceMetaFields(metaBytes []byte) []byte {
 		}
 		if m.dirty&dirtyMetaManagedFields != 0 && emitted&dirtyMetaManagedFields == 0 && limitNum >= MetaFieldManagedFields {
 			for i := range m.managedFields {
-				if b, err := m.managedFields[i].Marshal(); err == nil {
-					out = protowire.AppendTag(out, MetaFieldManagedFields, protowire.BytesType)
-					out = protowire.AppendBytes(out, b)
-				}
+				sz := m.managedFields[i].Size()
+				out = protowire.AppendTag(out, MetaFieldManagedFields, protowire.BytesType)
+				out = protowire.AppendVarint(out, uint64(sz))
+				pos := len(out)
+				out = slices.Grow(out, sz)[:pos+sz]
+				_, _ = m.managedFields[i].MarshalToSizedBuffer(out[pos : pos+sz])
 			}
 			emitted |= dirtyMetaManagedFields
 		}
@@ -935,6 +1113,29 @@ func findMetaRVSpan(metaBytes []byte) (int, int) {
 	return len(metaBytes), len(metaBytes)
 }
 
+func findTopMetaSpan(raw []byte) (found bool, metaFieldStart, metaFieldEnd int, metaContent []byte) {
+	offset := 0
+	for offset < len(raw) {
+		fieldStart := offset
+		num, typ, tagLen := protowire.ConsumeTag(raw[offset:])
+		if tagLen < 0 {
+			break
+		}
+		offset += tagLen
+		valLen := protowire.ConsumeFieldValue(num, typ, raw[offset:])
+		if valLen < 0 {
+			break
+		}
+		valBytes := raw[offset : offset+valLen]
+		offset += valLen
+		if num == MetadataFieldNumber && typ == protowire.BytesType {
+			content, _ := protowire.ConsumeBytes(valBytes)
+			return true, fieldStart, offset, content
+		}
+	}
+	return false, 0, 0, nil
+}
+
 // SerializedSize returns the exact protobuf wire size of raw after applying any pending
 // ObjectMeta mutations without mutating m.
 func (m *WireObjectMeta) SerializedSize(raw []byte) int {
@@ -949,7 +1150,13 @@ func (m *WireObjectMeta) SerializedSize(raw []byte) int {
 		}
 		return loc.metaFieldStart + newMetaFieldLen + (len(raw) - loc.metaFieldEnd)
 	}
-	return len(m.splicedRaw(raw))
+	found, metaFieldStart, metaFieldEnd, metaContent := findTopMetaSpan(raw)
+	newMetaLen := m.splicedMetaSize(metaContent)
+	newMetaFieldLen := 1 + protowire.SizeBytes(newMetaLen)
+	if !found {
+		return newMetaFieldLen + len(raw)
+	}
+	return metaFieldStart + newMetaFieldLen + (len(raw) - metaFieldEnd)
 }
 
 // MarshalToSizedBuffer writes raw with any pending ObjectMeta mutations to the end of dAtA
@@ -990,10 +1197,27 @@ func (m *WireObjectMeta) MarshalToSizedBuffer(dAtA []byte, raw []byte) (int, err
 		return totalSize, nil
 	}
 
-	updated := m.splicedRaw(raw)
-	n := len(updated)
-	copy(dAtA[len(dAtA)-n:], updated)
-	return n, nil
+	found, metaFieldStart, metaFieldEnd, metaContent := findTopMetaSpan(raw)
+	newMeta := m.SpliceMetaFields(metaContent)
+	newMetaFieldLen := 1 + protowire.SizeBytes(len(newMeta))
+	var totalSize int
+	if !found {
+		totalSize = newMetaFieldLen + len(raw)
+	} else {
+		totalSize = metaFieldStart + newMetaFieldLen + (len(raw) - metaFieldEnd)
+	}
+	dst := dAtA[len(dAtA)-totalSize : len(dAtA)-totalSize]
+	if found {
+		dst = append(dst, raw[:metaFieldStart]...)
+		dst = protowire.AppendTag(dst, MetadataFieldNumber, protowire.BytesType)
+		dst = protowire.AppendBytes(dst, newMeta)
+		dst = append(dst, raw[metaFieldEnd:]...)
+	} else {
+		dst = protowire.AppendTag(dst, MetadataFieldNumber, protowire.BytesType)
+		dst = protowire.AppendBytes(dst, newMeta)
+		dst = append(dst, raw...)
+	}
+	return totalSize, nil
 }
 
 // SubMessage returns the payload of the first length-delimited field with tag topField in raw.
@@ -1181,13 +1405,14 @@ func AppendSortedMapField(out []byte, fieldNum protowire.Number, m map[string]st
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
-		var entry []byte
-		entry = protowire.AppendTag(entry, MapEntryKeyFieldNumber, protowire.BytesType)
-		entry = protowire.AppendString(entry, k)
-		entry = protowire.AppendTag(entry, MapEntryValueFieldNumber, protowire.BytesType)
-		entry = protowire.AppendString(entry, m[k])
+		v := m[k]
+		entryLen := 1 + protowire.SizeBytes(len(k)) + 1 + protowire.SizeBytes(len(v))
 		out = protowire.AppendTag(out, fieldNum, protowire.BytesType)
-		out = protowire.AppendBytes(out, entry)
+		out = protowire.AppendVarint(out, uint64(entryLen))
+		out = protowire.AppendTag(out, MapEntryKeyFieldNumber, protowire.BytesType)
+		out = protowire.AppendString(out, k)
+		out = protowire.AppendTag(out, MapEntryValueFieldNumber, protowire.BytesType)
+		out = protowire.AppendString(out, v)
 	}
 	return out
 }
@@ -1226,11 +1451,11 @@ func ParseTimestamp(tsBytes []byte) metav1.Time {
 
 // AppendTimestamp appends a metav1.Time protobuf submessage with tag fieldNum.
 func AppendTimestamp(out []byte, fieldNum protowire.Number, ts metav1.Time) []byte {
-	b, err := ts.Marshal()
-	if err != nil {
-		return out
-	}
+	sz := ts.Size()
 	out = protowire.AppendTag(out, fieldNum, protowire.BytesType)
-	out = protowire.AppendBytes(out, b)
+	out = protowire.AppendVarint(out, uint64(sz))
+	pos := len(out)
+	out = slices.Grow(out, sz)[:pos+sz]
+	_, _ = ts.MarshalToSizedBuffer(out[pos : pos+sz])
 	return out
 }

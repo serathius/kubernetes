@@ -130,7 +130,7 @@ func (l *LimitRanger) runLimitFunc(a admission.Attributes, limitFn func(limitRan
 	}
 
 	// ignore all objects marked for deletion
-	oldObj := a.GetOldObject()
+	oldObj := admission.RawOldObjectFrom(a)
 	if oldObj != nil {
 		oldAccessor, err := meta.Accessor(oldObj)
 		if err != nil {

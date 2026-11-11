@@ -17,6 +17,7 @@ limitations under the License.
 package lazypod
 
 import (
+	"bytes"
 	stdjson "encoding/json"
 	"fmt"
 	"unsafe"
@@ -1224,6 +1225,13 @@ func (p *Pod) GetSpecAffinity() *core.Affinity {
 }
 
 func (p *Pod) EnsureDefaultFaultTolerations(notReady, unreachable core.Toleration) {
+	if p.decoded != nil {
+		p.decoded.EnsureDefaultFaultTolerations(notReady, unreachable)
+		return
+	}
+	if p.wire != nil && p.wire.HasDefaultFaultTolerations(notReady.Key, unreachable.Key) {
+		return
+	}
 	p.mustDecoded().EnsureDefaultFaultTolerations(notReady, unreachable)
 }
 
@@ -1284,7 +1292,13 @@ func (p *Pod) GetStatusPodIP() string {
 }
 
 func (p *Pod) GetStatusPodIPs() []core.PodIP {
-	return p.mustDecoded().GetStatusPodIPs()
+	if p.decoded != nil {
+		return p.decoded.GetStatusPodIPs()
+	}
+	if p.wire != nil {
+		return p.wire.StatusPodIPs()
+	}
+	return nil
 }
 
 func (p *Pod) GetStatusPrimaryPodIP() string {
@@ -1312,7 +1326,13 @@ func (p *Pod) GetStatusHostIP() string {
 }
 
 func (p *Pod) GetStatusHostIPs() []core.HostIP {
-	return p.mustDecoded().GetStatusHostIPs()
+	if p.decoded != nil {
+		return p.decoded.GetStatusHostIPs()
+	}
+	if p.wire != nil {
+		return p.wire.StatusHostIPs()
+	}
+	return nil
 }
 
 func (p *Pod) GetStatusNominatedNodeName() string {
@@ -1443,7 +1463,318 @@ func (l *PodList) DeepCopyObject() runtime.Object {
 var (
 	_ runtime.VersionedObjectCreator = (*Pod)(nil)
 	_ runtime.VersionedObjectCreator = (*PodList)(nil)
+	_ runtime.LazyUpdateProjector    = (*V1Pod)(nil)
+	_ runtime.LazyScopedPatcher      = (*V1Pod)(nil)
+	_ runtime.LazyScopedPatcher      = (*Pod)(nil)
 )
+
+// HasEqualSpecWireBytes reports whether p and other are lazy and have byte-identical spec sub-messages.
+func (p *V1Pod) HasEqualSpecWireBytes(other runtime.Object) bool {
+	if p == nil || p.wire == nil || p.decoded != nil {
+		return false
+	}
+	o, ok := other.(*V1Pod)
+	if !ok || o == nil || o.wire == nil || o.decoded != nil {
+		return false
+	}
+	return bytes.Equal(p.wire.EffectiveSubMessage(podFieldSpec), o.wire.EffectiveSubMessage(podFieldSpec))
+}
+
+// HasEqualSpecWireBytes reports whether p and other are lazy and have byte-identical spec sub-messages.
+func (p *Pod) HasEqualSpecWireBytes(other runtime.Object) bool {
+	if p == nil || p.wire == nil || p.decoded != nil {
+		return false
+	}
+	o, ok := other.(*Pod)
+	if !ok || o == nil || o.wire == nil || o.decoded != nil {
+		return false
+	}
+	return bytes.Equal(p.wire.EffectiveSubMessage(podFieldSpec), o.wire.EffectiveSubMessage(podFieldSpec))
+}
+
+// HasEqualStatusWireBytes reports whether p and other are lazy and have byte-identical status sub-messages.
+func (p *Pod) HasEqualStatusWireBytes(other runtime.Object) bool {
+	if p == nil || p.wire == nil || p.decoded != nil {
+		return false
+	}
+	o, ok := other.(*Pod)
+	if !ok || o == nil || o.wire == nil || o.decoded != nil {
+		return false
+	}
+	if p.wire.statusEmptySlices != o.wire.statusEmptySlices {
+		return false
+	}
+	return bytes.Equal(p.wire.EffectiveSubMessage(podFieldStatus), o.wire.EffectiveSubMessage(podFieldStatus))
+}
+
+// ProjectForUpdate implements runtime.LazyUpdateProjector for structured-merge-diff Update comparisons,
+// omitting Spec and/or Status when either excluded by resetFields or byte-identical on the wire.
+func (p *V1Pod) ProjectForUpdate(peer runtime.Object, ignoreSpec, ignoreStatus bool) (runtime.Object, runtime.Object, bool, error) {
+	if p == nil || p.wire == nil || p.decoded != nil {
+		return nil, nil, false, nil
+	}
+	if peerV1, ok := peer.(*V1Pod); ok && peerV1 != nil && peerV1.wire != nil && peerV1.decoded == nil {
+		selfSpec := p.wire.EffectiveSubMessage(podFieldSpec)
+		peerSpec := peerV1.wire.EffectiveSubMessage(podFieldSpec)
+		omitSpec := ignoreSpec || bytes.Equal(selfSpec, peerSpec)
+
+		selfStatus := p.wire.EffectiveSubMessage(podFieldStatus)
+		peerStatus := peerV1.wire.EffectiveSubMessage(podFieldStatus)
+		omitStatus := ignoreStatus || bytes.Equal(selfStatus, peerStatus)
+
+		if !omitSpec && !omitStatus {
+			return nil, nil, false, nil
+		}
+
+		selfProj := &v1.Pod{TypeMeta: p.TypeMeta}
+		peerProj := &v1.Pod{TypeMeta: peerV1.TypeMeta}
+		p.wire.ExtractObjectMetaForUpdate(&selfProj.ObjectMeta, true)
+		peerV1.wire.ExtractObjectMetaForUpdate(&peerProj.ObjectMeta, true)
+		if !omitSpec {
+			if err := selfProj.Spec.Unmarshal(selfSpec); err != nil {
+				return nil, nil, false, err
+			}
+			if err := peerProj.Spec.Unmarshal(peerSpec); err != nil {
+				return nil, nil, false, err
+			}
+		}
+		if !omitStatus {
+			if err := selfProj.Status.Unmarshal(selfStatus); err != nil {
+				return nil, nil, false, err
+			}
+			if err := peerProj.Status.Unmarshal(peerStatus); err != nil {
+				return nil, nil, false, err
+			}
+		}
+		return selfProj, peerProj, true, nil
+	}
+
+	if !ignoreSpec && !ignoreStatus {
+		return nil, nil, false, nil
+	}
+	peerDecObj, err := runtime.EnsureDecodedObject(peer)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	peerDec, ok := peerDecObj.(*v1.Pod)
+	if !ok || peerDec == nil {
+		return nil, nil, false, nil
+	}
+	selfProj := &v1.Pod{TypeMeta: p.TypeMeta}
+	p.wire.ExtractObjectMetaForUpdate(&selfProj.ObjectMeta, true)
+	peerProj := &v1.Pod{
+		TypeMeta:   peerDec.TypeMeta,
+		ObjectMeta: peerDec.ObjectMeta,
+	}
+	peerProj.ManagedFields = nil
+	if !ignoreSpec {
+		if err := selfProj.Spec.Unmarshal(p.wire.EffectiveSubMessage(podFieldSpec)); err != nil {
+			return nil, nil, false, err
+		}
+		peerProj.Spec = peerDec.Spec
+	}
+	if !ignoreStatus {
+		if err := p.wire.ExtractV1StatusInto(&selfProj.Status); err != nil {
+			return nil, nil, false, err
+		}
+		peerProj.Status = peerDec.Status
+	}
+	return selfProj, peerProj, true, nil
+}
+
+// ExtractScopedPatchBase implements runtime.LazyScopedPatcher on external *V1Pod.
+func (p *V1Pod) ExtractScopedPatchBase(includeMetadata, includeStatus, dropManagedFields bool) (runtime.Object, error) {
+	base := &v1.Pod{TypeMeta: p.TypeMeta}
+	if p.wire == nil {
+		return base, nil
+	}
+	if includeMetadata {
+		p.wire.ExtractObjectMetaForUpdate(&base.ObjectMeta, dropManagedFields)
+	}
+	if includeStatus {
+		if err := p.wire.ExtractV1StatusInto(&base.Status); err != nil {
+			return nil, err
+		}
+	}
+	return base, nil
+}
+
+// SpliceScopedPatchResult implements runtime.LazyScopedPatcher on external *V1Pod.
+func (p *V1Pod) SpliceScopedPatchResult(patched runtime.Object, includeMetadata, includeStatus bool) (runtime.Object, error) {
+	decObj, err := runtime.EnsureDecodedObject(patched)
+	if err != nil {
+		return nil, err
+	}
+	patchedV1, ok := decObj.(*v1.Pod)
+	if !ok {
+		return nil, fmt.Errorf("expected *v1.Pod, got %T", decObj)
+	}
+	var metaPtr *metav1.ObjectMeta
+	if includeMetadata {
+		metaPtr = &patchedV1.ObjectMeta
+	}
+	var statusPtr *v1.PodStatus
+	if includeStatus {
+		statusPtr = &patchedV1.Status
+	}
+	newWire, err := p.wire.ReplaceSubMessages(metaPtr, p.wire.EffectiveSubMessage(podFieldSpec), statusPtr)
+	if err != nil {
+		return nil, err
+	}
+	out := &V1Pod{TypeMeta: p.TypeMeta, wire: newWire}
+	out.wireOwn = out
+	return out, nil
+}
+
+// ExtractScopedPatchBase implements runtime.LazyScopedPatcher on internal *Pod.
+func (p *Pod) ExtractScopedPatchBase(includeMetadata, includeStatus, dropManagedFields bool) (runtime.Object, error) {
+	base := &core.Pod{TypeMeta: p.TypeMeta}
+	if p.wire == nil {
+		return base, nil
+	}
+	if includeMetadata {
+		p.wire.ExtractObjectMetaForUpdate(&base.ObjectMeta, dropManagedFields)
+	}
+	if includeStatus {
+		if err := p.wire.ExtractCoreStatusInto(&base.Status); err != nil {
+			return nil, err
+		}
+	}
+	return base, nil
+}
+
+// SpliceScopedPatchResult implements runtime.LazyScopedPatcher on internal *Pod.
+func (p *Pod) SpliceScopedPatchResult(patched runtime.Object, includeMetadata, includeStatus bool) (runtime.Object, error) {
+	decObj, err := runtime.EnsureDecodedObject(patched)
+	if err != nil {
+		return nil, err
+	}
+	patchedCore, ok := decObj.(*core.Pod)
+	if !ok {
+		return nil, fmt.Errorf("expected *core.Pod, got %T", decObj)
+	}
+	var metaPtr *metav1.ObjectMeta
+	if includeMetadata {
+		metaPtr = &patchedCore.ObjectMeta
+	}
+	var statusPtr *v1.PodStatus
+	if includeStatus {
+		statusPtr = (*v1.PodStatus)(unsafe.Pointer(&patchedCore.Status))
+	}
+	newWire, err := p.wire.ReplaceSubMessages(metaPtr, p.wire.EffectiveSubMessage(podFieldSpec), statusPtr)
+	if err != nil {
+		return nil, err
+	}
+	out := &Pod{TypeMeta: p.TypeMeta, wire: newWire}
+	out.wireOwn = out
+	return out, nil
+}
+
+// ExtractObjectMetaForUpdate unmarshals ObjectMeta from p, eliding ManagedFields when dropManagedFields is true.
+func (p *Pod) ExtractObjectMetaForUpdate(out *metav1.ObjectMeta, dropManagedFields bool) {
+	if p.decoded != nil {
+		p.decoded.ObjectMeta.DeepCopyInto(out)
+		if dropManagedFields {
+			out.ManagedFields = nil
+		}
+		return
+	}
+	if p.wire != nil {
+		p.wire.ExtractObjectMetaForUpdate(out, dropManagedFields)
+	}
+}
+
+// ExtractMetaAndStatus decodes only ObjectMeta and PodStatus from a lazy Pod without decoding PodSpec.
+func (p *Pod) ExtractMetaAndStatus() (metav1.ObjectMeta, core.PodStatus, error) {
+	return p.ExtractMetaAndStatusForUpdate(false)
+}
+
+// ExtractMetaAndStatusForUpdate decodes only ObjectMeta and PodStatus from a lazy Pod without decoding PodSpec,
+// eliding ManagedFields when dropManagedFields is true.
+func (p *Pod) ExtractMetaAndStatusForUpdate(dropManagedFields bool) (metav1.ObjectMeta, core.PodStatus, error) {
+	var meta metav1.ObjectMeta
+	var status core.PodStatus
+	if p.decoded != nil {
+		p.decoded.ObjectMeta.DeepCopyInto(&meta)
+		if dropManagedFields {
+			meta.ManagedFields = nil
+		}
+		p.decoded.Status.DeepCopyInto(&status)
+		return meta, status, nil
+	}
+	if p.wire != nil {
+		p.wire.ExtractObjectMetaForUpdate(&meta, dropManagedFields)
+		if err := p.wire.ExtractCoreStatusInto(&status); err != nil {
+			return meta, status, err
+		}
+	}
+	return meta, status, nil
+}
+
+// CacheDecodedStatus stores a decoded PodStatus on p's WirePod for reuse in subsequent validation steps.
+func (p *Pod) CacheDecodedStatus(status *core.PodStatus) {
+	if p == nil || p.wire == nil || status == nil {
+		return
+	}
+	p.wire.CacheDecodedStatus((*v1.PodStatus)(unsafe.Pointer(status)))
+}
+
+// ReplaceMetaAndStatusFromOldSpec updates p in-place to hold meta + old.Spec (on the wire) + status.
+func (p *Pod) ReplaceMetaAndStatusFromOldSpec(meta *metav1.ObjectMeta, status *core.PodStatus, old *Pod) error {
+	var statusPtr *v1.PodStatus
+	if status != nil {
+		statusPtr = (*v1.PodStatus)(unsafe.Pointer(status))
+	}
+	newWire, err := old.wire.ReplaceSubMessages(meta, old.wire.EffectiveSubMessage(podFieldSpec), statusPtr)
+	if err != nil {
+		return err
+	}
+	p.decoded = nil
+	p.wire = newWire
+	p.wireOwn = p
+	return nil
+}
+
+// ReplaceMetaWithOldSpecAndStatus updates p in-place to hold meta + old.Spec (on the wire) + old.Status (on the wire).
+func (p *Pod) ReplaceMetaWithOldSpecAndStatus(meta *metav1.ObjectMeta, old *Pod) error {
+	newWire, err := old.wire.ReplaceSubMessages(meta, old.wire.EffectiveSubMessage(podFieldSpec), nil)
+	if err != nil {
+		return err
+	}
+	p.decoded = nil
+	p.wire = newWire
+	p.wireOwn = p
+	return nil
+}
+
+// SpecSummaryForStatusValidation extracts the PodSpec fields required by common-case ValidatePodStatusUpdate without decoding PodSpec.
+func (p *Pod) SpecSummaryForStatusValidation() (nodeName string, restartPolicy core.RestartPolicy, podOS *core.PodOS) {
+	if p.decoded != nil {
+		return p.decoded.Spec.NodeName, p.decoded.Spec.RestartPolicy, p.decoded.Spec.OS
+	}
+	if p.wire != nil {
+		return p.wire.NodeName(), p.wire.RestartPolicy(), p.wire.SpecOS()
+	}
+	return "", "", nil
+}
+
+// NewVersionedObject implements runtime.VersionedObjectCreator so Scheme.ConvertToVersion
+// allocates a lazy *Pod when converting an external *V1Pod to the internal hub version.
+func (p *V1Pod) NewVersionedObject(gvk schema.GroupVersionKind) (runtime.Object, bool) {
+	if gvk.GroupVersion() == core.SchemeGroupVersion && gvk.Kind == "Pod" {
+		return &Pod{}, true
+	}
+	return nil, false
+}
+
+// NewVersionedObject implements runtime.VersionedObjectCreator so Scheme.ConvertToVersion
+// allocates a lazy *PodList when converting an external *V1PodList to the internal hub version.
+func (l *V1PodList) NewVersionedObject(gvk schema.GroupVersionKind) (runtime.Object, bool) {
+	if gvk.GroupVersion() == core.SchemeGroupVersion && gvk.Kind == "PodList" {
+		return &PodList{}, true
+	}
+	return nil, false
+}
 
 // NewVersionedObject implements runtime.VersionedObjectCreator so that Protobuf and JSON
 // serializers allocate a lazy *V1Pod when encoding/converting an internal *lazypod.Pod.

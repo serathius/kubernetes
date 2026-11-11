@@ -137,6 +137,14 @@ func (p *Plugin) validatePod(a admission.Attributes) error {
 	if subresource != "" && subresource != "resize" {
 		return nil
 	}
+	if acc, ok := admission.RawObjectFrom(a).(core.PodAccessor); ok {
+		if len(acc.GetSpecNodeName()) == 0 {
+			return nil
+		}
+		if oldAcc, ok := admission.RawOldObjectFrom(a).(core.PodAccessor); ok && oldAcc.GetGeneration() == acc.GetGeneration() {
+			return nil
+		}
+	}
 	pod, ok := a.GetObject().(*core.Pod)
 	if !ok {
 		return errors.NewBadRequest(fmt.Sprintf("expected a pod but got a %T", a.GetObject()))

@@ -102,7 +102,14 @@ func UpdateResource(r rest.Updater, scope *RequestScope, admit admission.Interfa
 			return
 		}
 		defaultGVK := scope.Kind
-		original, _ := runtime.EnsureDecodedObject(r.New())
+		allowLazy := false
+		if lazyUpdater, ok := r.(interface{ AllowsLazyUpdate() bool }); ok {
+			allowLazy = lazyUpdater.AllowsLazyUpdate()
+		}
+		original := r.New()
+		if !allowLazy {
+			original, _ = runtime.EnsureDecodedObject(original)
+		}
 
 		validationDirective := fieldValidation(options.FieldValidation)
 		decodeSerializer := s.Serializer
@@ -134,10 +141,12 @@ func UpdateResource(r rest.Updater, scope *RequestScope, admit admission.Interfa
 			scope.err(err, w, req)
 			return
 		}
-		obj, err = runtime.EnsureDecodedObject(obj)
-		if err != nil {
-			scope.err(err, w, req)
-			return
+		if !allowLazy {
+			obj, err = runtime.EnsureDecodedObject(obj)
+			if err != nil {
+				scope.err(err, w, req)
+				return
+			}
 		}
 		span.AddEvent("Conversion done")
 
@@ -166,11 +175,13 @@ func UpdateResource(r rest.Updater, scope *RequestScope, admit admission.Interfa
 		admit = fieldmanager.NewManagedFieldsValidatingAdmissionController(admit)
 		transformers = append(transformers, func(_ context.Context, newObj, liveObj runtime.Object) (runtime.Object, error) {
 			if shouldUpdateManagedFields {
-				decodedLiveObj, err := runtime.EnsureDecodedObject(liveObj)
-				if err != nil {
-					return nil, err
+				if !allowLazy {
+					liveObj, err = runtime.EnsureDecodedObject(liveObj)
+					if err != nil {
+						return nil, err
+					}
 				}
-				return scope.FieldManager.UpdateNoErrors(decodedLiveObj, newObj, managerOrUserAgent(options.FieldManager, req.UserAgent())), nil
+				return scope.FieldManager.UpdateNoErrors(liveObj, newObj, managerOrUserAgent(options.FieldManager, req.UserAgent())), nil
 			}
 			return newObj, nil
 		})

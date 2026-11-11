@@ -356,6 +356,34 @@ func DropDisabledPodFields(pod, oldPod *api.Pod) {
 	dropDisabledPodStatusFields(podStatus, oldPodStatus, podSpec, oldPodSpec)
 }
 
+// DropDisabledPodStatusFields removes disabled fields from pod annotations and status on /status updates,
+// returning true if any field or annotation was modified.
+func DropDisabledPodStatusFields(pod, oldPod *api.Pod) bool {
+	var (
+		podSpec        *api.PodSpec
+		podStatus      *api.PodStatus
+		podAnnotations map[string]string
+		oldPodSpec     *api.PodSpec
+		oldPodStatus   *api.PodStatus
+	)
+	if pod != nil {
+		podSpec = &pod.Spec
+		podStatus = &pod.Status
+		podAnnotations = pod.Annotations
+	}
+	if oldPod != nil {
+		oldPodSpec = &oldPod.Spec
+		oldPodStatus = &oldPod.Status
+	}
+	beforeAnnLen := len(podAnnotations)
+	DropInitContainerAnnotations(podAnnotations)
+	changed := len(podAnnotations) != beforeAnnLen
+	if dropDisabledPodStatusFields(podStatus, oldPodStatus, podSpec, oldPodSpec) {
+		changed = true
+	}
+	return changed
+}
+
 // dropDisabledFields removes disabled fields from the pod metadata and spec.
 func dropDisabledFields(
 	podSpec *api.PodSpec, podAnnotations map[string]string,
@@ -611,27 +639,37 @@ func dropProbeGRPCTLS(p *api.Probe) {
 	}
 }
 
-// dropDisabledPodStatusFields removes disabled fields from the pod status
-func dropDisabledPodStatusFields(podStatus, oldPodStatus *api.PodStatus, podSpec, oldPodSpec *api.PodSpec) {
+// dropDisabledPodStatusFields removes disabled fields from the pod status and reports whether any field changed.
+func dropDisabledPodStatusFields(podStatus, oldPodStatus *api.PodStatus, podSpec, oldPodSpec *api.PodSpec) bool {
 	// the new status is always be non-nil
 	if podStatus == nil {
-		podStatus = &api.PodStatus{}
+		return false
 	}
+	changed := false
 
 	if !utilfeature.DefaultFeatureGate.Enabled(features.InPlacePodLevelResourcesVerticalScaling) && !podLevelStatusResourcesInUse(oldPodStatus) {
 		// Drop Resources and AllocatedResources fields from PodStatus
-		podStatus.Resources = nil
-		podStatus.AllocatedResources = nil
+		if podStatus.Resources != nil || podStatus.AllocatedResources != nil {
+			podStatus.Resources = nil
+			podStatus.AllocatedResources = nil
+			changed = true
+		}
 	}
 
 	if !utilfeature.DefaultFeatureGate.Enabled(features.DRAExtendedResource) && !draExendedResourceInUse(oldPodStatus) {
-		podStatus.ExtendedResourceClaimStatus = nil
+		if podStatus.ExtendedResourceClaimStatus != nil {
+			podStatus.ExtendedResourceClaimStatus = nil
+			changed = true
+		}
 	}
 
 	if !utilfeature.DefaultFeatureGate.Enabled(features.ResourceHealthStatus) && !resourceHealthStatusInUse(oldPodStatus) {
 		setAllocatedResourcesStatusToNil := func(csl []api.ContainerStatus) {
 			for i := range csl {
-				csl[i].AllocatedResourcesStatus = nil
+				if csl[i].AllocatedResourcesStatus != nil {
+					csl[i].AllocatedResourcesStatus = nil
+					changed = true
+				}
 			}
 		}
 		setAllocatedResourcesStatusToNil(podStatus.ContainerStatuses)
@@ -644,7 +682,10 @@ func dropDisabledPodStatusFields(podStatus, oldPodStatus *api.PodStatus, podSpec
 			for i := range csl {
 				for j := range csl[i].AllocatedResourcesStatus {
 					for k := range csl[i].AllocatedResourcesStatus[j].Resources {
-						csl[i].AllocatedResourcesStatus[j].Resources[k].Message = nil
+						if csl[i].AllocatedResourcesStatus[j].Resources[k].Message != nil {
+							csl[i].AllocatedResourcesStatus[j].Resources[k].Message = nil
+							changed = true
+						}
 					}
 				}
 			}
@@ -655,21 +696,35 @@ func dropDisabledPodStatusFields(podStatus, oldPodStatus *api.PodStatus, podSpec
 	}
 
 	if !utilfeature.DefaultFeatureGate.Enabled(features.PodObservedGenerationTracking) && !podObservedGenerationTrackingInUse(oldPodStatus) {
-		podStatus.ObservedGeneration = 0
+		if podStatus.ObservedGeneration != 0 {
+			podStatus.ObservedGeneration = 0
+			changed = true
+		}
 		for i := range podStatus.Conditions {
-			podStatus.Conditions[i].ObservedGeneration = 0
+			if podStatus.Conditions[i].ObservedGeneration != 0 {
+				podStatus.Conditions[i].ObservedGeneration = 0
+				changed = true
+			}
 		}
 	}
 
 	if !utilfeature.DefaultFeatureGate.Enabled(features.ImageVolumeWithDigest) && !imageVolumeWithDigestInUse(oldPodStatus) {
-		dropImageVolumeWithDigest(podStatus)
+		if dropImageVolumeWithDigest(podStatus) {
+			changed = true
+		}
 	}
 
-	dropPodNodeAllocatableResourceStatus(podStatus, oldPodStatus)
+	if dropPodNodeAllocatableResourceStatus(podStatus, oldPodStatus) {
+		changed = true
+	}
 
 	if !utilfeature.DefaultFeatureGate.Enabled(features.CSIVolumeHealth) && !volumeHealthInUse(oldPodStatus) {
-		podStatus.VolumeStatuses = nil
+		if podStatus.VolumeStatuses != nil {
+			podStatus.VolumeStatuses = nil
+			changed = true
+		}
 	}
+	return changed
 }
 
 func draExendedResourceInUse(podStatus *api.PodStatus) bool {
@@ -679,11 +734,15 @@ func draExendedResourceInUse(podStatus *api.PodStatus) bool {
 	return false
 }
 
-func dropPodNodeAllocatableResourceStatus(podStatus, oldPodStatus *api.PodStatus) {
+func dropPodNodeAllocatableResourceStatus(podStatus, oldPodStatus *api.PodStatus) bool {
 	if utilfeature.DefaultFeatureGate.Enabled(features.DRANodeAllocatableResources) || draNodeAllocatableResourceStatusInUse(oldPodStatus) {
-		return
+		return false
 	}
-	podStatus.NodeAllocatableResourceClaimStatuses = nil
+	if podStatus.NodeAllocatableResourceClaimStatuses != nil {
+		podStatus.NodeAllocatableResourceClaimStatuses = nil
+		return true
+	}
+	return false
 }
 
 func draNodeAllocatableResourceStatusInUse(podStatus *api.PodStatus) bool {
@@ -1453,28 +1512,39 @@ func imageVolumeWithDigestInUse(oldPodStatus *api.PodStatus) bool {
 	return false
 }
 
-func dropImageVolumeWithDigest(podStatus *api.PodStatus) {
+func dropImageVolumeWithDigest(podStatus *api.PodStatus) bool {
 	if podStatus == nil {
-		return
+		return false
 	}
+	changed := false
 
 	for i := range podStatus.ContainerStatuses {
 		for j := range podStatus.ContainerStatuses[i].VolumeMounts {
-			podStatus.ContainerStatuses[i].VolumeMounts[j].VolumeStatus = nil
+			if podStatus.ContainerStatuses[i].VolumeMounts[j].VolumeStatus != nil {
+				podStatus.ContainerStatuses[i].VolumeMounts[j].VolumeStatus = nil
+				changed = true
+			}
 		}
 	}
 
 	for i := range podStatus.InitContainerStatuses {
 		for j := range podStatus.InitContainerStatuses[i].VolumeMounts {
-			podStatus.InitContainerStatuses[i].VolumeMounts[j].VolumeStatus = nil
+			if podStatus.InitContainerStatuses[i].VolumeMounts[j].VolumeStatus != nil {
+				podStatus.InitContainerStatuses[i].VolumeMounts[j].VolumeStatus = nil
+				changed = true
+			}
 		}
 	}
 
 	for i := range podStatus.EphemeralContainerStatuses {
 		for j := range podStatus.EphemeralContainerStatuses[i].VolumeMounts {
-			podStatus.EphemeralContainerStatuses[i].VolumeMounts[j].VolumeStatus = nil
+			if podStatus.EphemeralContainerStatuses[i].VolumeMounts[j].VolumeStatus != nil {
+				podStatus.EphemeralContainerStatuses[i].VolumeMounts[j].VolumeStatus = nil
+				changed = true
+			}
 		}
 	}
+	return changed
 }
 
 // DefaultPodLevelResources runs all pod-level resource defaulting in dependency order,

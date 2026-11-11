@@ -19,6 +19,7 @@ package lazypod
 import (
 	"fmt"
 	"strings"
+	"unsafe"
 
 	"google.golang.org/protobuf/encoding/protowire"
 
@@ -48,6 +49,7 @@ const (
 	specFieldSecurityContext               = 14
 	specFieldSchedulerName                 = 19
 	specFieldInitContainers                = 20
+	specFieldTolerations                   = 22
 	specFieldReadinessGates                = 28
 	specFieldEnableServiceLinks            = 30
 	specFieldEphemeralContainers           = 34
@@ -57,13 +59,17 @@ const (
 	statusFieldPhase                 = 1
 	statusFieldConditions            = 2
 	statusFieldReason                = 4
+	statusFieldHostIP                = 5
 	statusFieldPodIP                 = 6
-	statusFieldInitContainerStatuses = 7
 	statusFieldContainerStatuses     = 8
+	statusFieldQOSClass              = 9
+	statusFieldInitContainerStatuses = 10
 	statusFieldNominatedNodeName     = 11
 	statusFieldPodIPs                = 12
+	statusFieldHostIPs               = 16
 
-	podIPFieldIP = 1
+	podIPFieldIP  = 1
+	hostIPFieldIP = 1
 
 	containerFieldName                     = 1
 	containerFieldImage                    = 2
@@ -125,10 +131,17 @@ type WirePod struct {
 	hasNominatedNodeMod bool
 
 	hasConditionsMod  bool
+	statusEmptySlices uint8
 	conditionsEncoded []byte
+	cachedStatus      *v1.PodStatus
 
 	defaults *wireDefaultPlan
 }
+
+const (
+	statusEmptyResourceClaimStatuses uint8 = 1 << iota
+	statusEmptyNodeAllocatableClaimStatuses
+)
 
 func scanPodTopLevel(raw []byte) (metaBytes, specBytes, statusBytes []byte) {
 	offset := 0
@@ -169,23 +182,24 @@ func NewWirePod(raw []byte) *WirePod {
 }
 
 // Clone returns a copy of WirePod suitable for DeepCopy without decoding into a Go struct.
+// Because w.raw, w.specBytes, and w.statusBytes are never mutated in place, clones share the
+// immutable backing wire slice while cloning mutable override state.
 func (w *WirePod) Clone() *WirePod {
 	if w == nil {
 		return nil
 	}
-	rawCopy := make([]byte, len(w.raw))
-	copy(rawCopy, w.raw)
-	_, specBytes, statusBytes := scanPodTopLevel(rawCopy)
 	cp := &WirePod{
-		raw:                 rawCopy,
-		meta:                w.meta.CloneWithParent(rawCopy, podFieldMetadata),
-		specBytes:           specBytes,
-		statusBytes:         statusBytes,
+		raw:                 w.raw,
+		meta:                w.meta.Clone(),
+		specBytes:           w.specBytes,
+		statusBytes:         w.statusBytes,
 		nodeName:            w.nodeName,
 		hasNodeNameMod:      w.hasNodeNameMod,
 		nominatedNodeName:   w.nominatedNodeName,
 		hasNominatedNodeMod: w.hasNominatedNodeMod,
 		hasConditionsMod:    w.hasConditionsMod,
+		statusEmptySlices:   w.statusEmptySlices,
+		cachedStatus:        w.cachedStatus,
 		defaults:            w.defaults.clone(),
 	}
 	if w.hasConditionsMod && w.conditionsEncoded != nil {
@@ -2970,5 +2984,242 @@ func (w *WirePod) DecodeToV1Pod() (*v1.Pod, error) {
 		return nil, err
 	}
 	w.meta.ApplyToObjectMeta(&v1Pod.ObjectMeta)
+	if w.statusEmptySlices&statusEmptyResourceClaimStatuses != 0 && v1Pod.Status.ResourceClaimStatuses == nil {
+		v1Pod.Status.ResourceClaimStatuses = []v1.PodResourceClaimStatus{}
+	}
+	if w.statusEmptySlices&statusEmptyNodeAllocatableClaimStatuses != 0 && v1Pod.Status.NodeAllocatableResourceClaimStatuses == nil {
+		v1Pod.Status.NodeAllocatableResourceClaimStatuses = []v1.NodeAllocatableResourceClaimStatus{}
+	}
 	return v1Pod, nil
+}
+
+// AssembleWirePod constructs a WirePod directly from pre-encoded metadata, spec, and status sub-messages
+// using the canonical v1.Pod Protobuf tag layout without decoding or re-encoding specBytes.
+func AssembleWirePod(metaBytes, specBytes, statusBytes []byte) *WirePod {
+	raw := make([]byte, 0, len(metaBytes)+len(specBytes)+len(statusBytes)+18)
+	raw = protowire.AppendTag(raw, podFieldMetadata, protowire.BytesType)
+	raw = protowire.AppendBytes(raw, metaBytes)
+	raw = protowire.AppendTag(raw, podFieldSpec, protowire.BytesType)
+	raw = protowire.AppendBytes(raw, specBytes)
+	raw = protowire.AppendTag(raw, podFieldStatus, protowire.BytesType)
+	raw = protowire.AppendBytes(raw, statusBytes)
+	return NewWirePod(raw)
+}
+
+// ReplaceSubMessages builds a new WirePod replacing metadata and/or status when non-nil while keeping specBytes intact.
+func (w *WirePod) ReplaceSubMessages(meta *metav1.ObjectMeta, specBytes []byte, status *v1.PodStatus) (*WirePod, error) {
+	var metaBytes []byte
+	var err error
+	if meta != nil {
+		metaBytes, err = meta.Marshal()
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		metaBytes = w.EffectiveSubMessage(podFieldMetadata)
+	}
+	var statusBytes []byte
+	var emptySlices uint8
+	var cachedSt *v1.PodStatus
+	if status != nil {
+		if status.ResourceClaimStatuses != nil && len(status.ResourceClaimStatuses) == 0 {
+			emptySlices |= statusEmptyResourceClaimStatuses
+		}
+		if status.NodeAllocatableResourceClaimStatuses != nil && len(status.NodeAllocatableResourceClaimStatuses) == 0 {
+			emptySlices |= statusEmptyNodeAllocatableClaimStatuses
+		}
+		statusBytes, err = status.Marshal()
+		if err != nil {
+			return nil, err
+		}
+		cachedSt = status.DeepCopy()
+	} else {
+		statusBytes = w.EffectiveSubMessage(podFieldStatus)
+		emptySlices = w.statusEmptySlices
+		if (w.defaults == nil || !w.defaults.statusDirty) && !w.hasNominatedNodeMod && !w.hasConditionsMod {
+			cachedSt = w.cachedStatus
+		}
+	}
+	nw := AssembleWirePod(metaBytes, specBytes, statusBytes)
+	nw.statusEmptySlices = emptySlices
+	nw.cachedStatus = cachedSt
+	return nw, nil
+}
+
+// ExtractObjectMetaForUpdate unmarshals ObjectMeta from the wire, eliding ManagedFields (tag 17)
+// on both wire bytes and dirty overrides when dropManagedFields is true.
+func (w *WirePod) ExtractObjectMetaForUpdate(out *metav1.ObjectMeta, dropManagedFields bool) {
+	if w == nil {
+		return
+	}
+	if dropManagedFields {
+		w.meta.ExtractObjectMetaWithoutManagedFieldsInto(w.meta.Bytes(), out)
+		return
+	}
+	w.meta.ExtractObjectMetaInto(w.meta.Bytes(), out)
+}
+
+// CacheDecodedStatus stores a decoded PodStatus on w for reuse across validation steps when
+// w has no pending wire-level status overrides.
+func (w *WirePod) CacheDecodedStatus(status *v1.PodStatus) {
+	if w == nil || status == nil || w.cachedStatus != nil {
+		return
+	}
+	if (w.defaults != nil && w.defaults.statusDirty) || w.hasNominatedNodeMod || w.hasConditionsMod {
+		return
+	}
+	w.cachedStatus = status
+}
+
+// ExtractV1StatusInto unmarshals only PodStatus (tag 3) from w without decoding PodSpec.
+func (w *WirePod) ExtractV1StatusInto(out *v1.PodStatus) error {
+	if w == nil {
+		return nil
+	}
+	if w.cachedStatus != nil && (w.defaults == nil || !w.defaults.statusDirty) && !w.hasNominatedNodeMod && !w.hasConditionsMod {
+		w.cachedStatus.DeepCopyInto(out)
+		return nil
+	}
+	statusBytes := w.EffectiveSubMessage(podFieldStatus)
+	if len(statusBytes) > 0 {
+		if err := out.Unmarshal(statusBytes); err != nil {
+			return err
+		}
+	}
+	if w.statusEmptySlices&statusEmptyResourceClaimStatuses != 0 && out.ResourceClaimStatuses == nil {
+		out.ResourceClaimStatuses = []v1.PodResourceClaimStatus{}
+	}
+	if w.statusEmptySlices&statusEmptyNodeAllocatableClaimStatuses != 0 && out.NodeAllocatableResourceClaimStatuses == nil {
+		out.NodeAllocatableResourceClaimStatuses = []v1.NodeAllocatableResourceClaimStatus{}
+	}
+	return nil
+}
+
+// ExtractCoreStatusInto unmarshals only PodStatus (tag 3) into a core.PodStatus without decoding PodSpec.
+func (w *WirePod) ExtractCoreStatusInto(out *core.PodStatus) error {
+	return w.ExtractV1StatusInto((*v1.PodStatus)(unsafe.Pointer(out)))
+}
+
+// SpecOS extracts spec.os from the wire without decoding PodSpec.
+func (w *WirePod) SpecOS() *core.PodOS {
+	if w == nil {
+		return nil
+	}
+	specBytes := w.subMessage(podFieldSpec)
+	offset := 0
+	for offset < len(specBytes) {
+		num, typ, tagLen := protowire.ConsumeTag(specBytes[offset:])
+		if tagLen < 0 {
+			break
+		}
+		offset += tagLen
+		valLen := protowire.ConsumeFieldValue(num, typ, specBytes[offset:])
+		if valLen < 0 {
+			break
+		}
+		if num == specFieldOS && typ == protowire.BytesType {
+			osBytes, _ := protowire.ConsumeBytes(specBytes[offset : offset+valLen])
+			return &core.PodOS{Name: core.OSName(lazy.ExtractFirstStringField(osBytes, osFieldName))}
+		}
+		offset += valLen
+	}
+	return nil
+}
+
+// StatusPodIPs extracts status.podIPs from the wire without decoding the pod.
+func (w *WirePod) StatusPodIPs() []core.PodIP {
+	if w == nil {
+		return nil
+	}
+	if w.defaults != nil && w.defaults.status.hasSinglePodIP {
+		return []core.PodIP{{IP: w.defaults.status.singlePodIP}}
+	}
+	statusBytes := w.subMessage(podFieldStatus)
+	var ips []core.PodIP
+	offset := 0
+	for offset < len(statusBytes) {
+		num, typ, tagLen := protowire.ConsumeTag(statusBytes[offset:])
+		if tagLen < 0 {
+			break
+		}
+		offset += tagLen
+		valLen := protowire.ConsumeFieldValue(num, typ, statusBytes[offset:])
+		if valLen < 0 {
+			break
+		}
+		if num == statusFieldPodIPs && typ == protowire.BytesType {
+			sub, _ := protowire.ConsumeBytes(statusBytes[offset : offset+valLen])
+			ips = append(ips, core.PodIP{IP: lazy.ExtractFirstStringField(sub, podIPFieldIP)})
+		}
+		offset += valLen
+	}
+	return ips
+}
+
+// StatusHostIPs extracts status.hostIPs from the wire without decoding the pod.
+func (w *WirePod) StatusHostIPs() []core.HostIP {
+	if w == nil {
+		return nil
+	}
+	statusBytes := w.subMessage(podFieldStatus)
+	var ips []core.HostIP
+	offset := 0
+	for offset < len(statusBytes) {
+		num, typ, tagLen := protowire.ConsumeTag(statusBytes[offset:])
+		if tagLen < 0 {
+			break
+		}
+		offset += tagLen
+		valLen := protowire.ConsumeFieldValue(num, typ, statusBytes[offset:])
+		if valLen < 0 {
+			break
+		}
+		if num == statusFieldHostIPs && typ == protowire.BytesType {
+			sub, _ := protowire.ConsumeBytes(statusBytes[offset : offset+valLen])
+			ips = append(ips, core.HostIP{IP: lazy.ExtractFirstStringField(sub, hostIPFieldIP)})
+		}
+		offset += valLen
+	}
+	return ips
+}
+
+// HasDefaultFaultTolerations reports whether spec.tolerations on the wire already tolerates
+// both notReadyKey:NoExecute and unreachableKey:NoExecute without decoding PodSpec.
+func (w *WirePod) HasDefaultFaultTolerations(notReadyKey, unreachableKey string) bool {
+	if w == nil {
+		return false
+	}
+	specBytes := w.EffectiveSubMessage(podFieldSpec)
+	hasNotReady := false
+	hasUnreachable := false
+	offset := 0
+	for offset < len(specBytes) {
+		num, typ, tagLen := protowire.ConsumeTag(specBytes[offset:])
+		if tagLen < 0 {
+			break
+		}
+		offset += tagLen
+		valLen := protowire.ConsumeFieldValue(num, typ, specBytes[offset:])
+		if valLen < 0 {
+			break
+		}
+		if num == specFieldTolerations && typ == protowire.BytesType {
+			tBytes, _ := protowire.ConsumeBytes(specBytes[offset : offset+valLen])
+			key := lazy.ExtractFirstStringFieldNoCopy(tBytes, 1)
+			effect := lazy.ExtractFirstStringFieldNoCopy(tBytes, 4)
+			if effect == string(core.TaintEffectNoExecute) || len(effect) == 0 {
+				if key == notReadyKey || len(key) == 0 {
+					hasNotReady = true
+				}
+				if key == unreachableKey || len(key) == 0 {
+					hasUnreachable = true
+				}
+				if hasNotReady && hasUnreachable {
+					return true
+				}
+			}
+		}
+		offset += valLen
+	}
+	return false
 }

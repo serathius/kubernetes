@@ -36,9 +36,28 @@ type structuredMergeManager struct {
 	groupVersion    schema.GroupVersion
 	hubVersion      schema.GroupVersion
 	updater         merge.Updater
+	ignoreSpec      bool
+	ignoreStatus    bool
 }
 
 var _ Manager = &structuredMergeManager{}
+
+var (
+	filterProbeSet  = fieldpath.NewSet(fieldpath.MakePathOrDie("__probe__"))
+	filterSpecSet   = fieldpath.NewSet(fieldpath.MakePathOrDie("spec"))
+	filterStatusSet = fieldpath.NewSet(fieldpath.MakePathOrDie("status"))
+)
+
+func excludedTopLevelSections(gv schema.GroupVersion, resetFields map[fieldpath.APIVersion]fieldpath.Filter) (ignoreSpec, ignoreStatus bool) {
+	if resetFields == nil {
+		return false, false
+	}
+	filter := resetFields[fieldpath.APIVersion(gv.String())]
+	if filter == nil || filter.Filter(filterProbeSet).Empty() {
+		return false, false
+	}
+	return filter.Filter(filterSpecSet).Empty(), filter.Filter(filterStatusSet).Empty()
+}
 
 // NewStructuredMergeManager creates a new Manager that merges apply requests
 // and update managed fields for other types of requests.
@@ -46,6 +65,7 @@ func NewStructuredMergeManager(typeConverter TypeConverter, objectConverter runt
 	if typeConverter == nil {
 		return nil, fmt.Errorf("typeconverter must not be nil")
 	}
+	ignoreSpec, ignoreStatus := excludedTopLevelSections(gv, resetFields)
 	return &structuredMergeManager{
 		typeConverter:   typeConverter,
 		objectConverter: objectConverter,
@@ -56,6 +76,8 @@ func NewStructuredMergeManager(typeConverter TypeConverter, objectConverter runt
 			Converter:    newVersionConverter(typeConverter, objectConverter, hub), // This is the converter provided to SMD from k8s
 			IgnoreFilter: resetFields,
 		},
+		ignoreSpec:   ignoreSpec,
+		ignoreStatus: ignoreStatus,
 	}, nil
 }
 
@@ -97,6 +119,34 @@ func (f *structuredMergeManager) Update(liveObj, newObj runtime.Object, managed 
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to convert live object (%v) to proper version: %v", objectGVKNN(liveObj), err)
 	}
+	projected := false
+	if projector, ok := liveObjVersioned.(runtime.LazyUpdateProjector); ok {
+		if liveProj, newProj, projOK, projErr := projector.ProjectForUpdate(newObjVersioned, f.ignoreSpec, f.ignoreStatus); projErr != nil {
+			return nil, nil, fmt.Errorf("failed to project objects (%v) for update: %v", objectGVKNN(liveObj), projErr)
+		} else if projOK {
+			liveObjVersioned = liveProj
+			newObjVersioned = newProj
+			projected = true
+		}
+	} else if projector, ok := newObjVersioned.(runtime.LazyUpdateProjector); ok {
+		if newProj, liveProj, projOK, projErr := projector.ProjectForUpdate(liveObjVersioned, f.ignoreSpec, f.ignoreStatus); projErr != nil {
+			return nil, nil, fmt.Errorf("failed to project objects (%v) for update: %v", objectGVKNN(newObj), projErr)
+		} else if projOK {
+			newObjVersioned = newProj
+			liveObjVersioned = liveProj
+			projected = true
+		}
+	}
+	if !projected {
+		newObjVersioned, err = runtime.EnsureDecodedObject(newObjVersioned)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to decode new object (%v): %v", objectGVKNN(newObjVersioned), err)
+		}
+		liveObjVersioned, err = runtime.EnsureDecodedObject(liveObjVersioned)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to decode live object (%v): %v", objectGVKNN(liveObjVersioned), err)
+		}
+	}
 	newObjTyped, err := f.typeConverter.ObjectToTyped(newObjVersioned, typed.AllowDuplicates)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to convert new object (%v) to smd typed: %v", objectGVKNN(newObjVersioned), err)
@@ -104,11 +154,13 @@ func (f *structuredMergeManager) Update(liveObj, newObj runtime.Object, managed 
 	// Temporarily clear managedFields on liveObjVersioned so ObjectToTyped and
 	// updater.Update do not walk it (newObj's managedFields are already cleared,
 	// and stripMetaManager ignores metadata.managedFields).
-	if liveMeta, ok := liveObjVersioned.(metav1.ObjectMetaAccessor); ok {
-		objectMeta := liveMeta.GetObjectMeta()
-		managedFields := objectMeta.GetManagedFields()
-		objectMeta.SetManagedFields(nil)
-		defer objectMeta.SetManagedFields(managedFields)
+	if !projected {
+		if liveMeta, ok := liveObjVersioned.(metav1.ObjectMetaAccessor); ok {
+			objectMeta := liveMeta.GetObjectMeta()
+			managedFields := objectMeta.GetManagedFields()
+			objectMeta.SetManagedFields(nil)
+			defer objectMeta.SetManagedFields(managedFields)
+		}
 	}
 	liveObjTyped, err := f.typeConverter.ObjectToTyped(liveObjVersioned, typed.AllowDuplicates)
 	if err != nil {
@@ -148,6 +200,10 @@ func (f *structuredMergeManager) Apply(liveObj, patchObj runtime.Object, managed
 	liveObjVersioned, err := f.toVersioned(liveObj)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to convert live object (%v) to proper version: %v", objectGVKNN(liveObj), err)
+	}
+	liveObjVersioned, err = runtime.EnsureDecodedObject(liveObjVersioned)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to decode live object (%v): %v", objectGVKNN(liveObjVersioned), err)
 	}
 
 	// Don't allow duplicates in the applied object.
