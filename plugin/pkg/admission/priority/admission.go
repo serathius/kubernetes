@@ -151,8 +151,18 @@ func (p *Plugin) Validate(ctx context.Context, a admission.Attributes, o admissi
 func (p *Plugin) admitPod(a admission.Attributes) error {
 	operation := a.GetOperation()
 	if operation == admission.Update {
-		if scoped, ok := admission.RawObjectFrom(a).(runtime.LazyScopedPatcher); ok && !scoped.IsDecoded() {
-			if scoped.HasEqualSpecWireBytes(admission.RawOldObjectFrom(a)) {
+		rawNew := admission.RawObjectFrom(a)
+		rawOld := admission.RawOldObjectFrom(a)
+		if sub, ok := rawNew.(runtime.LazySubtreePatcher); ok && !sub.IsDecoded() {
+			if diffMask, diffOK := sub.DiffSpecTagMask(rawOld); diffOK {
+				pMask, _ := sub.SpecTagMaskForField("priority")
+				ppMask, _ := sub.SpecTagMaskForField("preemptionPolicy")
+				if diffMask&(pMask|ppMask) == 0 {
+					return nil
+				}
+			}
+		} else if scoped, ok := rawNew.(runtime.LazyScopedPatcher); ok && !scoped.IsDecoded() {
+			if scoped.HasEqualSpecWireBytes(rawOld) {
 				return nil
 			}
 		}

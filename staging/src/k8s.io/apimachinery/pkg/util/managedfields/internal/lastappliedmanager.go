@@ -109,6 +109,10 @@ func (f *lastAppliedManager) allowedConflictsFromLastApplied(liveObj runtime.Obj
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert live obj to versioned: %v", err)
 	}
+	liveObjVersioned, err = runtime.EnsureDecodedObject(liveObjVersioned)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode live obj: %v", err)
+	}
 
 	liveObjTyped, err := f.typeConverter.ObjectToTyped(liveObjVersioned)
 	if err != nil {

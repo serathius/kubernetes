@@ -17,8 +17,12 @@ limitations under the License.
 package lazypod
 
 import (
+	"bytes"
 	"fmt"
+	"math/bits"
+	"slices"
 	"strings"
+	"sync"
 	"unsafe"
 
 	"google.golang.org/protobuf/encoding/protowire"
@@ -26,8 +30,10 @@ import (
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/serializer/protobuf/lazy"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/kubernetes/pkg/apis/core"
 	corev1 "k8s.io/kubernetes/pkg/apis/core/v1"
+	"k8s.io/kubernetes/pkg/features"
 )
 
 // Protobuf wire field numbers for v1.Pod, v1.PodSpec, v1.PodStatus, and nested messages.
@@ -42,31 +48,86 @@ const (
 	specFieldTerminationGracePeriodSeconds = 4
 	specFieldActiveDeadlineSeconds         = 5
 	specFieldDNSPolicy                     = 6
+	specFieldNodeSelector                  = 7
 	specFieldServiceAccountName            = 8
 	specFieldDeprecatedServiceAccount      = 9
 	specFieldNodeName                      = 10
 	specFieldHostNetwork                   = 11
+	specFieldHostPID                       = 12
+	specFieldHostIPC                       = 13
 	specFieldSecurityContext               = 14
+	specFieldImagePullSecrets              = 15
+	specFieldHostname                      = 16
+	specFieldSubdomain                     = 17
+	specFieldAffinity                      = 18
 	specFieldSchedulerName                 = 19
 	specFieldInitContainers                = 20
+	specFieldAutomountServiceAccountToken  = 21
 	specFieldTolerations                   = 22
+	specFieldHostAliases                   = 23
+	specFieldPriorityClassName             = 24
+	specFieldPriority                      = 25
+	specFieldDNSConfig                     = 26
+	specFieldShareProcessNamespace         = 27
 	specFieldReadinessGates                = 28
+	specFieldRuntimeClassName              = 29
 	specFieldEnableServiceLinks            = 30
+	specFieldPreemptionPolicy              = 31
+	specFieldOverhead                      = 32
+	specFieldTopologySpreadConstraints     = 33
 	specFieldEphemeralContainers           = 34
+	specFieldSetHostnameAsFQDN             = 35
+	specFieldOS                            = 36
+	specFieldHostUsers                     = 37
 	specFieldSchedulingGates               = 38
-	specFieldOS                            = 39
+	specFieldResourceClaims                = 39
+	specFieldResources                     = 40
+	specFieldHostnameOverride              = 41
+	specFieldSchedulingGroup               = 43
+	specFieldEvictionResponders            = 44
 
-	statusFieldPhase                 = 1
-	statusFieldConditions            = 2
-	statusFieldReason                = 4
-	statusFieldHostIP                = 5
-	statusFieldPodIP                 = 6
-	statusFieldContainerStatuses     = 8
-	statusFieldQOSClass              = 9
-	statusFieldInitContainerStatuses = 10
-	statusFieldNominatedNodeName     = 11
-	statusFieldPodIPs                = 12
-	statusFieldHostIPs               = 16
+	// Exported PodSpec tag bitmasks for scoped update validation.
+	SpecTagMaskActiveDeadlineSeconds = uint64(1) << specFieldActiveDeadlineSeconds
+	SpecTagMaskTolerations           = uint64(1) << specFieldTolerations
+	SpecTagMaskSchedulingGates       = uint64(1) << specFieldSchedulingGates
+	SpecTagMaskFastMutable           = SpecTagMaskActiveDeadlineSeconds | SpecTagMaskTolerations | SpecTagMaskSchedulingGates
+	SpecTagMaskContainersAndVolumes  = (uint64(1) << specFieldVolumes) | (uint64(1) << specFieldContainers) | (uint64(1) << specFieldInitContainers) | (uint64(1) << specFieldResources)
+
+	statusFieldPhase                                = 1
+	statusFieldConditions                           = 2
+	statusFieldMessage                              = 3
+	statusFieldReason                               = 4
+	statusFieldHostIP                               = 5
+	statusFieldPodIP                                = 6
+	statusFieldStartTime                            = 7
+	statusFieldContainerStatuses                    = 8
+	statusFieldQOSClass                             = 9
+	statusFieldInitContainerStatuses                = 10
+	statusFieldNominatedNodeName                    = 11
+	statusFieldPodIPs                               = 12
+	statusFieldEphemeralContainerStatuses           = 13
+	statusFieldResize                               = 14
+	statusFieldResourceClaimStatuses                = 15
+	statusFieldHostIPs                              = 16
+	statusFieldObservedGeneration                   = 17
+	statusFieldExtendedResourceClaimStatus          = 18
+	statusFieldAllocatedResources                   = 19
+	statusFieldResources                            = 20
+	statusFieldNodeAllocatableResourceClaimStatuses = 21
+	statusFieldVolumeStatuses                       = 23
+
+	// Exported PodStatus tag bitmasks for scoped /status update fast paths.
+	StatusTagMaskFastScalar = (uint64(1) << statusFieldPhase) |
+		(uint64(1) << statusFieldMessage) |
+		(uint64(1) << statusFieldReason) |
+		(uint64(1) << statusFieldHostIP) |
+		(uint64(1) << statusFieldPodIP) |
+		(uint64(1) << statusFieldStartTime) |
+		(uint64(1) << statusFieldNominatedNodeName) |
+		(uint64(1) << statusFieldPodIPs) |
+		(uint64(1) << statusFieldResize) |
+		(uint64(1) << statusFieldHostIPs)
+	StatusTagMaskDeclarativeValidated = (uint64(1) << statusFieldNodeAllocatableResourceClaimStatuses) | (uint64(1) << statusFieldVolumeStatuses)
 
 	podIPFieldIP  = 1
 	hostIPFieldIP = 1
@@ -74,11 +135,42 @@ const (
 	containerFieldName                     = 1
 	containerFieldImage                    = 2
 	containerFieldPorts                    = 6
+	containerFieldEnv                      = 7
 	containerFieldResources                = 8
+	containerFieldLivenessProbe            = 10
+	containerFieldReadinessProbe           = 11
+	containerFieldLifecycle                = 12
 	containerFieldTerminationMessagePath   = 13
 	containerFieldImagePullPolicy          = 14
 	containerFieldTerminationMessagePolicy = 20
+	containerFieldStartupProbe             = 22
 	containerFieldRestartPolicy            = 24
+
+	ephemeralContainerFieldCommon = 1
+
+	envVarFieldValueFrom         = 3
+	envVarSourceFieldFieldRef    = 1
+	envVarSourceFieldFileKeyRef  = 5
+	objectFieldSelectorAPIVer    = 1
+	fileKeySelectorFieldOptional = 4
+
+	probeFieldHandler          = 1
+	probeFieldTimeoutSeconds   = 3
+	probeFieldPeriodSeconds    = 4
+	probeFieldSuccessThreshold = 5
+	probeFieldFailureThreshold = 6
+
+	probeHandlerFieldHTTPGet = 2
+	probeHandlerFieldGRPC    = 4
+
+	httpGetFieldPath     = 1
+	httpGetFieldScheme   = 4
+	httpGetFieldProtocol = 6
+
+	grpcFieldService = 2
+
+	lifecycleFieldPostStart = 1
+	lifecycleFieldPreStop   = 2
 
 	portFieldHostPort      = 2
 	portFieldContainerPort = 3
@@ -87,31 +179,58 @@ const (
 	resFieldLimits   = 1
 	resFieldRequests = 2
 
-	volumeFieldSource             = 2
-	volumeSourceFieldHostPath     = 1
-	volumeSourceFieldEmptyDir     = 2
-	volumeSourceFieldSecret       = 6
-	volumeSourceFieldDownwardAPI  = 16
-	volumeSourceFieldConfigMap    = 19
-	volumeSourceFieldProjected    = 26
-	hostPathFieldType             = 2
-	secretFieldDefaultMode        = 3
-	downwardFieldDefaultMode      = 2
-	configMapFieldDefaultMode     = 3
-	projectedFieldSources         = 1
-	projectedFieldDefaultMode     = 2
-	volProjectionFieldDownwardAPI = 2
-	downwardProjFieldItems        = 1
-	downwardFileFieldMode         = 4
+	volumeFieldSource            = 2
+	volumeSourceFieldHostPath    = 1
+	volumeSourceFieldEmptyDir    = 2
+	volumeSourceFieldSecret      = 6
+	volumeSourceFieldISCSI       = 8
+	volumeSourceFieldRBD         = 11
+	volumeSourceFieldDownwardAPI = 16
+	volumeSourceFieldConfigMap   = 19
+	volumeSourceFieldAzureDisk   = 22
+	volumeSourceFieldScaleIO     = 25
+	volumeSourceFieldProjected   = 26
+	volumeSourceFieldEphemeral   = 29
+	volumeSourceFieldImage       = 30
+
+	hostPathFieldType                    = 2
+	secretFieldDefaultMode               = 3
+	iscsiFieldInterface                  = 4
+	rbdFieldPool                         = 4
+	rbdFieldUser                         = 5
+	rbdFieldKeyring                      = 6
+	downwardFieldDefaultMode             = 2
+	configMapFieldDefaultMode            = 3
+	azureDiskFieldCachingMode            = 3
+	azureDiskFieldFSType                 = 4
+	azureDiskFieldReadOnly               = 5
+	azureDiskFieldKind                   = 6
+	scaleIOFieldStorageMode              = 7
+	scaleIOFieldFSType                   = 9
+	projectedFieldSources                = 1
+	projectedFieldDefaultMode            = 2
+	volProjectionFieldDownwardAPI        = 2
+	volProjectionFieldSAToken            = 4
+	saTokenProjFieldExpirationSeconds    = 2
+	downwardProjFieldItems               = 1
+	downwardFileFieldFieldRef            = 2
+	downwardFileFieldMode                = 4
+	ephemeralVolFieldVolumeClaimTemplate = 1
+	pvcTemplateFieldSpec                 = 2
+	pvcSpecFieldResources                = 2
+	pvcSpecFieldVolumeMode               = 6
+	imageVolFieldPullPolicy              = 2
 
 	osFieldName = 1
 
-	csFieldName         = 1
-	csFieldState        = 2
-	csFieldLastState    = 3
-	csFieldReady        = 4
-	csFieldRestartCount = 5
-	csFieldStarted      = 9
+	csFieldName               = 1
+	csFieldState              = 2
+	csFieldLastState          = 3
+	csFieldReady              = 4
+	csFieldRestartCount       = 5
+	csFieldStarted            = 9
+	csFieldAllocatedResources = 10
+	csFieldResources          = 11
 )
 
 // WirePod wraps raw Protobuf-encoded v1.Pod bytes and provides lazy, on-demand extraction
@@ -130,10 +249,15 @@ type WirePod struct {
 	nominatedNodeName   string
 	hasNominatedNodeMod bool
 
-	hasConditionsMod  bool
-	statusEmptySlices uint8
-	conditionsEncoded []byte
-	cachedStatus      *v1.PodStatus
+	hasConditionsMod    bool
+	nonManagedMetaDirty bool
+	cachedMetaOwned     bool
+	hasCachedManaged    bool
+	statusEmptySlices   uint8
+	conditionsEncoded   []byte
+	cachedMeta          *metav1.ObjectMeta
+	cachedManagedFields []metav1.ManagedFieldsEntry
+	cachedStatus        *v1.PodStatus
 
 	defaults *wireDefaultPlan
 }
@@ -198,9 +322,16 @@ func (w *WirePod) Clone() *WirePod {
 		nominatedNodeName:   w.nominatedNodeName,
 		hasNominatedNodeMod: w.hasNominatedNodeMod,
 		hasConditionsMod:    w.hasConditionsMod,
+		nonManagedMetaDirty: w.nonManagedMetaDirty,
+		cachedMetaOwned:     false,
 		statusEmptySlices:   w.statusEmptySlices,
+		cachedMeta:          w.cachedMeta,
 		cachedStatus:        w.cachedStatus,
 		defaults:            w.defaults.clone(),
+	}
+	if w.hasCachedManaged {
+		cp.hasCachedManaged = true
+		cp.cachedManagedFields = slices.Clone(w.cachedManagedFields)
 	}
 	if w.hasConditionsMod && w.conditionsEncoded != nil {
 		cp.conditionsEncoded = append([]byte(nil), w.conditionsEncoded...)
@@ -1329,21 +1460,439 @@ func (w *WirePod) markStatusDefaultDirty() *statusOverrides {
 	return &p.status
 }
 
-// DefaultOnWire runs corev1.DefaultObjectPod directly on the WirePod without decoding into a *v1.Pod.
+// DefaultOnWire runs corev1.DefaultObjectPod directly on the WirePod without decoding into a *v1.Pod,
+// falling back to SetObjectDefaults_Pod only when rare nested or feature-gated fields require defaulting.
 func (w *WirePod) DefaultOnWire() {
 	if w == nil {
 		return
 	}
-	var scratch wireDefaulterScratch
-	corev1.DefaultObjectPod(newWirePodDefaulter(w, &scratch))
+	if w.needsFallbackDefaultingOnWire() {
+		if dec, err := w.DecodeToV1Pod(); err == nil {
+			corev1.SetObjectDefaults_Pod(dec)
+			var emptySlices uint8
+			if dec.Status.ResourceClaimStatuses != nil && len(dec.Status.ResourceClaimStatuses) == 0 {
+				emptySlices |= statusEmptyResourceClaimStatuses
+			}
+			if dec.Status.NodeAllocatableResourceClaimStatuses != nil && len(dec.Status.NodeAllocatableResourceClaimStatuses) == 0 {
+				emptySlices |= statusEmptyNodeAllocatableClaimStatuses
+			}
+			if raw, mErr := dec.Marshal(); mErr == nil {
+				w.Reset(raw)
+				w.statusEmptySlices = emptySlices
+				return
+			}
+		}
+	}
+	scratch := defaulterScratchPool.Get().(*wireDefaulterScratch)
+	corev1.DefaultObjectPod(newWirePodDefaulter(w, scratch))
+	*scratch = wireDefaulterScratch{}
+	defaulterScratchPool.Put(scratch)
+}
+
+func (w *WirePod) needsFallbackDefaultingOnWire() bool {
+	specBytes := w.subMessage(podFieldSpec)
+	h2cEnabled := utilfeature.DefaultFeatureGate.Enabled(features.H2CContainerProbe)
+	imageVolEnabled := utilfeature.DefaultFeatureGate.Enabled(features.ImageVolume)
+	plrNeedsDefault := utilfeature.DefaultFeatureGate.Enabled(features.PodLevelResources) &&
+		!utilfeature.DefaultFeatureGate.Enabled(features.PodLevelResourcesFixDefaulting)
+
+	offset := 0
+	for offset < len(specBytes) {
+		num, typ, tagLen := protowire.ConsumeTag(specBytes[offset:])
+		if tagLen < 0 {
+			break
+		}
+		offset += tagLen
+		valLen := protowire.ConsumeFieldValue(num, typ, specBytes[offset:])
+		if valLen < 0 {
+			break
+		}
+		if typ == protowire.BytesType {
+			sub, _ := protowire.ConsumeBytes(specBytes[offset : offset+valLen])
+			switch num {
+			case specFieldVolumes:
+				if volumeNeedsFallbackDefaulting(sub, imageVolEnabled) {
+					return true
+				}
+			case specFieldContainers, specFieldInitContainers:
+				if containerNeedsFallbackDefaulting(sub, false, h2cEnabled) {
+					return true
+				}
+			case specFieldEphemeralContainers:
+				if ephemeralContainerNeedsDefaulting(sub, h2cEnabled) {
+					return true
+				}
+			case specFieldOverhead:
+				if resourceEntryNeedsRounding(sub) {
+					return true
+				}
+			case specFieldResources:
+				if plrNeedsDefault || resourceRequirementsNeedRounding(sub) {
+					return true
+				}
+			}
+		}
+		offset += valLen
+	}
+
+	statusBytes := w.subMessage(podFieldStatus)
+	sOff := 0
+	for sOff < len(statusBytes) {
+		num, typ, tagLen := protowire.ConsumeTag(statusBytes[sOff:])
+		if tagLen < 0 {
+			break
+		}
+		sOff += tagLen
+		valLen := protowire.ConsumeFieldValue(num, typ, statusBytes[sOff:])
+		if valLen < 0 {
+			break
+		}
+		if typ == protowire.BytesType {
+			sub, _ := protowire.ConsumeBytes(statusBytes[sOff : sOff+valLen])
+			switch num {
+			case statusFieldContainerStatuses, statusFieldInitContainerStatuses, statusFieldEphemeralContainerStatuses:
+				if containerStatusNeedsRounding(sub) {
+					return true
+				}
+			case statusFieldAllocatedResources:
+				if resourceEntryNeedsRounding(sub) {
+					return true
+				}
+			case statusFieldResources:
+				if resourceRequirementsNeedRounding(sub) {
+					return true
+				}
+			}
+		}
+		sOff += valLen
+	}
+	return false
+}
+
+func volumeNeedsFallbackDefaulting(vBytes []byte, imageVolEnabled bool) bool {
+	vsBytes := lazy.SubMessage(vBytes, volumeFieldSource)
+	if len(vsBytes) == 0 {
+		return false
+	}
+	offset := 0
+	for offset < len(vsBytes) {
+		num, typ, tagLen := protowire.ConsumeTag(vsBytes[offset:])
+		if tagLen < 0 {
+			break
+		}
+		offset += tagLen
+		valLen := protowire.ConsumeFieldValue(num, typ, vsBytes[offset:])
+		if valLen < 0 {
+			break
+		}
+		if typ == protowire.BytesType {
+			sub, _ := protowire.ConsumeBytes(vsBytes[offset : offset+valLen])
+			switch num {
+			case volumeSourceFieldISCSI:
+				if lazy.ExtractFirstStringFieldNoCopy(sub, iscsiFieldInterface) == "" {
+					return true
+				}
+			case volumeSourceFieldRBD:
+				if lazy.ExtractFirstStringFieldNoCopy(sub, rbdFieldPool) == "" ||
+					lazy.ExtractFirstStringFieldNoCopy(sub, rbdFieldUser) == "" ||
+					lazy.ExtractFirstStringFieldNoCopy(sub, rbdFieldKeyring) == "" {
+					return true
+				}
+			case volumeSourceFieldDownwardAPI:
+				if downwardItemsNeedDefaulting(sub) {
+					return true
+				}
+			case volumeSourceFieldAzureDisk:
+				if !lazy.HasField(sub, azureDiskFieldCachingMode) ||
+					!lazy.HasField(sub, azureDiskFieldFSType) ||
+					!lazy.HasField(sub, azureDiskFieldReadOnly) ||
+					!lazy.HasField(sub, azureDiskFieldKind) {
+					return true
+				}
+			case volumeSourceFieldScaleIO:
+				if lazy.ExtractFirstStringFieldNoCopy(sub, scaleIOFieldStorageMode) == "" ||
+					lazy.ExtractFirstStringFieldNoCopy(sub, scaleIOFieldFSType) == "" {
+					return true
+				}
+			case volumeSourceFieldProjected:
+				if projectedSourcesNeedDefaulting(sub) {
+					return true
+				}
+			case volumeSourceFieldEphemeral:
+				if lazy.HasField(sub, ephemeralVolFieldVolumeClaimTemplate) {
+					vct := lazy.SubMessage(sub, ephemeralVolFieldVolumeClaimTemplate)
+					pvcSpec := lazy.SubMessage(vct, pvcTemplateFieldSpec)
+					if !lazy.HasField(pvcSpec, pvcSpecFieldVolumeMode) ||
+						resourceRequirementsNeedRounding(lazy.SubMessage(pvcSpec, pvcSpecFieldResources)) {
+						return true
+					}
+				}
+			case volumeSourceFieldImage:
+				if imageVolEnabled && lazy.ExtractFirstStringFieldNoCopy(sub, imageVolFieldPullPolicy) == "" {
+					return true
+				}
+			}
+		}
+		offset += valLen
+	}
+	return false
+}
+
+func downwardItemsNeedDefaulting(downBytes []byte) bool {
+	offset := 0
+	for offset < len(downBytes) {
+		num, typ, tagLen := protowire.ConsumeTag(downBytes[offset:])
+		if tagLen < 0 {
+			break
+		}
+		offset += tagLen
+		valLen := protowire.ConsumeFieldValue(num, typ, downBytes[offset:])
+		if valLen < 0 {
+			break
+		}
+		if num == downwardProjFieldItems && typ == protowire.BytesType {
+			item, _ := protowire.ConsumeBytes(downBytes[offset : offset+valLen])
+			if lazy.HasField(item, downwardFileFieldFieldRef) {
+				fr := lazy.SubMessage(item, downwardFileFieldFieldRef)
+				if lazy.ExtractFirstStringFieldNoCopy(fr, objectFieldSelectorAPIVer) == "" {
+					return true
+				}
+			}
+		}
+		offset += valLen
+	}
+	return false
+}
+
+func projectedSourcesNeedDefaulting(projBytes []byte) bool {
+	offset := 0
+	for offset < len(projBytes) {
+		num, typ, tagLen := protowire.ConsumeTag(projBytes[offset:])
+		if tagLen < 0 {
+			break
+		}
+		offset += tagLen
+		valLen := protowire.ConsumeFieldValue(num, typ, projBytes[offset:])
+		if valLen < 0 {
+			break
+		}
+		if num == projectedFieldSources && typ == protowire.BytesType {
+			src, _ := protowire.ConsumeBytes(projBytes[offset : offset+valLen])
+			if lazy.HasField(src, volProjectionFieldDownwardAPI) &&
+				downwardItemsNeedDefaulting(lazy.SubMessage(src, volProjectionFieldDownwardAPI)) {
+				return true
+			}
+			if lazy.HasField(src, volProjectionFieldSAToken) &&
+				!lazy.HasField(lazy.SubMessage(src, volProjectionFieldSAToken), saTokenProjFieldExpirationSeconds) {
+				return true
+			}
+		}
+		offset += valLen
+	}
+	return false
+}
+
+func ephemeralContainerNeedsDefaulting(ecBytes []byte, h2cEnabled bool) bool {
+	common := lazy.SubMessage(ecBytes, ephemeralContainerFieldCommon)
+	return containerNeedsFallbackDefaulting(common, true, h2cEnabled)
+}
+
+func containerNeedsFallbackDefaulting(cBytes []byte, checkBasicFields, h2cEnabled bool) bool {
+	var hasPullPolicy, hasTermPath, hasTermPolicy bool
+	offset := 0
+	for offset < len(cBytes) {
+		num, typ, tagLen := protowire.ConsumeTag(cBytes[offset:])
+		if tagLen < 0 {
+			break
+		}
+		offset += tagLen
+		valLen := protowire.ConsumeFieldValue(num, typ, cBytes[offset:])
+		if valLen < 0 {
+			break
+		}
+		if typ == protowire.BytesType {
+			sub, _ := protowire.ConsumeBytes(cBytes[offset : offset+valLen])
+			switch num {
+			case containerFieldImagePullPolicy:
+				if len(sub) > 0 {
+					hasPullPolicy = true
+				}
+			case containerFieldTerminationMessagePath:
+				if len(sub) > 0 {
+					hasTermPath = true
+				}
+			case containerFieldTerminationMessagePolicy:
+				if len(sub) > 0 {
+					hasTermPolicy = true
+				}
+			case containerFieldPorts:
+				if checkBasicFields && lazy.ExtractFirstStringFieldNoCopy(sub, portFieldProtocol) == "" {
+					return true
+				}
+			case containerFieldEnv:
+				if lazy.HasField(sub, envVarFieldValueFrom) {
+					vf := lazy.SubMessage(sub, envVarFieldValueFrom)
+					if lazy.HasField(vf, envVarSourceFieldFieldRef) &&
+						lazy.ExtractFirstStringFieldNoCopy(lazy.SubMessage(vf, envVarSourceFieldFieldRef), objectFieldSelectorAPIVer) == "" {
+						return true
+					}
+					if lazy.HasField(vf, envVarSourceFieldFileKeyRef) &&
+						!lazy.HasField(lazy.SubMessage(vf, envVarSourceFieldFileKeyRef), fileKeySelectorFieldOptional) {
+						return true
+					}
+				}
+			case containerFieldResources:
+				if resourceRequirementsNeedRounding(sub) {
+					return true
+				}
+			case containerFieldLivenessProbe, containerFieldReadinessProbe, containerFieldStartupProbe:
+				if probeNeedsDefaulting(sub, h2cEnabled) {
+					return true
+				}
+			case containerFieldLifecycle:
+				if lifecycleNeedsDefaulting(sub, h2cEnabled) {
+					return true
+				}
+			}
+		}
+		offset += valLen
+	}
+	if checkBasicFields && (!hasPullPolicy || !hasTermPath || !hasTermPolicy) {
+		return true
+	}
+	return false
+}
+
+func probeNeedsDefaulting(pBytes []byte, h2cEnabled bool) bool {
+	if int32(lazy.ExtractVarintField(pBytes, probeFieldTimeoutSeconds)) == 0 ||
+		int32(lazy.ExtractVarintField(pBytes, probeFieldPeriodSeconds)) == 0 ||
+		int32(lazy.ExtractVarintField(pBytes, probeFieldSuccessThreshold)) == 0 ||
+		int32(lazy.ExtractVarintField(pBytes, probeFieldFailureThreshold)) == 0 {
+		return true
+	}
+	if lazy.HasField(pBytes, probeFieldHandler) {
+		h := lazy.SubMessage(pBytes, probeFieldHandler)
+		if lazy.HasField(h, probeHandlerFieldHTTPGet) &&
+			httpGetNeedsDefaulting(lazy.SubMessage(h, probeHandlerFieldHTTPGet), h2cEnabled) {
+			return true
+		}
+		if lazy.HasField(h, probeHandlerFieldGRPC) &&
+			!lazy.HasField(lazy.SubMessage(h, probeHandlerFieldGRPC), grpcFieldService) {
+			return true
+		}
+	}
+	return false
+}
+
+func lifecycleNeedsDefaulting(lcBytes []byte, h2cEnabled bool) bool {
+	if lazy.HasField(lcBytes, lifecycleFieldPostStart) {
+		ps := lazy.SubMessage(lcBytes, lifecycleFieldPostStart)
+		if lazy.HasField(ps, probeHandlerFieldHTTPGet) &&
+			httpGetNeedsDefaulting(lazy.SubMessage(ps, probeHandlerFieldHTTPGet), h2cEnabled) {
+			return true
+		}
+	}
+	if lazy.HasField(lcBytes, lifecycleFieldPreStop) {
+		ps := lazy.SubMessage(lcBytes, lifecycleFieldPreStop)
+		if lazy.HasField(ps, probeHandlerFieldHTTPGet) &&
+			httpGetNeedsDefaulting(lazy.SubMessage(ps, probeHandlerFieldHTTPGet), h2cEnabled) {
+			return true
+		}
+	}
+	return false
+}
+
+func httpGetNeedsDefaulting(hgBytes []byte, h2cEnabled bool) bool {
+	if lazy.ExtractFirstStringFieldNoCopy(hgBytes, httpGetFieldPath) == "" ||
+		lazy.ExtractFirstStringFieldNoCopy(hgBytes, httpGetFieldScheme) == "" {
+		return true
+	}
+	if h2cEnabled && !lazy.HasField(hgBytes, httpGetFieldProtocol) {
+		return true
+	}
+	return false
+}
+
+func containerStatusNeedsRounding(csBytes []byte) bool {
+	offset := 0
+	for offset < len(csBytes) {
+		num, typ, tagLen := protowire.ConsumeTag(csBytes[offset:])
+		if tagLen < 0 {
+			break
+		}
+		offset += tagLen
+		valLen := protowire.ConsumeFieldValue(num, typ, csBytes[offset:])
+		if valLen < 0 {
+			break
+		}
+		if typ == protowire.BytesType {
+			sub, _ := protowire.ConsumeBytes(csBytes[offset : offset+valLen])
+			switch num {
+			case csFieldAllocatedResources:
+				if resourceEntryNeedsRounding(sub) {
+					return true
+				}
+			case csFieldResources:
+				if resourceRequirementsNeedRounding(sub) {
+					return true
+				}
+			}
+		}
+		offset += valLen
+	}
+	return false
+}
+
+func resourceRequirementsNeedRounding(rBytes []byte) bool {
+	offset := 0
+	for offset < len(rBytes) {
+		num, typ, tagLen := protowire.ConsumeTag(rBytes[offset:])
+		if tagLen < 0 {
+			break
+		}
+		offset += tagLen
+		valLen := protowire.ConsumeFieldValue(num, typ, rBytes[offset:])
+		if valLen < 0 {
+			break
+		}
+		if (num == resFieldLimits || num == resFieldRequests) && typ == protowire.BytesType {
+			entry, _ := protowire.ConsumeBytes(rBytes[offset : offset+valLen])
+			if resourceEntryNeedsRounding(entry) {
+				return true
+			}
+		}
+		offset += valLen
+	}
+	return false
+}
+
+func resourceEntryNeedsRounding(entryBytes []byte) bool {
+	qMsg := lazy.SubMessage(entryBytes, lazy.MapEntryValueFieldNumber)
+	qStr := lazy.ExtractFirstStringFieldNoCopy(qMsg, 1)
+	for i := 0; i < len(qStr); i++ {
+		switch qStr[i] {
+		case '.', 'n', 'u', 'e', 'E':
+			return true
+		}
+	}
+	return false
+}
+
+var defaulterScratchPool = sync.Pool{
+	New: func() any {
+		return &wireDefaulterScratch{}
+	},
 }
 
 type wireDefaulterScratch struct {
-	pod       wirePodDefaulter
-	container wireContainerDefaulter
-	port      wirePortDefaulter
-	volume    wireVolumeDefaulter
-	portsBuf  [4][]byte
+	pod               wirePodDefaulter
+	container         wireContainerDefaulter
+	port              wirePortDefaulter
+	volume            wireVolumeDefaulter
+	volumesBuf        [8][]byte
+	containersBuf     [4][]byte
+	initContainersBuf [2][]byte
+	portsBuf          [4][]byte
 }
 
 type wirePodDefaulter struct {
@@ -1390,6 +1939,11 @@ func (d *wirePodDefaulter) ensureSpecScanned() {
 		return
 	}
 	d.specInit = true
+	if d.scratch != nil {
+		d.volumes = d.scratch.volumesBuf[:0]
+		d.containers = d.scratch.containersBuf[:0]
+		d.initContainers = d.scratch.initContainersBuf[:0]
+	}
 	specBytes := d.w.subMessage(podFieldSpec)
 	offset := 0
 	for offset < len(specBytes) {
@@ -3006,44 +3560,288 @@ func AssembleWirePod(metaBytes, specBytes, statusBytes []byte) *WirePod {
 	return NewWirePod(raw)
 }
 
-// ReplaceSubMessages builds a new WirePod replacing metadata and/or status when non-nil while keeping specBytes intact.
-func (w *WirePod) ReplaceSubMessages(meta *metav1.ObjectMeta, specBytes []byte, status *v1.PodStatus) (*WirePod, error) {
-	var metaBytes []byte
-	var err error
-	if meta != nil {
-		metaBytes, err = meta.Marshal()
-		if err != nil {
-			return nil, err
+// MarkNonManagedMetaDirty records that a non-managedFields, non-resourceVersion ObjectMeta setter was invoked on w.
+func (w *WirePod) MarkNonManagedMetaDirty() {
+	if w != nil {
+		w.nonManagedMetaDirty = true
+		w.cachedMeta = nil
+		w.cachedMetaOwned = false
+	}
+}
+
+// DisownCachedMeta marks w.cachedMeta as shared so future map getters clone maps before returning.
+func (w *WirePod) DisownCachedMeta() {
+	if w != nil {
+		w.cachedMetaOwned = false
+	}
+}
+
+// IsCachedMetaOwned reports whether w exclusively owns w.cachedMeta.
+func (w *WirePod) IsCachedMetaOwned() bool {
+	return w != nil && !w.nonManagedMetaDirty && w.cachedMetaOwned && w.cachedMeta != nil
+}
+
+// SetResourceVersion updates metadata.resourceVersion without invalidating cached non-managed ObjectMeta.
+func (w *WirePod) SetResourceVersion(rv string) {
+	if w == nil {
+		return
+	}
+	w.meta.SetResourceVersion(rv)
+	if w.cachedMeta != nil && !w.nonManagedMetaDirty {
+		if w.cachedMetaOwned {
+			w.cachedMeta.ResourceVersion = rv
+		} else {
+			cp := *w.cachedMeta
+			cp.ResourceVersion = rv
+			w.cachedMeta = &cp
 		}
-	} else {
+	}
+}
+
+// ManagedFields returns metadata.managedFields, caching decoded entries when canCache is true.
+func (w *WirePod) ManagedFields(canCache bool) []metav1.ManagedFieldsEntry {
+	if w == nil {
+		return nil
+	}
+	if w.hasCachedManaged {
+		return w.cachedManagedFields
+	}
+	mf := w.meta.GetManagedFields()
+	if canCache {
+		w.cachedManagedFields = mf
+		w.hasCachedManaged = true
+	}
+	return mf
+}
+
+// SetManagedFields updates metadata.managedFields on w.
+func (w *WirePod) SetManagedFields(mf []metav1.ManagedFieldsEntry) {
+	if w == nil {
+		return
+	}
+	w.meta.SetManagedFields(mf)
+	w.cachedManagedFields = mf
+	w.hasCachedManaged = true
+}
+
+// CachedObjectMeta returns w.cachedMeta when clean and populated.
+func (w *WirePod) CachedObjectMeta() (*metav1.ObjectMeta, bool) {
+	if w == nil || w.nonManagedMetaDirty || w.cachedMeta == nil {
+		return nil, false
+	}
+	return w.cachedMeta, true
+}
+
+// OwnedObjectMeta returns w.cachedMeta only when exclusively owned by w (not shared across clones).
+func (w *WirePod) OwnedObjectMeta() (*metav1.ObjectMeta, bool) {
+	if w == nil || w.nonManagedMetaDirty || !w.cachedMetaOwned || w.cachedMeta == nil {
+		return nil, false
+	}
+	return w.cachedMeta, true
+}
+
+// BorrowObjectMetaInto populates out without DeepCopying maps/slices when w has no pending non-managedFields overrides.
+func (w *WirePod) BorrowObjectMetaInto(out *metav1.ObjectMeta, dropManagedFields, canCache bool) {
+	if w == nil {
+		return
+	}
+	if !w.nonManagedMetaDirty {
+		ro := w.cachedMeta
+		if ro == nil {
+			var decoded metav1.ObjectMeta
+			w.meta.ExtractObjectMetaWithoutManagedFieldsInto(w.meta.Bytes(), &decoded)
+			if canCache {
+				w.cachedMeta = &decoded
+				w.cachedMetaOwned = true
+			}
+			ro = &decoded
+		}
+		*out = *ro
+		if dropManagedFields {
+			out.ManagedFields = nil
+		} else {
+			out.ManagedFields = w.ManagedFields(canCache)
+		}
+		return
+	}
+	w.ExtractObjectMetaForUpdate(out, dropManagedFields)
+}
+
+// HasLegacyInitContainerAnnotations reports whether metadata.annotations contains any removed v1.7 init-container keys without allocating.
+func (w *WirePod) HasLegacyInitContainerAnnotations() bool {
+	if w == nil {
+		return false
+	}
+	if w.cachedMeta != nil && !w.nonManagedMetaDirty {
+		ann := w.cachedMeta.Annotations
+		if len(ann) == 0 {
+			return false
+		}
+		_, ok1 := ann["pod.beta.kubernetes.io/init-containers"]
+		_, ok2 := ann["pod.alpha.kubernetes.io/init-containers"]
+		_, ok3 := ann["pod.beta.kubernetes.io/init-container-statuses"]
+		_, ok4 := ann["pod.alpha.kubernetes.io/init-container-statuses"]
+		return ok1 || ok2 || ok3 || ok4
+	}
+	metaBytes := w.meta.Bytes()
+	if w.nonManagedMetaDirty {
 		metaBytes = w.EffectiveSubMessage(podFieldMetadata)
 	}
-	var statusBytes []byte
-	var emptySlices uint8
-	var cachedSt *v1.PodStatus
+	offset := 0
+	for offset < len(metaBytes) {
+		num, typ, tagLen := protowire.ConsumeTag(metaBytes[offset:])
+		if tagLen < 0 {
+			break
+		}
+		offset += tagLen
+		valLen := protowire.ConsumeFieldValue(num, typ, metaBytes[offset:])
+		if valLen < 0 {
+			break
+		}
+		if num == lazy.MetaFieldAnnotations && typ == protowire.BytesType {
+			entry, _ := protowire.ConsumeBytes(metaBytes[offset : offset+valLen])
+			switch lazy.ExtractFirstStringFieldNoCopy(entry, lazy.MapEntryKeyFieldNumber) {
+			case "pod.beta.kubernetes.io/init-containers",
+				"pod.alpha.kubernetes.io/init-containers",
+				"pod.beta.kubernetes.io/init-container-statuses",
+				"pod.alpha.kubernetes.io/init-container-statuses":
+				return true
+			}
+		}
+		offset += valLen
+	}
+	return false
+}
+
+// HasEqualOwnerReferences reports whether w and other have byte-identical metadata.ownerReferences without allocating.
+func (w *WirePod) HasEqualOwnerReferences(other *WirePod) bool {
+	if w == nil || other == nil {
+		return w == other
+	}
+	if w.nonManagedMetaDirty || other.nonManagedMetaDirty {
+		return false
+	}
+	metaA := w.meta.Bytes()
+	metaB := other.meta.Bytes()
+	offA, offB := 0, 0
+	for {
+		refA, nextA := nextOwnerRefBytes(metaA, offA)
+		refB, nextB := nextOwnerRefBytes(metaB, offB)
+		if (refA == nil) != (refB == nil) {
+			return false
+		}
+		if refA == nil {
+			return true
+		}
+		if !bytes.Equal(refA, refB) {
+			return false
+		}
+		offA, offB = nextA, nextB
+	}
+}
+
+func nextOwnerRefBytes(metaBytes []byte, offset int) ([]byte, int) {
+	for offset < len(metaBytes) {
+		num, typ, tagLen := protowire.ConsumeTag(metaBytes[offset:])
+		if tagLen < 0 {
+			return nil, len(metaBytes)
+		}
+		offset += tagLen
+		valLen := protowire.ConsumeFieldValue(num, typ, metaBytes[offset:])
+		if valLen < 0 {
+			return nil, len(metaBytes)
+		}
+		next := offset + valLen
+		if num == lazy.MetaFieldOwnerReferences && typ == protowire.BytesType {
+			sub, _ := protowire.ConsumeBytes(metaBytes[offset:next])
+			return sub, next
+		}
+		offset = next
+	}
+	return nil, len(metaBytes)
+}
+
+// ReplaceSubMessages builds a new WirePod replacing metadata and/or status when non-nil while keeping specBytes intact.
+func (w *WirePod) ReplaceSubMessages(meta *metav1.ObjectMeta, specBytes []byte, status *v1.PodStatus) (*WirePod, error) {
 	if status != nil {
+		var emptySlices uint8
 		if status.ResourceClaimStatuses != nil && len(status.ResourceClaimStatuses) == 0 {
 			emptySlices |= statusEmptyResourceClaimStatuses
 		}
 		if status.NodeAllocatableResourceClaimStatuses != nil && len(status.NodeAllocatableResourceClaimStatuses) == 0 {
 			emptySlices |= statusEmptyNodeAllocatableClaimStatuses
 		}
-		statusBytes, err = status.Marshal()
+		statusBytes, err := status.Marshal()
 		if err != nil {
 			return nil, err
 		}
-		cachedSt = status.DeepCopy()
-	} else {
+		return w.ReplaceSubMessagesWithStatusBytes(meta, specBytes, statusBytes, emptySlices, status.DeepCopy())
+	}
+	var statusBytes []byte
+	var emptySlices uint8
+	var cachedSt *v1.PodStatus
+	if w != nil {
 		statusBytes = w.EffectiveSubMessage(podFieldStatus)
 		emptySlices = w.statusEmptySlices
 		if (w.defaults == nil || !w.defaults.statusDirty) && !w.hasNominatedNodeMod && !w.hasConditionsMod {
 			cachedSt = w.cachedStatus
 		}
 	}
+	return w.ReplaceSubMessagesWithStatusBytes(meta, specBytes, statusBytes, emptySlices, cachedSt)
+}
+
+// ReplaceSubMessagesWithStatusBytes builds a new WirePod from pre-encoded specBytes and statusBytes.
+func (w *WirePod) ReplaceSubMessagesWithStatusBytes(meta *metav1.ObjectMeta, specBytes, statusBytes []byte, emptySlices uint8, fullCachedStatus *v1.PodStatus) (*WirePod, error) {
+	var metaBytes []byte
+	var cachedM *metav1.ObjectMeta
+	var cachedMOwned bool
+	var cachedMF []metav1.ManagedFieldsEntry
+	var hasCachedMF bool
+	var err error
+	if meta != nil {
+		metaBytes, err = meta.Marshal()
+		if err != nil {
+			return nil, err
+		}
+		cp := meta.DeepCopy()
+		if cp.ManagedFields != nil {
+			cachedMF = cp.ManagedFields
+			hasCachedMF = true
+		}
+		cp.ManagedFields = nil
+		cachedM = cp
+		cachedMOwned = true
+	} else if w != nil {
+		metaBytes = w.EffectiveSubMessage(podFieldMetadata)
+		if !w.nonManagedMetaDirty {
+			cachedM = w.cachedMeta
+		}
+		if w.hasCachedManaged {
+			cachedMF = slices.Clone(w.cachedManagedFields)
+			hasCachedMF = true
+		}
+	}
 	nw := AssembleWirePod(metaBytes, specBytes, statusBytes)
 	nw.statusEmptySlices = emptySlices
-	nw.cachedStatus = cachedSt
+	nw.cachedMeta = cachedM
+	nw.cachedMetaOwned = cachedMOwned
+	nw.cachedManagedFields = cachedMF
+	nw.hasCachedManaged = hasCachedMF
+	nw.cachedStatus = fullCachedStatus
 	return nw, nil
+}
+
+// CacheDecodedMeta stores a decoded ObjectMeta (excluding ManagedFields) on w for reuse across update steps
+// when w has no pending non-managedFields ObjectMeta overrides.
+func (w *WirePod) CacheDecodedMeta(meta *metav1.ObjectMeta) {
+	if w == nil || meta == nil || w.cachedMeta != nil || w.nonManagedMetaDirty {
+		return
+	}
+	cp := meta.DeepCopy()
+	cp.ManagedFields = nil
+	cp.ResourceVersion = w.meta.GetResourceVersion()
+	w.cachedMeta = cp
+	w.cachedMetaOwned = true
 }
 
 // ExtractObjectMetaForUpdate unmarshals ObjectMeta from the wire, eliding ManagedFields (tag 17)
@@ -3053,10 +3851,501 @@ func (w *WirePod) ExtractObjectMetaForUpdate(out *metav1.ObjectMeta, dropManaged
 		return
 	}
 	if dropManagedFields {
+		if w.cachedMeta != nil && !w.nonManagedMetaDirty {
+			w.cachedMeta.DeepCopyInto(out)
+			return
+		}
 		w.meta.ExtractObjectMetaWithoutManagedFieldsInto(w.meta.Bytes(), out)
 		return
 	}
+	if w.cachedMeta != nil && !w.nonManagedMetaDirty {
+		w.cachedMeta.DeepCopyInto(out)
+		if mf := w.ManagedFields(false); mf != nil {
+			out.ManagedFields = make([]metav1.ManagedFieldsEntry, len(mf))
+			for i := range mf {
+				mf[i].DeepCopyInto(&out.ManagedFields[i])
+			}
+		}
+		return
+	}
 	w.meta.ExtractObjectMetaInto(w.meta.Bytes(), out)
+}
+
+// SpecTagMaskForField returns the PodSpec Protobuf tag bitmask for a JSON PodSpec field name,
+// coupling fields that share defaulting or declarative validation rules, and returning false
+// for heavy container/volume/resource subtrees or unknown field names.
+func SpecTagMaskForField(fieldName string) (uint64, bool) {
+	switch fieldName {
+	case "restartPolicy":
+		return uint64(1) << specFieldRestartPolicy, true
+	case "terminationGracePeriodSeconds":
+		return uint64(1) << specFieldTerminationGracePeriodSeconds, true
+	case "activeDeadlineSeconds":
+		return uint64(1) << specFieldActiveDeadlineSeconds, true
+	case "dnsPolicy":
+		return uint64(1) << specFieldDNSPolicy, true
+	case "nodeSelector":
+		return uint64(1) << specFieldNodeSelector, true
+	case "serviceAccountName", "serviceAccount":
+		return (uint64(1) << specFieldServiceAccountName) | (uint64(1) << specFieldDeprecatedServiceAccount), true
+	case "nodeName":
+		return uint64(1) << specFieldNodeName, true
+	case "hostPID":
+		return uint64(1) << specFieldHostPID, true
+	case "hostIPC":
+		return uint64(1) << specFieldHostIPC, true
+	case "securityContext":
+		return uint64(1) << specFieldSecurityContext, true
+	case "imagePullSecrets":
+		return uint64(1) << specFieldImagePullSecrets, true
+	case "hostname":
+		return uint64(1) << specFieldHostname, true
+	case "subdomain":
+		return uint64(1) << specFieldSubdomain, true
+	case "affinity":
+		return uint64(1) << specFieldAffinity, true
+	case "schedulerName":
+		return uint64(1) << specFieldSchedulerName, true
+	case "automountServiceAccountToken":
+		return uint64(1) << specFieldAutomountServiceAccountToken, true
+	case "tolerations":
+		return uint64(1) << specFieldTolerations, true
+	case "hostAliases":
+		return uint64(1) << specFieldHostAliases, true
+	case "priorityClassName":
+		return uint64(1) << specFieldPriorityClassName, true
+	case "priority":
+		return uint64(1) << specFieldPriority, true
+	case "dnsConfig":
+		return uint64(1) << specFieldDNSConfig, true
+	case "shareProcessNamespace":
+		return uint64(1) << specFieldShareProcessNamespace, true
+	case "readinessGates":
+		return uint64(1) << specFieldReadinessGates, true
+	case "runtimeClassName":
+		return uint64(1) << specFieldRuntimeClassName, true
+	case "enableServiceLinks":
+		return uint64(1) << specFieldEnableServiceLinks, true
+	case "preemptionPolicy":
+		return uint64(1) << specFieldPreemptionPolicy, true
+	case "overhead":
+		return uint64(1) << specFieldOverhead, true
+	case "topologySpreadConstraints":
+		return uint64(1) << specFieldTopologySpreadConstraints, true
+	case "ephemeralContainers":
+		return uint64(1) << specFieldEphemeralContainers, true
+	case "setHostnameAsFQDN":
+		return uint64(1) << specFieldSetHostnameAsFQDN, true
+	case "os":
+		return uint64(1) << specFieldOS, true
+	case "hostUsers":
+		return uint64(1) << specFieldHostUsers, true
+	case "schedulingGates":
+		return uint64(1) << specFieldSchedulingGates, true
+	case "resourceClaims":
+		return uint64(1) << specFieldResourceClaims, true
+	case "hostnameOverride":
+		return uint64(1) << specFieldHostnameOverride, true
+	case "schedulingGroup", "evictionResponders":
+		return (uint64(1) << specFieldSchedulingGroup) | (uint64(1) << specFieldEvictionResponders), true
+	default:
+		return 0, false
+	}
+}
+
+// StatusTagMaskForField returns the PodStatus Protobuf tag bitmask for a JSON PodStatus field name,
+// coupling podIP and podIPs so SetDefaults_PodStatus stays closed under subtree projection/splicing.
+func StatusTagMaskForField(fieldName string) (uint64, bool) {
+	switch fieldName {
+	case "phase":
+		return uint64(1) << statusFieldPhase, true
+	case "conditions":
+		return uint64(1) << statusFieldConditions, true
+	case "message":
+		return uint64(1) << statusFieldMessage, true
+	case "reason":
+		return uint64(1) << statusFieldReason, true
+	case "hostIP":
+		return uint64(1) << statusFieldHostIP, true
+	case "podIP", "podIPs":
+		return (uint64(1) << statusFieldPodIP) | (uint64(1) << statusFieldPodIPs), true
+	case "startTime":
+		return uint64(1) << statusFieldStartTime, true
+	case "containerStatuses":
+		return uint64(1) << statusFieldContainerStatuses, true
+	case "qosClass":
+		return uint64(1) << statusFieldQOSClass, true
+	case "initContainerStatuses":
+		return uint64(1) << statusFieldInitContainerStatuses, true
+	case "nominatedNodeName":
+		return uint64(1) << statusFieldNominatedNodeName, true
+	case "ephemeralContainerStatuses":
+		return uint64(1) << statusFieldEphemeralContainerStatuses, true
+	case "resize":
+		return uint64(1) << statusFieldResize, true
+	case "resourceClaimStatuses":
+		return uint64(1) << statusFieldResourceClaimStatuses, true
+	case "hostIPs":
+		return uint64(1) << statusFieldHostIPs, true
+	case "observedGeneration":
+		return uint64(1) << statusFieldObservedGeneration, true
+	case "extendedResourceClaimStatus":
+		return uint64(1) << statusFieldExtendedResourceClaimStatus, true
+	case "allocatedResources":
+		return uint64(1) << statusFieldAllocatedResources, true
+	case "resources":
+		return uint64(1) << statusFieldResources, true
+	case "nodeAllocatableResourceClaimStatuses":
+		return uint64(1) << statusFieldNodeAllocatableResourceClaimStatuses, true
+	case "volumeStatuses":
+		return uint64(1) << statusFieldVolumeStatuses, true
+	default:
+		return 0, false
+	}
+}
+
+// CoupleSpecValidationTags expands mask with coupled PodSpec tags required by declarative validation.
+func CoupleSpecValidationTags(mask uint64) uint64 {
+	const groupAndResponders = (uint64(1) << specFieldSchedulingGroup) | (uint64(1) << specFieldEvictionResponders)
+	if mask&groupAndResponders != 0 {
+		mask |= groupAndResponders
+	}
+	return mask
+}
+
+// ExtractV1SpecSubtreeInto unmarshals only the PodSpec fields matching tagMask from w into out.
+func (w *WirePod) ExtractV1SpecSubtreeInto(tagMask uint64, out *v1.PodSpec) error {
+	if w == nil || tagMask == 0 {
+		return nil
+	}
+	return extractSpecSubtreeFromBytes(w.EffectiveSubMessage(podFieldSpec), tagMask, out)
+}
+
+func filterMessageByTagMask(msgBytes []byte, tagMask uint64, stackBuf *[512]byte) []byte {
+	if tagMask == 0 || len(msgBytes) == 0 {
+		return nil
+	}
+	filtered := stackBuf[:0]
+	offset := 0
+	for offset < len(msgBytes) {
+		fieldStart := offset
+		num, typ, tagLen := protowire.ConsumeTag(msgBytes[offset:])
+		if tagLen < 0 {
+			break
+		}
+		offset += tagLen
+		valLen := protowire.ConsumeFieldValue(num, typ, msgBytes[offset:])
+		if valLen < 0 {
+			break
+		}
+		offset += valLen
+		if num >= 1 && num < 64 && (tagMask&(uint64(1)<<uint(num))) != 0 {
+			filtered = append(filtered, msgBytes[fieldStart:offset]...)
+		}
+	}
+	return filtered
+}
+
+func extractSpecSubtreeFromBytes(specBytes []byte, tagMask uint64, out *v1.PodSpec) error {
+	var stackBuf [512]byte
+	filtered := filterMessageByTagMask(specBytes, tagMask, &stackBuf)
+	if len(filtered) == 0 {
+		return nil
+	}
+	return out.Unmarshal(filtered)
+}
+
+// ExtractCoreSpecSubtreeInto unmarshals only the PodSpec fields matching tagMask from w into a core.PodSpec.
+func (w *WirePod) ExtractCoreSpecSubtreeInto(tagMask uint64, out *core.PodSpec) error {
+	return w.ExtractV1SpecSubtreeInto(tagMask, (*v1.PodSpec)(unsafe.Pointer(out)))
+}
+
+// ExtractV1StatusSubtreeInto unmarshals only the PodStatus fields matching tagMask from w into out.
+func (w *WirePod) ExtractV1StatusSubtreeInto(tagMask uint64, out *v1.PodStatus) error {
+	if w == nil || tagMask == 0 {
+		return nil
+	}
+	if tagMask == ^uint64(0) {
+		return w.ExtractV1StatusInto(out)
+	}
+	if err := extractStatusSubtreeFromBytes(w.EffectiveSubMessage(podFieldStatus), tagMask, out); err != nil {
+		return err
+	}
+	if (tagMask&(uint64(1)<<statusFieldResourceClaimStatuses)) != 0 &&
+		w.statusEmptySlices&statusEmptyResourceClaimStatuses != 0 && out.ResourceClaimStatuses == nil {
+		out.ResourceClaimStatuses = []v1.PodResourceClaimStatus{}
+	}
+	if (tagMask&(uint64(1)<<statusFieldNodeAllocatableResourceClaimStatuses)) != 0 &&
+		w.statusEmptySlices&statusEmptyNodeAllocatableClaimStatuses != 0 && out.NodeAllocatableResourceClaimStatuses == nil {
+		out.NodeAllocatableResourceClaimStatuses = []v1.NodeAllocatableResourceClaimStatus{}
+	}
+	return nil
+}
+
+func extractStatusSubtreeFromBytes(statusBytes []byte, tagMask uint64, out *v1.PodStatus) error {
+	var stackBuf [512]byte
+	filtered := filterMessageByTagMask(statusBytes, tagMask, &stackBuf)
+	if len(filtered) == 0 {
+		return nil
+	}
+	return out.Unmarshal(filtered)
+}
+
+// ExtractCoreStatusSubtreeInto unmarshals only the PodStatus fields matching tagMask from w into a core.PodStatus.
+func (w *WirePod) ExtractCoreStatusSubtreeInto(tagMask uint64, out *core.PodStatus) error {
+	return w.ExtractV1StatusSubtreeInto(tagMask, (*v1.PodStatus)(unsafe.Pointer(out)))
+}
+
+func spliceMessageByTagMask(baseBytes, patchedBytes []byte, tagMask uint64) []byte {
+	out := make([]byte, 0, len(baseBytes)+len(patchedBytes))
+	emittedMask := uint64(0)
+
+	emitPatchedTag := func(target protowire.Number) {
+		pOff := 0
+		for pOff < len(patchedBytes) {
+			fStart := pOff
+			num, typ, tagLen := protowire.ConsumeTag(patchedBytes[pOff:])
+			if tagLen < 0 {
+				break
+			}
+			pOff += tagLen
+			valLen := protowire.ConsumeFieldValue(num, typ, patchedBytes[pOff:])
+			if valLen < 0 {
+				break
+			}
+			pOff += valLen
+			if num == target {
+				out = append(out, patchedBytes[fStart:pOff]...)
+			} else if num > target {
+				break
+			}
+		}
+		emittedMask |= uint64(1) << uint(target)
+	}
+
+	emitPatchedUpTo := func(limitNum protowire.Number) {
+		for rem := tagMask &^ emittedMask; rem != 0; {
+			bit := bits.TrailingZeros64(rem)
+			tNum := protowire.Number(bit)
+			if tNum > limitNum {
+				break
+			}
+			emitPatchedTag(tNum)
+			rem &^= uint64(1) << uint(bit)
+		}
+	}
+
+	offset := 0
+	for offset < len(baseBytes) {
+		fieldStart := offset
+		num, typ, tagLen := protowire.ConsumeTag(baseBytes[offset:])
+		if tagLen < 0 {
+			break
+		}
+		offset += tagLen
+		valLen := protowire.ConsumeFieldValue(num, typ, baseBytes[offset:])
+		if valLen < 0 {
+			break
+		}
+		offset += valLen
+
+		emitPatchedUpTo(num)
+		if num >= 1 && num < 64 && (tagMask&(uint64(1)<<uint(num))) != 0 {
+			continue
+		}
+		out = append(out, baseBytes[fieldStart:offset]...)
+	}
+	emitPatchedUpTo(63)
+	return out
+}
+
+// SpliceSpecByTagMask replaces only the PodSpec tags matching tagMask in baseSpecBytes with their
+// marshaled spans from patchedSpec, keeping all other PodSpec tags byte-for-byte untouched.
+func SpliceSpecByTagMask(baseSpecBytes []byte, patchedSpec *v1.PodSpec, tagMask uint64) ([]byte, error) {
+	if tagMask == 0 || patchedSpec == nil {
+		return baseSpecBytes, nil
+	}
+	pSize := patchedSpec.Size()
+	var pStack [512]byte
+	var patchedBytes []byte
+	if pSize <= len(pStack) {
+		n, err := patchedSpec.MarshalToSizedBuffer(pStack[:pSize])
+		if err != nil {
+			return nil, err
+		}
+		patchedBytes = pStack[pSize-n : pSize]
+	} else {
+		var err error
+		patchedBytes, err = patchedSpec.Marshal()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return spliceMessageByTagMask(baseSpecBytes, patchedBytes, tagMask), nil
+}
+
+// SpliceStatusByTagMask replaces only the PodStatus tags matching tagMask in baseStatusBytes with their
+// marshaled spans from patchedStatus, updating empty-slice tracking bits for touched DRA status slices.
+func SpliceStatusByTagMask(baseStatusBytes []byte, baseEmptySlices uint8, patchedStatus *v1.PodStatus, tagMask uint64) ([]byte, uint8, error) {
+	if tagMask == 0 || patchedStatus == nil {
+		return baseStatusBytes, baseEmptySlices, nil
+	}
+	emptySlices := baseEmptySlices
+	if (tagMask & (uint64(1) << statusFieldResourceClaimStatuses)) != 0 {
+		emptySlices &^= statusEmptyResourceClaimStatuses
+		if patchedStatus.ResourceClaimStatuses != nil && len(patchedStatus.ResourceClaimStatuses) == 0 {
+			emptySlices |= statusEmptyResourceClaimStatuses
+		}
+	}
+	if (tagMask & (uint64(1) << statusFieldNodeAllocatableResourceClaimStatuses)) != 0 {
+		emptySlices &^= statusEmptyNodeAllocatableClaimStatuses
+		if patchedStatus.NodeAllocatableResourceClaimStatuses != nil && len(patchedStatus.NodeAllocatableResourceClaimStatuses) == 0 {
+			emptySlices |= statusEmptyNodeAllocatableClaimStatuses
+		}
+	}
+	if tagMask == ^uint64(0) {
+		b, err := patchedStatus.Marshal()
+		return b, emptySlices, err
+	}
+	pSize := patchedStatus.Size()
+	var pStack [1024]byte
+	var patchedBytes []byte
+	if pSize <= len(pStack) {
+		n, err := patchedStatus.MarshalToSizedBuffer(pStack[:pSize])
+		if err != nil {
+			return nil, 0, err
+		}
+		patchedBytes = pStack[pSize-n : pSize]
+	} else {
+		var err error
+		patchedBytes, err = patchedStatus.Marshal()
+		if err != nil {
+			return nil, 0, err
+		}
+	}
+	return spliceMessageByTagMask(baseStatusBytes, patchedBytes, tagMask), emptySlices, nil
+}
+
+func nextSpecTagGroup(b []byte, offset int, minTag protowire.Number) (tag protowire.Number, group []byte, nextOffset int, ok bool) {
+	num, typ, tagLen := protowire.ConsumeTag(b[offset:])
+	if tagLen < 0 || num < minTag || num <= 0 || num >= 64 {
+		return 0, nil, 0, false
+	}
+	cur := offset + tagLen
+	valLen := protowire.ConsumeFieldValue(num, typ, b[cur:])
+	if valLen < 0 {
+		return 0, nil, 0, false
+	}
+	cur += valLen
+	for cur < len(b) {
+		n2, t2, tl2 := protowire.ConsumeTag(b[cur:])
+		if tl2 < 0 {
+			return 0, nil, 0, false
+		}
+		if n2 != num {
+			break
+		}
+		vl2 := protowire.ConsumeFieldValue(n2, t2, b[cur+tl2:])
+		if vl2 < 0 {
+			return 0, nil, 0, false
+		}
+		cur += tl2 + vl2
+	}
+	return num, b[offset:cur], cur, true
+}
+
+// DiffSpecTagMask compares specA and specB tag-group by tag-group in 0 allocations and returns
+// the bitmask of field tags (1..63) whose wire bytes differ. Returns ok=false if either
+// message contains out-of-order tags or invalid wire framing.
+func DiffSpecTagMask(specA, specB []byte) (diffMask uint64, ok bool) {
+	if bytes.Equal(specA, specB) {
+		return 0, true
+	}
+	offA, offB := 0, 0
+	var minA, minB protowire.Number = 1, 1
+	var tagA, tagB protowire.Number
+	var grpA, grpB []byte
+	hasA, hasB := false, false
+
+	for {
+		if !hasA && offA < len(specA) {
+			tagA, grpA, offA, ok = nextSpecTagGroup(specA, offA, minA)
+			if !ok {
+				return 0, false
+			}
+			minA = tagA + 1
+			hasA = true
+		}
+		if !hasB && offB < len(specB) {
+			tagB, grpB, offB, ok = nextSpecTagGroup(specB, offB, minB)
+			if !ok {
+				return 0, false
+			}
+			minB = tagB + 1
+			hasB = true
+		}
+		if !hasA && !hasB {
+			return diffMask, true
+		}
+		if hasA && (!hasB || tagA < tagB) {
+			diffMask |= uint64(1) << uint(tagA)
+			hasA = false
+			continue
+		}
+		if hasB && (!hasA || tagB < tagA) {
+			diffMask |= uint64(1) << uint(tagB)
+			hasB = false
+			continue
+		}
+		if !bytes.Equal(grpA, grpB) {
+			diffMask |= uint64(1) << uint(tagA)
+		}
+		hasA = false
+		hasB = false
+	}
+}
+
+// HasContainers reports whether spec.containers (tag 2) is non-empty on the wire.
+func (w *WirePod) HasContainers() bool {
+	if w == nil {
+		return false
+	}
+	return lazy.HasField(w.subMessage(podFieldSpec), specFieldContainers)
+}
+
+// HasVolumeStatuses reports whether status.volumeStatuses (tag 23) is non-empty on the wire.
+func (w *WirePod) HasVolumeStatuses() bool {
+	if w == nil {
+		return false
+	}
+	return lazy.HasField(w.EffectiveSubMessage(podFieldStatus), statusFieldVolumeStatuses)
+}
+
+func (w *WirePod) effectiveMetaWithoutManagedFields() []byte {
+	if w == nil {
+		return nil
+	}
+	if !w.nonManagedMetaDirty {
+		return lazy.TrimManagedFieldsWireBytes(w.meta.Bytes())
+	}
+	return lazy.TrimManagedFieldsWireBytes(w.EffectiveSubMessage(podFieldMetadata))
+}
+
+// EqualModuloManagedFields reports whether w and other have identical Spec, Status, and non-managedFields ObjectMeta wire bytes.
+func (w *WirePod) EqualModuloManagedFields(other *WirePod) bool {
+	if w == nil || other == nil {
+		return w == other
+	}
+	if w.statusEmptySlices != other.statusEmptySlices {
+		return false
+	}
+	if !bytes.Equal(w.EffectiveSubMessage(podFieldSpec), other.EffectiveSubMessage(podFieldSpec)) {
+		return false
+	}
+	if !bytes.Equal(w.EffectiveSubMessage(podFieldStatus), other.EffectiveSubMessage(podFieldStatus)) {
+		return false
+	}
+	return bytes.Equal(w.effectiveMetaWithoutManagedFields(), other.effectiveMetaWithoutManagedFields())
 }
 
 // CacheDecodedStatus stores a decoded PodStatus on w for reuse across validation steps when
@@ -3069,6 +4358,43 @@ func (w *WirePod) CacheDecodedStatus(status *v1.PodStatus) {
 		return
 	}
 	w.cachedStatus = status
+}
+
+// ReadOnlyV1Status returns a read-only *v1.PodStatus without DeepCopying when already cached on w.
+func (w *WirePod) ReadOnlyV1Status(canCache bool) (*v1.PodStatus, error) {
+	if w == nil {
+		return &v1.PodStatus{}, nil
+	}
+	clean := (w.defaults == nil || !w.defaults.statusDirty) && !w.hasNominatedNodeMod && !w.hasConditionsMod
+	if clean && w.cachedStatus != nil {
+		return w.cachedStatus, nil
+	}
+	var st v1.PodStatus
+	statusBytes := w.EffectiveSubMessage(podFieldStatus)
+	if len(statusBytes) > 0 {
+		if err := st.Unmarshal(statusBytes); err != nil {
+			return nil, err
+		}
+	}
+	if w.statusEmptySlices&statusEmptyResourceClaimStatuses != 0 && st.ResourceClaimStatuses == nil {
+		st.ResourceClaimStatuses = []v1.PodResourceClaimStatus{}
+	}
+	if w.statusEmptySlices&statusEmptyNodeAllocatableClaimStatuses != 0 && st.NodeAllocatableResourceClaimStatuses == nil {
+		st.NodeAllocatableResourceClaimStatuses = []v1.NodeAllocatableResourceClaimStatus{}
+	}
+	if clean && canCache {
+		w.cachedStatus = &st
+	}
+	return &st, nil
+}
+
+// ReadOnlyCoreStatus returns a read-only *core.PodStatus without DeepCopying when already cached on w.
+func (w *WirePod) ReadOnlyCoreStatus(canCache bool) (*core.PodStatus, error) {
+	st, err := w.ReadOnlyV1Status(canCache)
+	if err != nil {
+		return nil, err
+	}
+	return (*core.PodStatus)(unsafe.Pointer(st)), nil
 }
 
 // ExtractV1StatusInto unmarshals only PodStatus (tag 3) from w without decoding PodSpec.

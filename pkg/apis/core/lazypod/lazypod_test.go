@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"sigs.k8s.io/randfill"
 
 	v1 "k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
@@ -36,12 +37,16 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/apimachinery/pkg/runtime/serializer/cbor"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apiserver/pkg/storage"
 	"k8s.io/apiserver/pkg/storage/etcd3"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	featuregatetesting "k8s.io/component-base/featuregate/testing"
 	"k8s.io/kubernetes/pkg/apis/core"
 	_ "k8s.io/kubernetes/pkg/apis/core/install"
 	"k8s.io/kubernetes/pkg/apis/core/lazypod"
 	corev1 "k8s.io/kubernetes/pkg/apis/core/v1"
+	"k8s.io/kubernetes/pkg/features"
 	"k8s.io/kubernetes/pkg/printers"
 	printersinternal "k8s.io/kubernetes/pkg/printers/internalversion"
 	registrypod "k8s.io/kubernetes/pkg/registry/core/pod"
@@ -838,6 +843,246 @@ func BenchmarkLazyPodVsStandardPod(b *testing.B) {
 			if err := lazyPBCodec.Encode(&pod, &buf); err != nil {
 				b.Fatal(err)
 			}
+		}
+	})
+}
+
+func assertWireDefaultingMatchesGenerated(t *testing.T, rawPod *v1.Pod) {
+	t.Helper()
+	rawBytes, err := rawPod.Marshal()
+	if err != nil {
+		t.Fatalf("failed to marshal v1.Pod: %v", err)
+	}
+	var stdPod v1.Pod
+	if err := stdPod.Unmarshal(rawBytes); err != nil {
+		t.Fatalf("failed to unmarshal baseline v1.Pod: %v", err)
+	}
+	corev1.SetObjectDefaults_Pod(&stdPod)
+
+	lazyPod := lazypod.NewV1PodFromWire(rawBytes)
+	lazypod.SetObjectDefaults_V1Pod(lazyPod)
+	if !lazyPod.IsLazy() {
+		t.Fatalf("expected lazyPod to remain lazy after SetObjectDefaults_V1Pod")
+	}
+	decLazy, err := lazyPod.EnsureDecoded()
+	if err != nil {
+		t.Fatalf("EnsureDecoded failed: %v", err)
+	}
+	if !apiequality.Semantic.DeepEqual(&stdPod, decLazy) {
+		t.Fatalf("wire defaulting diverged from SetObjectDefaults_Pod:\n%s", cmp.Diff(&stdPod, decLazy))
+	}
+}
+
+func newPodFuzzer(seed int64) *randfill.Filler {
+	quantities := []string{"100m", "250m", "1", "64Mi", "500n", "250u", "0.0005", "0"}
+	return randfill.NewWithSeed(seed).NilChance(0.55).NumElements(0, 2).MaxDepth(8).Funcs(
+		func(q *resource.Quantity, c randfill.Continue) {
+			*q = resource.MustParse(quantities[c.Intn(len(quantities))])
+		},
+		func(ios *intstr.IntOrString, c randfill.Continue) {
+			if c.Bool() {
+				*ios = intstr.FromInt32(int32(1 + c.Intn(65535)))
+			} else {
+				*ios = intstr.FromString("http")
+			}
+		},
+		func(tm *metav1.Time, c randfill.Continue) {
+			*tm = metav1.NewTime(time.Unix(int64(c.Intn(1_800_000_000)), 0).UTC())
+		},
+		func(mt *metav1.MicroTime, c randfill.Continue) {
+			*mt = metav1.NewMicroTime(time.Unix(int64(c.Intn(1_800_000_000)), 0).UTC())
+		},
+		func(f *metav1.FieldsV1, c randfill.Continue) {
+			*f = *metav1.NewFieldsV1(`{"f:metadata":{"f:labels":{"f:app":{}}}}`)
+		},
+		func(tm *metav1.TypeMeta, _ randfill.Continue) {
+			*tm = metav1.TypeMeta{}
+		},
+	)
+}
+
+func TestWirePodDefaultingParityWithGeneratedDefaults(t *testing.T) {
+	t.Run("RandomFuzzDefaultFeatureGates", func(t *testing.T) {
+		for seed := int64(1); seed <= 300; seed++ {
+			f := newPodFuzzer(seed)
+			var pod v1.Pod
+			f.Fill(&pod)
+			assertWireDefaultingMatchesGenerated(t, &pod)
+		}
+	})
+
+	t.Run("RandomFuzzFeatureGatesToggled", func(t *testing.T) {
+		featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.H2CContainerProbe, true)
+		featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.ImageVolume, true)
+		featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.PodLevelResources, true)
+		featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.PodLevelResourcesFixDefaulting, false)
+		for seed := int64(1001); seed <= 1200; seed++ {
+			f := newPodFuzzer(seed)
+			var pod v1.Pod
+			f.Fill(&pod)
+			assertWireDefaultingMatchesGenerated(t, &pod)
+		}
+	})
+
+	t.Run("TargetedNestedAndFeatureGatedCases", func(t *testing.T) {
+		featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.H2CContainerProbe, true)
+		featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.ImageVolume, true)
+		featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.PodLevelResources, true)
+		featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.PodLevelResourcesFixDefaulting, false)
+
+		nestedPod := &v1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "nested-defaults", Namespace: "default"},
+			Spec: v1.PodSpec{
+				Resources: &v1.ResourceRequirements{
+					Limits: v1.ResourceList{v1.ResourceCPU: resource.MustParse("500m")},
+				},
+				Overhead: v1.ResourceList{v1.ResourceCPU: resource.MustParse("100n")},
+				Volumes: []v1.Volume{
+					{Name: "iscsi", VolumeSource: v1.VolumeSource{ISCSI: &v1.ISCSIVolumeSource{TargetPortal: "10.0.0.1:3260", IQN: "iqn.test"}}},
+					{Name: "rbd", VolumeSource: v1.VolumeSource{RBD: &v1.RBDVolumeSource{CephMonitors: []string{"10.0.0.2"}, RBDImage: "img"}}},
+					{Name: "azure", VolumeSource: v1.VolumeSource{AzureDisk: &v1.AzureDiskVolumeSource{DiskName: "d", DataDiskURI: "u"}}},
+					{Name: "scaleio", VolumeSource: v1.VolumeSource{ScaleIO: &v1.ScaleIOVolumeSource{Gateway: "gw", System: "sys"}}},
+					{Name: "downward", VolumeSource: v1.VolumeSource{DownwardAPI: &v1.DownwardAPIVolumeSource{
+						Items: []v1.DownwardAPIVolumeFile{{Path: "name", FieldRef: &v1.ObjectFieldSelector{FieldPath: "metadata.name"}}},
+					}}},
+					{Name: "projected", VolumeSource: v1.VolumeSource{Projected: &v1.ProjectedVolumeSource{
+						Sources: []v1.VolumeProjection{
+							{ServiceAccountToken: &v1.ServiceAccountTokenProjection{Path: "token"}},
+							{DownwardAPI: &v1.DownwardAPIProjection{
+								Items: []v1.DownwardAPIVolumeFile{{Path: "ns", FieldRef: &v1.ObjectFieldSelector{FieldPath: "metadata.namespace"}}},
+							}},
+						},
+					}}},
+					{Name: "ephemeral", VolumeSource: v1.VolumeSource{Ephemeral: &v1.EphemeralVolumeSource{
+						VolumeClaimTemplate: &v1.PersistentVolumeClaimTemplate{
+							Spec: v1.PersistentVolumeClaimSpec{
+								Resources: v1.VolumeResourceRequirements{Requests: v1.ResourceList{v1.ResourceStorage: resource.MustParse("500n")}},
+							},
+						},
+					}}},
+					{Name: "image", VolumeSource: v1.VolumeSource{Image: &v1.ImageVolumeSource{Reference: "registry.k8s.io/img:latest"}}},
+				},
+				Containers: []v1.Container{{
+					Name:  "app",
+					Image: "nginx:1.27",
+					Env: []v1.EnvVar{
+						{Name: "POD_NAME", ValueFrom: &v1.EnvVarSource{FieldRef: &v1.ObjectFieldSelector{FieldPath: "metadata.name"}}},
+						{Name: "FILE_VAL", ValueFrom: &v1.EnvVarSource{FileKeyRef: &v1.FileKeySelector{VolumeName: "downward", Path: "name", Key: "k"}}},
+					},
+					Resources: v1.ResourceRequirements{
+						Requests: v1.ResourceList{v1.ResourceCPU: resource.MustParse("0.0005")},
+					},
+					LivenessProbe: &v1.Probe{
+						ProbeHandler: v1.ProbeHandler{HTTPGet: &v1.HTTPGetAction{Port: intstr.FromInt32(8080)}},
+					},
+					ReadinessProbe: &v1.Probe{
+						ProbeHandler: v1.ProbeHandler{GRPC: &v1.GRPCAction{Port: 9090}},
+					},
+					Lifecycle: &v1.Lifecycle{
+						PreStop: &v1.LifecycleHandler{HTTPGet: &v1.HTTPGetAction{Port: intstr.FromInt32(8080)}},
+					},
+				}},
+				EphemeralContainers: []v1.EphemeralContainer{{
+					EphemeralContainerCommon: v1.EphemeralContainerCommon{
+						Name:  "debugger",
+						Image: "busybox:latest",
+						Ports: []v1.ContainerPort{{ContainerPort: 9999}},
+					},
+				}},
+			},
+			Status: v1.PodStatus{
+				PodIP:              "10.244.0.5",
+				AllocatedResources: v1.ResourceList{v1.ResourceCPU: resource.MustParse("250u")},
+				ContainerStatuses: []v1.ContainerStatus{{
+					Name:               "app",
+					AllocatedResources: v1.ResourceList{v1.ResourceCPU: resource.MustParse("100n")},
+				}},
+			},
+		}
+		assertWireDefaultingMatchesGenerated(t, nestedPod)
+
+		// Verify V1PodList scheme defaulting parity as well.
+		lazyScheme, _ := newLazyScheme(t)
+		rawItemBytes, err := nestedPod.Marshal()
+		if err != nil {
+			t.Fatalf("failed to marshal nestedPod: %v", err)
+		}
+		lazyList := &lazypod.V1PodList{
+			Items: []lazypod.V1Pod{*lazypod.NewV1PodFromWire(rawItemBytes)},
+		}
+		lazyScheme.Default(lazyList)
+		decListObj, err := lazyList.EnsureDecodedObject()
+		if err != nil {
+			t.Fatalf("EnsureDecodedObject(V1PodList) failed: %v", err)
+		}
+		stdList := &v1.PodList{Items: []v1.Pod{*nestedPod.DeepCopy()}}
+		corev1.SetObjectDefaults_PodList(stdList)
+		if !apiequality.Semantic.DeepEqual(stdList, decListObj) {
+			t.Fatalf("V1PodList defaulting mismatch:\n%s", cmp.Diff(stdList, decListObj))
+		}
+	})
+
+	t.Run("ZeroAllocOnAlreadyDefaultedRealisticPod", func(t *testing.T) {
+		expSec := int64(3600)
+		svcEmpty := ""
+		optFalse := false
+		pod := &v1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "prod-pod", Namespace: "default"},
+			Spec: v1.PodSpec{
+				Volumes: []v1.Volume{{
+					Name: "kube-api-access",
+					VolumeSource: v1.VolumeSource{Projected: &v1.ProjectedVolumeSource{
+						Sources: []v1.VolumeProjection{
+							{ServiceAccountToken: &v1.ServiceAccountTokenProjection{Path: "token", ExpirationSeconds: &expSec}},
+							{ConfigMap: &v1.ConfigMapProjection{LocalObjectReference: v1.LocalObjectReference{Name: "kube-root-ca.crt"}}},
+							{DownwardAPI: &v1.DownwardAPIProjection{Items: []v1.DownwardAPIVolumeFile{
+								{Path: "namespace", FieldRef: &v1.ObjectFieldSelector{APIVersion: "v1", FieldPath: "metadata.namespace"}},
+							}}},
+						},
+					}},
+				}},
+				Containers: []v1.Container{{
+					Name:  "web",
+					Image: "registry.k8s.io/web:v1.0.0",
+					Ports: []v1.ContainerPort{{ContainerPort: 8080, Protocol: v1.ProtocolTCP}},
+					Env: []v1.EnvVar{
+						{Name: "POD_IP", ValueFrom: &v1.EnvVarSource{FieldRef: &v1.ObjectFieldSelector{APIVersion: "v1", FieldPath: "status.podIP"}}},
+						{Name: "F", ValueFrom: &v1.EnvVarSource{FileKeyRef: &v1.FileKeySelector{VolumeName: "v", Path: "p", Key: "k", Optional: &optFalse}}},
+					},
+					Resources: v1.ResourceRequirements{
+						Limits:   v1.ResourceList{v1.ResourceCPU: resource.MustParse("500m"), v1.ResourceMemory: resource.MustParse("256Mi")},
+						Requests: v1.ResourceList{v1.ResourceCPU: resource.MustParse("250m"), v1.ResourceMemory: resource.MustParse("256Mi")},
+					},
+					LivenessProbe: &v1.Probe{
+						ProbeHandler: v1.ProbeHandler{HTTPGet: &v1.HTTPGetAction{Path: "/healthz", Port: intstr.FromInt32(8080), Scheme: v1.URISchemeHTTP}},
+					},
+					ReadinessProbe: &v1.Probe{
+						ProbeHandler: v1.ProbeHandler{GRPC: &v1.GRPCAction{Port: 9090, Service: &svcEmpty}},
+					},
+				}},
+			},
+			Status: v1.PodStatus{
+				Phase:  v1.PodRunning,
+				PodIP:  "10.244.1.9",
+				PodIPs: []v1.PodIP{{IP: "10.244.1.9"}},
+				ContainerStatuses: []v1.ContainerStatus{{
+					Name:               "web",
+					Ready:              true,
+					AllocatedResources: v1.ResourceList{v1.ResourceCPU: resource.MustParse("250m")},
+				}},
+			},
+		}
+		corev1.SetObjectDefaults_Pod(pod)
+		rawBytes, err := pod.Marshal()
+		if err != nil {
+			t.Fatalf("Marshal failed: %v", err)
+		}
+		w := lazypod.NewWirePod(rawBytes)
+		allocs := testing.AllocsPerRun(100, func() {
+			w.DefaultOnWire()
+		})
+		if allocs != 0 {
+			t.Fatalf("expected 0 allocs/op on already-defaulted realistic Pod, got %v", allocs)
 		}
 	})
 }

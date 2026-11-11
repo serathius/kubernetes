@@ -26,6 +26,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime"
 	versionutil "k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/apiserver/pkg/admission"
 	genericadmissioninitializer "k8s.io/apiserver/pkg/admission/initializer"
@@ -137,12 +138,27 @@ func (p *Plugin) validatePod(a admission.Attributes) error {
 	if subresource != "" && subresource != "resize" {
 		return nil
 	}
-	if acc, ok := admission.RawObjectFrom(a).(core.PodAccessor); ok {
+	rawNew := admission.RawObjectFrom(a)
+	rawOld := admission.RawOldObjectFrom(a)
+	if acc, ok := rawNew.(core.PodAccessor); ok {
 		if len(acc.GetSpecNodeName()) == 0 {
 			return nil
 		}
-		if oldAcc, ok := admission.RawOldObjectFrom(a).(core.PodAccessor); ok && oldAcc.GetGeneration() == acc.GetGeneration() {
+		if oldAcc, ok := rawOld.(core.PodAccessor); ok && oldAcc.GetGeneration() == acc.GetGeneration() {
 			return nil
+		}
+		if sub, ok := rawNew.(runtime.LazySubtreePatcher); ok && !sub.IsDecoded() {
+			if diffMask, diffOK := sub.DiffSpecTagMask(rawOld); diffOK {
+				adsMask, _ := sub.SpecTagMaskForField("activeDeadlineSeconds")
+				tolMask, _ := sub.SpecTagMaskForField("tolerations")
+				sgMask, _ := sub.SpecTagMaskForField("schedulingGates")
+				if diffMask&^(adsMask|tolMask|sgMask) == 0 {
+					if !p.WaitForReady() {
+						return admission.NewForbidden(a, fmt.Errorf("not yet ready to handle request"))
+					}
+					return nil
+				}
+			}
 		}
 	}
 	pod, ok := a.GetObject().(*core.Pod)

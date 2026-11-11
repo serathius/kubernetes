@@ -128,13 +128,16 @@ func (f *structuredMergeManager) Update(liveObj, newObj runtime.Object, managed 
 			newObjVersioned = newProj
 			projected = true
 		}
-	} else if projector, ok := newObjVersioned.(runtime.LazyUpdateProjector); ok {
-		if newProj, liveProj, projOK, projErr := projector.ProjectForUpdate(liveObjVersioned, f.ignoreSpec, f.ignoreStatus); projErr != nil {
-			return nil, nil, fmt.Errorf("failed to project objects (%v) for update: %v", objectGVKNN(newObj), projErr)
-		} else if projOK {
-			newObjVersioned = newProj
-			liveObjVersioned = liveProj
-			projected = true
+	}
+	if !projected {
+		if projector, ok := newObjVersioned.(runtime.LazyUpdateProjector); ok {
+			if newProj, liveProj, projOK, projErr := projector.ProjectForUpdate(liveObjVersioned, f.ignoreSpec, f.ignoreStatus); projErr != nil {
+				return nil, nil, fmt.Errorf("failed to project objects (%v) for update: %v", objectGVKNN(newObj), projErr)
+			} else if projOK {
+				newObjVersioned = newProj
+				liveObjVersioned = liveProj
+				projected = true
+			}
 		}
 	}
 	if !projected {
@@ -173,7 +176,7 @@ func (f *structuredMergeManager) Update(liveObj, newObj runtime.Object, managed 
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to update ManagedFields (%v): %v", objectGVKNN(newObjVersioned), err)
 	}
-	managed = NewManaged(managedFields, managed.Times())
+	managed = withManagedFields(managed, managedFields)
 
 	return newObj, managed, nil
 }
@@ -201,10 +204,6 @@ func (f *structuredMergeManager) Apply(liveObj, patchObj runtime.Object, managed
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to convert live object (%v) to proper version: %v", objectGVKNN(liveObj), err)
 	}
-	liveObjVersioned, err = runtime.EnsureDecodedObject(liveObjVersioned)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to decode live object (%v): %v", objectGVKNN(liveObjVersioned), err)
-	}
 
 	// Don't allow duplicates in the applied object.
 	patchObjTyped, err := f.typeConverter.ObjectToTyped(patchObj)
@@ -212,17 +211,61 @@ func (f *structuredMergeManager) Apply(liveObj, patchObj runtime.Object, managed
 		return nil, nil, fmt.Errorf("failed to create typed patch object (%v): %v", objectGVKNN(patchObj), err)
 	}
 
+	apiVersion := fieldpath.APIVersion(f.groupVersion.String())
+	if subtreePatcher, ok := liveObjVersioned.(runtime.LazySubtreePatcher); ok && !subtreePatcher.IsDecoded() {
+		if includeMetadata, specTagMask, statusTagMask, subOK := computeApplySubtree(patchObj, managed.Fields(), manager, apiVersion, subtreePatcher); subOK {
+			liveProj, err := subtreePatcher.ExtractSubtreePatchBase(includeMetadata, specTagMask, statusTagMask, true)
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to extract subtree live object (%v): %v", objectGVKNN(liveObjVersioned), err)
+			}
+			liveObjTyped, err := f.typeConverter.ObjectToTyped(liveProj, typed.AllowDuplicates)
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to create typed live object (%v): %v", objectGVKNN(liveObjVersioned), err)
+			}
+			newObjTyped, managedFields, err := f.updater.Apply(liveObjTyped, patchObjTyped, apiVersion, managed.Fields(), manager, force)
+			if err != nil {
+				return nil, nil, err
+			}
+			managed = withManagedFields(managed, managedFields)
+			if newObjTyped == nil {
+				return nil, managed, nil
+			}
+			newObj, err := f.typeConverter.TypedToObject(newObjTyped)
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to convert new typed object (%v) to object: %v", objectGVKNN(patchObj), err)
+			}
+			newObjVersioned, err := f.toVersioned(newObj)
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to convert new object (%v) to proper version: %v", objectGVKNN(patchObj), err)
+			}
+			f.objectDefaulter.Default(newObjVersioned)
+			splicedVersioned, err := subtreePatcher.SpliceSubtreePatchResult(newObjVersioned, includeMetadata, specTagMask, statusTagMask)
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to splice subtree result (%v): %v", objectGVKNN(patchObj), err)
+			}
+			newObjUnversioned, err := f.toUnversioned(splicedVersioned)
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to convert to unversioned (%v): %v", objectGVKNN(patchObj), err)
+			}
+			return newObjUnversioned, managed, nil
+		}
+	}
+
+	liveObjVersioned, err = runtime.EnsureDecodedObject(liveObjVersioned)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to decode live object (%v): %v", objectGVKNN(liveObjVersioned), err)
+	}
+
 	liveObjTyped, err := f.typeConverter.ObjectToTyped(liveObjVersioned, typed.AllowDuplicates)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create typed live object (%v): %v", objectGVKNN(liveObjVersioned), err)
 	}
 
-	apiVersion := fieldpath.APIVersion(f.groupVersion.String())
 	newObjTyped, managedFields, err := f.updater.Apply(liveObjTyped, patchObjTyped, apiVersion, managed.Fields(), manager, force)
 	if err != nil {
 		return nil, nil, err
 	}
-	managed = NewManaged(managedFields, managed.Times())
+	managed = withManagedFields(managed, managedFields)
 
 	if newObjTyped == nil {
 		return nil, managed, nil
@@ -244,6 +287,177 @@ func (f *structuredMergeManager) Apply(liveObj, patchObj runtime.Object, managed
 		return nil, nil, fmt.Errorf("failed to convert to unversioned (%v): %v", objectGVKNN(patchObj), err)
 	}
 	return newObjUnversioned, managed, nil
+}
+
+func computeApplySubtree(patchObj runtime.Object, managedFields fieldpath.ManagedFields, manager string, apiVersion fieldpath.APIVersion, subtreePatcher runtime.LazySubtreePatcher) (includeMetadata bool, specTagMask, statusTagMask uint64, ok bool) {
+	patchUnstructured, isUnstructured := patchObj.(runtime.Unstructured)
+	if !isUnstructured {
+		return false, 0, 0, false
+	}
+	for _, vs := range managedFields {
+		if vs != nil && vs.APIVersion() != apiVersion {
+			return false, 0, 0, false
+		}
+	}
+	for k, v := range patchUnstructured.UnstructuredContent() {
+		switch k {
+		case "apiVersion", "kind":
+		case "metadata":
+			if v != nil {
+				if _, isMap := v.(map[string]interface{}); !isMap {
+					return false, 0, 0, false
+				}
+			}
+			includeMetadata = true
+		case "status":
+			if v == nil {
+				statusTagMask = ^uint64(0)
+				continue
+			}
+			statusMap, isMap := v.(map[string]interface{})
+			if !isMap {
+				return false, 0, 0, false
+			}
+			for sk := range statusMap {
+				m, known := subtreePatcher.StatusTagMaskForField(sk)
+				if !known {
+					statusTagMask = ^uint64(0)
+					break
+				}
+				statusTagMask |= m
+			}
+		case "spec":
+			if v == nil {
+				return false, 0, 0, false
+			}
+			specMap, isMap := v.(map[string]interface{})
+			if !isMap {
+				return false, 0, 0, false
+			}
+			for sk := range specMap {
+				m, known := subtreePatcher.SpecTagMaskForField(sk)
+				if !known {
+					return false, 0, 0, false
+				}
+				specTagMask |= m
+			}
+		default:
+			return false, 0, 0, false
+		}
+	}
+
+	if lastSet := managedFields[manager]; lastSet != nil && !lastSet.Set().Empty() {
+		valid := true
+		lastSet.Set().Members.Iterate(func(pe fieldpath.PathElement) {
+			if !valid {
+				return
+			}
+			if pe.FieldName == nil {
+				valid = false
+				return
+			}
+			switch *pe.FieldName {
+			case "apiVersion", "kind":
+			case "metadata":
+				includeMetadata = true
+			case "status":
+				statusTagMask = ^uint64(0)
+			default:
+				valid = false
+			}
+		})
+		if !valid {
+			return false, 0, 0, false
+		}
+		lastSet.Set().Children.Iterate(func(pe fieldpath.PathElement) {
+			if !valid {
+				return
+			}
+			if pe.FieldName == nil {
+				valid = false
+				return
+			}
+			switch *pe.FieldName {
+			case "metadata":
+				includeMetadata = true
+			case "status":
+				if statusTagMask == ^uint64(0) {
+					return
+				}
+				if statusSet, hasStatus := lastSet.Set().Children.Get(pe); hasStatus && statusSet != nil {
+					statusSet.Members.Iterate(func(spe fieldpath.PathElement) {
+						if statusTagMask == ^uint64(0) {
+							return
+						}
+						if spe.FieldName == nil {
+							statusTagMask = ^uint64(0)
+							return
+						}
+						m, known := subtreePatcher.StatusTagMaskForField(*spe.FieldName)
+						if !known {
+							statusTagMask = ^uint64(0)
+							return
+						}
+						statusTagMask |= m
+					})
+					statusSet.Children.Iterate(func(spe fieldpath.PathElement) {
+						if statusTagMask == ^uint64(0) {
+							return
+						}
+						if spe.FieldName == nil {
+							statusTagMask = ^uint64(0)
+							return
+						}
+						m, known := subtreePatcher.StatusTagMaskForField(*spe.FieldName)
+						if !known {
+							statusTagMask = ^uint64(0)
+							return
+						}
+						statusTagMask |= m
+					})
+				}
+			case "spec":
+				if specSet, hasSpec := lastSet.Set().Children.Get(pe); hasSpec && specSet != nil {
+					specSet.Members.Iterate(func(spe fieldpath.PathElement) {
+						if !valid {
+							return
+						}
+						if spe.FieldName == nil {
+							valid = false
+							return
+						}
+						m, known := subtreePatcher.SpecTagMaskForField(*spe.FieldName)
+						if !known {
+							valid = false
+							return
+						}
+						specTagMask |= m
+					})
+					specSet.Children.Iterate(func(spe fieldpath.PathElement) {
+						if !valid {
+							return
+						}
+						if spe.FieldName == nil {
+							valid = false
+							return
+						}
+						m, known := subtreePatcher.SpecTagMaskForField(*spe.FieldName)
+						if !known {
+							valid = false
+							return
+						}
+						specTagMask |= m
+					})
+				}
+			default:
+				valid = false
+			}
+		})
+		if !valid {
+			return false, 0, 0, false
+		}
+	}
+	return includeMetadata, specTagMask, statusTagMask, true
 }
 
 func (f *structuredMergeManager) toVersioned(obj runtime.Object) (runtime.Object, error) {

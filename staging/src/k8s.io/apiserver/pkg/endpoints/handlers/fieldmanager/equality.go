@@ -116,11 +116,6 @@ func IgnoreManagedFieldsTimestampsTransformer(
 	newObj runtime.Object,
 	oldObj runtime.Object,
 ) (res runtime.Object, err error) {
-	if lazyNew, ok := newObj.(runtime.LazyObject); ok && !lazyNew.IsDecoded() {
-		if lazyOld, ok := oldObj.(runtime.LazyObject); ok && !lazyOld.IsDecoded() {
-			return newObj, nil
-		}
-	}
 	equalities := getAvoidTimestampEqualities()
 	if len(equalities.Equalities) == 0 {
 		return newObj, nil
@@ -138,6 +133,16 @@ func IgnoreManagedFieldsTimestampsTransformer(
 
 		metrics.RecordTimestampComparisonLatency(outcome, time.Since(start))
 	}()
+
+	lazyEqualVerified := false
+	if subNew, ok := newObj.(runtime.LazySubtreePatcher); ok && !subNew.IsDecoded() {
+		if eq, eqOK := subNew.EqualModuloManagedFields(oldObj); eqOK {
+			if !eq {
+				return newObj, nil
+			}
+			lazyEqualVerified = true
+		}
+	}
 
 	// If managedFields modulo timestamps are unchanged
 	//		and
@@ -209,7 +214,7 @@ func IgnoreManagedFieldsTimestampsTransformer(
 		return newObj, nil
 	}
 
-	if eqFn(newObj, oldObj) {
+	if lazyEqualVerified || equalDecodedObjects(eqFn, newObj, oldObj) {
 		// Remove any changed timestamps, so that timestamp is not the only
 		// change seen by etcd.
 		//
@@ -228,4 +233,24 @@ func IgnoreManagedFieldsTimestampsTransformer(
 
 	outcome = "unequal_objects_slow"
 	return newObj, nil
+}
+
+func equalDecodedObjects(eqFn func(a1, a2 interface{}) bool, newObj, oldObj runtime.Object) bool {
+	if lazyNew, ok := newObj.(runtime.LazyObject); ok {
+		if !lazyNew.IsDecoded() {
+			newObj = newObj.DeepCopyObject()
+		}
+		if dec, err := runtime.EnsureDecodedObject(newObj); err == nil {
+			newObj = dec
+		}
+	}
+	if lazyOld, ok := oldObj.(runtime.LazyObject); ok {
+		if !lazyOld.IsDecoded() {
+			oldObj = oldObj.DeepCopyObject()
+		}
+		if dec, err := runtime.EnsureDecodedObject(oldObj); err == nil {
+			oldObj = dec
+		}
+	}
+	return eqFn(newObj, oldObj)
 }

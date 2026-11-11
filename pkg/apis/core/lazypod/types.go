@@ -20,6 +20,8 @@ import (
 	"bytes"
 	stdjson "encoding/json"
 	"fmt"
+	"maps"
+	"slices"
 	"unsafe"
 
 	"github.com/gogo/protobuf/proto"
@@ -49,6 +51,7 @@ type V1Pod struct {
 	metav1.TypeMeta `json:",inline"`
 	wire            *WirePod
 	wireOwn         *V1Pod
+	wireCanCache    bool
 	decoded         *v1.Pod
 }
 
@@ -111,6 +114,7 @@ func (p *V1Pod) EnsureDecoded() (*v1.Pod, error) {
 	p.decoded = v1Pod
 	p.wire = nil
 	p.wireOwn = nil
+	p.wireCanCache = false
 	return p.decoded, nil
 }
 
@@ -151,6 +155,9 @@ func (p *V1Pod) DeepCopy() *V1Pod {
 		return out
 	}
 	if p.wire != nil {
+		if p.wireOwn == p {
+			p.wire.DisownCachedMeta()
+		}
 		out.wire = p.wire.Clone()
 		out.wireOwn = out
 	}
@@ -168,6 +175,7 @@ func (p *V1Pod) Unmarshal(dAtA []byte) error {
 	rawCopy := make([]byte, len(dAtA))
 	copy(rawCopy, dAtA)
 	p.decoded = nil
+	p.wireCanCache = false
 	if p.wire == nil || p.wireOwn != p {
 		p.wire = NewWirePod(rawCopy)
 		p.wireOwn = p
@@ -240,6 +248,7 @@ func (p *V1Pod) UnmarshalJSON(data []byte) error {
 	p.decoded = pod
 	p.wire = nil
 	p.wireOwn = nil
+	p.wireCanCache = false
 	return nil
 }
 
@@ -262,6 +271,7 @@ func (p *V1Pod) UnmarshalCBOR(data []byte) error {
 	p.decoded = pod
 	p.wire = nil
 	p.wireOwn = nil
+	p.wireCanCache = false
 	return nil
 }
 
@@ -273,6 +283,10 @@ func (p *V1Pod) GetObjectMeta() metav1.Object {
 	return p
 }
 
+func (p *V1Pod) canCache() bool {
+	return p.wireOwn == p || p.wireCanCache
+}
+
 // ExtractObjectMetaInto populates out from the wire without full pod decoding.
 func (p *V1Pod) ExtractObjectMetaInto(out *metav1.ObjectMeta) {
 	if p.decoded != nil {
@@ -280,7 +294,21 @@ func (p *V1Pod) ExtractObjectMetaInto(out *metav1.ObjectMeta) {
 		return
 	}
 	if p.wire != nil {
-		p.wire.meta.ExtractObjectMetaInto(p.wire.meta.Bytes(), out)
+		p.wire.ExtractObjectMetaForUpdate(out, false)
+	}
+}
+
+// BorrowObjectMetaInto populates out for read-only callers without DeepCopying maps/slices when clean.
+func (p *V1Pod) BorrowObjectMetaInto(out *metav1.ObjectMeta, dropManagedFields bool) {
+	if p.decoded != nil {
+		*out = p.decoded.ObjectMeta
+		if dropManagedFields {
+			out.ManagedFields = nil
+		}
+		return
+	}
+	if p.wire != nil {
+		p.wire.BorrowObjectMetaInto(out, dropManagedFields, p.canCache())
 	}
 }
 
@@ -288,13 +316,21 @@ func (p *V1Pod) ensureWire() *WirePod {
 	if p.wire == nil {
 		p.wire = NewWirePod(nil)
 		p.wireOwn = p
+		p.wireCanCache = false
 		return p.wire
 	}
 	if p.wireOwn != p {
 		p.wire = p.wire.Clone()
 		p.wireOwn = p
+		p.wireCanCache = false
 	}
 	return p.wire
+}
+
+func (p *V1Pod) ensureWireForMetaEdit() *WirePod {
+	w := p.ensureWire()
+	w.MarkNonManagedMetaDirty()
+	return w
 }
 
 func (p *V1Pod) GetNamespace() string {
@@ -302,6 +338,9 @@ func (p *V1Pod) GetNamespace() string {
 		return p.decoded.Namespace
 	}
 	if p.wire != nil {
+		if cm, ok := p.wire.CachedObjectMeta(); ok {
+			return cm.Namespace
+		}
 		return p.wire.meta.GetNamespace()
 	}
 	return ""
@@ -311,13 +350,16 @@ func (p *V1Pod) SetNamespace(namespace string) {
 		p.decoded.Namespace = namespace
 		return
 	}
-	p.ensureWire().meta.SetNamespace(namespace)
+	p.ensureWireForMetaEdit().meta.SetNamespace(namespace)
 }
 func (p *V1Pod) GetName() string {
 	if p.decoded != nil {
 		return p.decoded.Name
 	}
 	if p.wire != nil {
+		if cm, ok := p.wire.CachedObjectMeta(); ok {
+			return cm.Name
+		}
 		return p.wire.meta.GetName()
 	}
 	return ""
@@ -327,13 +369,16 @@ func (p *V1Pod) SetName(name string) {
 		p.decoded.Name = name
 		return
 	}
-	p.ensureWire().meta.SetName(name)
+	p.ensureWireForMetaEdit().meta.SetName(name)
 }
 func (p *V1Pod) GetGenerateName() string {
 	if p.decoded != nil {
 		return p.decoded.GenerateName
 	}
 	if p.wire != nil {
+		if cm, ok := p.wire.CachedObjectMeta(); ok {
+			return cm.GenerateName
+		}
 		return p.wire.meta.GetGenerateName()
 	}
 	return ""
@@ -343,13 +388,16 @@ func (p *V1Pod) SetGenerateName(name string) {
 		p.decoded.GenerateName = name
 		return
 	}
-	p.ensureWire().meta.SetGenerateName(name)
+	p.ensureWireForMetaEdit().meta.SetGenerateName(name)
 }
 func (p *V1Pod) GetUID() types.UID {
 	if p.decoded != nil {
 		return p.decoded.UID
 	}
 	if p.wire != nil {
+		if cm, ok := p.wire.CachedObjectMeta(); ok {
+			return cm.UID
+		}
 		return p.wire.meta.GetUID()
 	}
 	return ""
@@ -359,13 +407,16 @@ func (p *V1Pod) SetUID(uid types.UID) {
 		p.decoded.UID = uid
 		return
 	}
-	p.ensureWire().meta.SetUID(uid)
+	p.ensureWireForMetaEdit().meta.SetUID(uid)
 }
 func (p *V1Pod) GetResourceVersion() string {
 	if p.decoded != nil {
 		return p.decoded.ResourceVersion
 	}
 	if p.wire != nil {
+		if cm, ok := p.wire.CachedObjectMeta(); ok {
+			return cm.ResourceVersion
+		}
 		return p.wire.meta.GetResourceVersion()
 	}
 	return ""
@@ -375,13 +426,16 @@ func (p *V1Pod) SetResourceVersion(version string) {
 		p.decoded.ResourceVersion = version
 		return
 	}
-	p.ensureWire().meta.SetResourceVersion(version)
+	p.ensureWire().SetResourceVersion(version)
 }
 func (p *V1Pod) GetGeneration() int64 {
 	if p.decoded != nil {
 		return p.decoded.Generation
 	}
 	if p.wire != nil {
+		if cm, ok := p.wire.CachedObjectMeta(); ok {
+			return cm.Generation
+		}
 		return p.wire.meta.GetGeneration()
 	}
 	return 0
@@ -391,13 +445,16 @@ func (p *V1Pod) SetGeneration(generation int64) {
 		p.decoded.Generation = generation
 		return
 	}
-	p.ensureWire().meta.SetGeneration(generation)
+	p.ensureWireForMetaEdit().meta.SetGeneration(generation)
 }
 func (p *V1Pod) GetSelfLink() string {
 	if p.decoded != nil {
 		return p.decoded.SelfLink
 	}
 	if p.wire != nil {
+		if cm, ok := p.wire.CachedObjectMeta(); ok {
+			return cm.SelfLink
+		}
 		return p.wire.meta.GetSelfLink()
 	}
 	return ""
@@ -407,13 +464,16 @@ func (p *V1Pod) SetSelfLink(selfLink string) {
 		p.decoded.SelfLink = selfLink
 		return
 	}
-	p.ensureWire().meta.SetSelfLink(selfLink)
+	p.ensureWireForMetaEdit().meta.SetSelfLink(selfLink)
 }
 func (p *V1Pod) GetCreationTimestamp() metav1.Time {
 	if p.decoded != nil {
 		return p.decoded.CreationTimestamp
 	}
 	if p.wire != nil {
+		if cm, ok := p.wire.CachedObjectMeta(); ok {
+			return cm.CreationTimestamp
+		}
 		return p.wire.meta.GetCreationTimestamp()
 	}
 	return metav1.Time{}
@@ -423,13 +483,16 @@ func (p *V1Pod) SetCreationTimestamp(timestamp metav1.Time) {
 		p.decoded.CreationTimestamp = timestamp
 		return
 	}
-	p.ensureWire().meta.SetCreationTimestamp(timestamp)
+	p.ensureWireForMetaEdit().meta.SetCreationTimestamp(timestamp)
 }
 func (p *V1Pod) GetDeletionTimestamp() *metav1.Time {
 	if p.decoded != nil {
 		return p.decoded.DeletionTimestamp
 	}
 	if p.wire != nil {
+		if cm, ok := p.wire.CachedObjectMeta(); ok {
+			return cm.DeletionTimestamp
+		}
 		return p.wire.meta.GetDeletionTimestamp()
 	}
 	return nil
@@ -439,13 +502,16 @@ func (p *V1Pod) SetDeletionTimestamp(timestamp *metav1.Time) {
 		p.decoded.DeletionTimestamp = timestamp
 		return
 	}
-	p.ensureWire().meta.SetDeletionTimestamp(timestamp)
+	p.ensureWireForMetaEdit().meta.SetDeletionTimestamp(timestamp)
 }
 func (p *V1Pod) GetDeletionGracePeriodSeconds() *int64 {
 	if p.decoded != nil {
 		return p.decoded.DeletionGracePeriodSeconds
 	}
 	if p.wire != nil {
+		if cm, ok := p.wire.CachedObjectMeta(); ok {
+			return cm.DeletionGracePeriodSeconds
+		}
 		return p.wire.meta.GetDeletionGracePeriodSeconds()
 	}
 	return nil
@@ -455,13 +521,19 @@ func (p *V1Pod) SetDeletionGracePeriodSeconds(gracePeriodSeconds *int64) {
 		p.decoded.DeletionGracePeriodSeconds = gracePeriodSeconds
 		return
 	}
-	p.ensureWire().meta.SetDeletionGracePeriodSeconds(gracePeriodSeconds)
+	p.ensureWireForMetaEdit().meta.SetDeletionGracePeriodSeconds(gracePeriodSeconds)
 }
 func (p *V1Pod) GetLabels() map[string]string {
 	if p.decoded != nil {
 		return p.decoded.Labels
 	}
 	if p.wire != nil {
+		if cm, ok := p.wire.CachedObjectMeta(); ok {
+			if p.wireOwn == p && p.wire.IsCachedMetaOwned() {
+				return cm.Labels
+			}
+			return maps.Clone(cm.Labels)
+		}
 		return p.wire.meta.GetLabels()
 	}
 	return nil
@@ -471,13 +543,19 @@ func (p *V1Pod) SetLabels(labels map[string]string) {
 		p.decoded.Labels = labels
 		return
 	}
-	p.ensureWire().meta.SetLabels(labels)
+	p.ensureWireForMetaEdit().meta.SetLabels(labels)
 }
 func (p *V1Pod) GetAnnotations() map[string]string {
 	if p.decoded != nil {
 		return p.decoded.Annotations
 	}
 	if p.wire != nil {
+		if cm, ok := p.wire.CachedObjectMeta(); ok {
+			if p.wireOwn == p && p.wire.IsCachedMetaOwned() {
+				return cm.Annotations
+			}
+			return maps.Clone(cm.Annotations)
+		}
 		return p.wire.meta.GetAnnotations()
 	}
 	return nil
@@ -487,13 +565,16 @@ func (p *V1Pod) SetAnnotations(annotations map[string]string) {
 		p.decoded.Annotations = annotations
 		return
 	}
-	p.ensureWire().meta.SetAnnotations(annotations)
+	p.ensureWireForMetaEdit().meta.SetAnnotations(annotations)
 }
 func (p *V1Pod) GetFinalizers() []string {
 	if p.decoded != nil {
 		return p.decoded.Finalizers
 	}
 	if p.wire != nil {
+		if cm, ok := p.wire.CachedObjectMeta(); ok {
+			return cm.Finalizers
+		}
 		return p.wire.meta.GetFinalizers()
 	}
 	return nil
@@ -503,13 +584,16 @@ func (p *V1Pod) SetFinalizers(finalizers []string) {
 		p.decoded.Finalizers = finalizers
 		return
 	}
-	p.ensureWire().meta.SetFinalizers(finalizers)
+	p.ensureWireForMetaEdit().meta.SetFinalizers(finalizers)
 }
 func (p *V1Pod) GetOwnerReferences() []metav1.OwnerReference {
 	if p.decoded != nil {
 		return p.decoded.OwnerReferences
 	}
 	if p.wire != nil {
+		if cm, ok := p.wire.CachedObjectMeta(); ok {
+			return cm.OwnerReferences
+		}
 		return p.wire.meta.GetOwnerReferences()
 	}
 	return nil
@@ -519,14 +603,14 @@ func (p *V1Pod) SetOwnerReferences(references []metav1.OwnerReference) {
 		p.decoded.OwnerReferences = references
 		return
 	}
-	p.ensureWire().meta.SetOwnerReferences(references)
+	p.ensureWireForMetaEdit().meta.SetOwnerReferences(references)
 }
 func (p *V1Pod) GetManagedFields() []metav1.ManagedFieldsEntry {
 	if p.decoded != nil {
 		return p.decoded.ManagedFields
 	}
 	if p.wire != nil {
-		return p.wire.meta.GetManagedFields()
+		return p.wire.ManagedFields(p.canCache())
 	}
 	return nil
 }
@@ -535,7 +619,7 @@ func (p *V1Pod) SetManagedFields(managedFields []metav1.ManagedFieldsEntry) {
 		p.decoded.ManagedFields = managedFields
 		return
 	}
-	p.ensureWire().meta.SetManagedFields(managedFields)
+	p.ensureWire().SetManagedFields(managedFields)
 }
 
 // V1PodList is a lazy wrapper for v1.PodList that serializes and deserializes lazy V1Pod items
@@ -812,6 +896,9 @@ func (p *Pod) DeepCopy() *Pod {
 		return out
 	}
 	if p.wire != nil {
+		if p.wireOwn == p {
+			p.wire.DisownCachedMeta()
+		}
 		out.wire = p.wire.Clone()
 		out.wireOwn = out
 	}
@@ -833,7 +920,21 @@ func (p *Pod) ExtractObjectMetaInto(out *metav1.ObjectMeta) {
 		return
 	}
 	if p.wire != nil {
-		p.wire.meta.ExtractObjectMetaInto(p.wire.meta.Bytes(), out)
+		p.wire.ExtractObjectMetaForUpdate(out, false)
+	}
+}
+
+// BorrowObjectMetaInto populates out for read-only callers without DeepCopying maps/slices when clean.
+func (p *Pod) BorrowObjectMetaInto(out *metav1.ObjectMeta, dropManagedFields bool) {
+	if p.decoded != nil {
+		*out = p.decoded.ObjectMeta
+		if dropManagedFields {
+			out.ManagedFields = nil
+		}
+		return
+	}
+	if p.wire != nil {
+		p.wire.BorrowObjectMetaInto(out, dropManagedFields, p.wireOwn == p)
 	}
 }
 
@@ -850,11 +951,20 @@ func (p *Pod) ensureWire() *WirePod {
 	return p.wire
 }
 
+func (p *Pod) ensureWireForMetaEdit() *WirePod {
+	w := p.ensureWire()
+	w.MarkNonManagedMetaDirty()
+	return w
+}
+
 func (p *Pod) GetNamespace() string {
 	if p.decoded != nil {
 		return p.decoded.Namespace
 	}
 	if p.wire != nil {
+		if cm, ok := p.wire.CachedObjectMeta(); ok {
+			return cm.Namespace
+		}
 		return p.wire.meta.GetNamespace()
 	}
 	return ""
@@ -864,13 +974,16 @@ func (p *Pod) SetNamespace(namespace string) {
 		p.decoded.Namespace = namespace
 		return
 	}
-	p.ensureWire().meta.SetNamespace(namespace)
+	p.ensureWireForMetaEdit().meta.SetNamespace(namespace)
 }
 func (p *Pod) GetName() string {
 	if p.decoded != nil {
 		return p.decoded.Name
 	}
 	if p.wire != nil {
+		if cm, ok := p.wire.CachedObjectMeta(); ok {
+			return cm.Name
+		}
 		return p.wire.meta.GetName()
 	}
 	return ""
@@ -880,13 +993,16 @@ func (p *Pod) SetName(name string) {
 		p.decoded.Name = name
 		return
 	}
-	p.ensureWire().meta.SetName(name)
+	p.ensureWireForMetaEdit().meta.SetName(name)
 }
 func (p *Pod) GetGenerateName() string {
 	if p.decoded != nil {
 		return p.decoded.GenerateName
 	}
 	if p.wire != nil {
+		if cm, ok := p.wire.CachedObjectMeta(); ok {
+			return cm.GenerateName
+		}
 		return p.wire.meta.GetGenerateName()
 	}
 	return ""
@@ -896,13 +1012,16 @@ func (p *Pod) SetGenerateName(name string) {
 		p.decoded.GenerateName = name
 		return
 	}
-	p.ensureWire().meta.SetGenerateName(name)
+	p.ensureWireForMetaEdit().meta.SetGenerateName(name)
 }
 func (p *Pod) GetUID() types.UID {
 	if p.decoded != nil {
 		return p.decoded.UID
 	}
 	if p.wire != nil {
+		if cm, ok := p.wire.CachedObjectMeta(); ok {
+			return cm.UID
+		}
 		return p.wire.meta.GetUID()
 	}
 	return ""
@@ -912,13 +1031,16 @@ func (p *Pod) SetUID(uid types.UID) {
 		p.decoded.UID = uid
 		return
 	}
-	p.ensureWire().meta.SetUID(uid)
+	p.ensureWireForMetaEdit().meta.SetUID(uid)
 }
 func (p *Pod) GetResourceVersion() string {
 	if p.decoded != nil {
 		return p.decoded.ResourceVersion
 	}
 	if p.wire != nil {
+		if cm, ok := p.wire.CachedObjectMeta(); ok {
+			return cm.ResourceVersion
+		}
 		return p.wire.meta.GetResourceVersion()
 	}
 	return ""
@@ -928,13 +1050,16 @@ func (p *Pod) SetResourceVersion(version string) {
 		p.decoded.ResourceVersion = version
 		return
 	}
-	p.ensureWire().meta.SetResourceVersion(version)
+	p.ensureWire().SetResourceVersion(version)
 }
 func (p *Pod) GetGeneration() int64 {
 	if p.decoded != nil {
 		return p.decoded.Generation
 	}
 	if p.wire != nil {
+		if cm, ok := p.wire.CachedObjectMeta(); ok {
+			return cm.Generation
+		}
 		return p.wire.meta.GetGeneration()
 	}
 	return 0
@@ -944,13 +1069,16 @@ func (p *Pod) SetGeneration(generation int64) {
 		p.decoded.Generation = generation
 		return
 	}
-	p.ensureWire().meta.SetGeneration(generation)
+	p.ensureWireForMetaEdit().meta.SetGeneration(generation)
 }
 func (p *Pod) GetSelfLink() string {
 	if p.decoded != nil {
 		return p.decoded.SelfLink
 	}
 	if p.wire != nil {
+		if cm, ok := p.wire.CachedObjectMeta(); ok {
+			return cm.SelfLink
+		}
 		return p.wire.meta.GetSelfLink()
 	}
 	return ""
@@ -960,13 +1088,16 @@ func (p *Pod) SetSelfLink(selfLink string) {
 		p.decoded.SelfLink = selfLink
 		return
 	}
-	p.ensureWire().meta.SetSelfLink(selfLink)
+	p.ensureWireForMetaEdit().meta.SetSelfLink(selfLink)
 }
 func (p *Pod) GetCreationTimestamp() metav1.Time {
 	if p.decoded != nil {
 		return p.decoded.CreationTimestamp
 	}
 	if p.wire != nil {
+		if cm, ok := p.wire.CachedObjectMeta(); ok {
+			return cm.CreationTimestamp
+		}
 		return p.wire.meta.GetCreationTimestamp()
 	}
 	return metav1.Time{}
@@ -976,13 +1107,16 @@ func (p *Pod) SetCreationTimestamp(timestamp metav1.Time) {
 		p.decoded.CreationTimestamp = timestamp
 		return
 	}
-	p.ensureWire().meta.SetCreationTimestamp(timestamp)
+	p.ensureWireForMetaEdit().meta.SetCreationTimestamp(timestamp)
 }
 func (p *Pod) GetDeletionTimestamp() *metav1.Time {
 	if p.decoded != nil {
 		return p.decoded.DeletionTimestamp
 	}
 	if p.wire != nil {
+		if cm, ok := p.wire.CachedObjectMeta(); ok {
+			return cm.DeletionTimestamp
+		}
 		return p.wire.meta.GetDeletionTimestamp()
 	}
 	return nil
@@ -992,13 +1126,16 @@ func (p *Pod) SetDeletionTimestamp(timestamp *metav1.Time) {
 		p.decoded.DeletionTimestamp = timestamp
 		return
 	}
-	p.ensureWire().meta.SetDeletionTimestamp(timestamp)
+	p.ensureWireForMetaEdit().meta.SetDeletionTimestamp(timestamp)
 }
 func (p *Pod) GetDeletionGracePeriodSeconds() *int64 {
 	if p.decoded != nil {
 		return p.decoded.DeletionGracePeriodSeconds
 	}
 	if p.wire != nil {
+		if cm, ok := p.wire.CachedObjectMeta(); ok {
+			return cm.DeletionGracePeriodSeconds
+		}
 		return p.wire.meta.GetDeletionGracePeriodSeconds()
 	}
 	return nil
@@ -1008,13 +1145,19 @@ func (p *Pod) SetDeletionGracePeriodSeconds(gracePeriodSeconds *int64) {
 		p.decoded.DeletionGracePeriodSeconds = gracePeriodSeconds
 		return
 	}
-	p.ensureWire().meta.SetDeletionGracePeriodSeconds(gracePeriodSeconds)
+	p.ensureWireForMetaEdit().meta.SetDeletionGracePeriodSeconds(gracePeriodSeconds)
 }
 func (p *Pod) GetLabels() map[string]string {
 	if p.decoded != nil {
 		return p.decoded.Labels
 	}
 	if p.wire != nil {
+		if cm, ok := p.wire.CachedObjectMeta(); ok {
+			if p.wireOwn == p && p.wire.IsCachedMetaOwned() {
+				return cm.Labels
+			}
+			return maps.Clone(cm.Labels)
+		}
 		return p.wire.meta.GetLabels()
 	}
 	return nil
@@ -1024,13 +1167,19 @@ func (p *Pod) SetLabels(labels map[string]string) {
 		p.decoded.Labels = labels
 		return
 	}
-	p.ensureWire().meta.SetLabels(labels)
+	p.ensureWireForMetaEdit().meta.SetLabels(labels)
 }
 func (p *Pod) GetAnnotations() map[string]string {
 	if p.decoded != nil {
 		return p.decoded.Annotations
 	}
 	if p.wire != nil {
+		if cm, ok := p.wire.CachedObjectMeta(); ok {
+			if p.wireOwn == p && p.wire.IsCachedMetaOwned() {
+				return cm.Annotations
+			}
+			return maps.Clone(cm.Annotations)
+		}
 		return p.wire.meta.GetAnnotations()
 	}
 	return nil
@@ -1040,13 +1189,16 @@ func (p *Pod) SetAnnotations(annotations map[string]string) {
 		p.decoded.Annotations = annotations
 		return
 	}
-	p.ensureWire().meta.SetAnnotations(annotations)
+	p.ensureWireForMetaEdit().meta.SetAnnotations(annotations)
 }
 func (p *Pod) GetFinalizers() []string {
 	if p.decoded != nil {
 		return p.decoded.Finalizers
 	}
 	if p.wire != nil {
+		if cm, ok := p.wire.CachedObjectMeta(); ok {
+			return cm.Finalizers
+		}
 		return p.wire.meta.GetFinalizers()
 	}
 	return nil
@@ -1056,13 +1208,16 @@ func (p *Pod) SetFinalizers(finalizers []string) {
 		p.decoded.Finalizers = finalizers
 		return
 	}
-	p.ensureWire().meta.SetFinalizers(finalizers)
+	p.ensureWireForMetaEdit().meta.SetFinalizers(finalizers)
 }
 func (p *Pod) GetOwnerReferences() []metav1.OwnerReference {
 	if p.decoded != nil {
 		return p.decoded.OwnerReferences
 	}
 	if p.wire != nil {
+		if cm, ok := p.wire.CachedObjectMeta(); ok {
+			return cm.OwnerReferences
+		}
 		return p.wire.meta.GetOwnerReferences()
 	}
 	return nil
@@ -1072,14 +1227,14 @@ func (p *Pod) SetOwnerReferences(references []metav1.OwnerReference) {
 		p.decoded.OwnerReferences = references
 		return
 	}
-	p.ensureWire().meta.SetOwnerReferences(references)
+	p.ensureWireForMetaEdit().meta.SetOwnerReferences(references)
 }
 func (p *Pod) GetManagedFields() []metav1.ManagedFieldsEntry {
 	if p.decoded != nil {
 		return p.decoded.ManagedFields
 	}
 	if p.wire != nil {
-		return p.wire.meta.GetManagedFields()
+		return p.wire.ManagedFields(p.wireOwn == p)
 	}
 	return nil
 }
@@ -1088,7 +1243,7 @@ func (p *Pod) SetManagedFields(managedFields []metav1.ManagedFieldsEntry) {
 		p.decoded.ManagedFields = managedFields
 		return
 	}
-	p.ensureWire().meta.SetManagedFields(managedFields)
+	p.ensureWire().SetManagedFields(managedFields)
 }
 
 // ============================================================================
@@ -1100,6 +1255,9 @@ func (p *Pod) HasDeletionTimestamp() bool {
 		return p.decoded.HasDeletionTimestamp()
 	}
 	if p.wire != nil {
+		if cm, ok := p.wire.CachedObjectMeta(); ok {
+			return cm.DeletionTimestamp != nil
+		}
 		return p.wire.meta.HasDeletionTimestamp(p.wire.meta.Bytes())
 	}
 	return false
@@ -1109,7 +1267,10 @@ func (p *Pod) HasLegacyInitContainerAnnotations() bool {
 	if p.decoded != nil {
 		return p.decoded.HasLegacyInitContainerAnnotations()
 	}
-	return p.mustDecoded().HasLegacyInitContainerAnnotations()
+	if p.wire != nil {
+		return p.wire.HasLegacyInitContainerAnnotations()
+	}
+	return false
 }
 
 func (p *Pod) GetSpecNodeName() string {
@@ -1466,6 +1627,8 @@ var (
 	_ runtime.LazyUpdateProjector    = (*V1Pod)(nil)
 	_ runtime.LazyScopedPatcher      = (*V1Pod)(nil)
 	_ runtime.LazyScopedPatcher      = (*Pod)(nil)
+	_ runtime.LazySubtreePatcher     = (*V1Pod)(nil)
+	_ runtime.LazySubtreePatcher     = (*Pod)(nil)
 )
 
 // HasEqualSpecWireBytes reports whether p and other are lazy and have byte-identical spec sub-messages.
@@ -1480,6 +1643,60 @@ func (p *V1Pod) HasEqualSpecWireBytes(other runtime.Object) bool {
 	return bytes.Equal(p.wire.EffectiveSubMessage(podFieldSpec), o.wire.EffectiveSubMessage(podFieldSpec))
 }
 
+func diffWireStatusTagMask(a, b *WirePod) (uint64, bool) {
+	mask, ok := DiffSpecTagMask(a.EffectiveSubMessage(podFieldStatus), b.EffectiveSubMessage(podFieldStatus))
+	if !ok {
+		return 0, false
+	}
+	diffEmpty := a.statusEmptySlices ^ b.statusEmptySlices
+	if diffEmpty&statusEmptyResourceClaimStatuses != 0 {
+		mask |= uint64(1) << statusFieldResourceClaimStatuses
+	}
+	if diffEmpty&statusEmptyNodeAllocatableClaimStatuses != 0 {
+		mask |= uint64(1) << statusFieldNodeAllocatableResourceClaimStatuses
+	}
+	return mask, true
+}
+
+// DiffSpecTagMask returns the bitmask of PodSpec field tags that differ on the wire between p and other.
+func (p *V1Pod) DiffSpecTagMask(other runtime.Object) (uint64, bool) {
+	if p == nil || p.wire == nil || p.decoded != nil {
+		return 0, false
+	}
+	o, ok := other.(*V1Pod)
+	if !ok || o == nil || o.wire == nil || o.decoded != nil {
+		return 0, false
+	}
+	return DiffSpecTagMask(p.wire.EffectiveSubMessage(podFieldSpec), o.wire.EffectiveSubMessage(podFieldSpec))
+}
+
+// DiffStatusTagMask returns the bitmask of PodStatus field tags that differ on the wire between p and other.
+func (p *V1Pod) DiffStatusTagMask(other runtime.Object) (uint64, bool) {
+	if p == nil || p.wire == nil || p.decoded != nil {
+		return 0, false
+	}
+	o, ok := other.(*V1Pod)
+	if !ok || o == nil || o.wire == nil || o.decoded != nil {
+		return 0, false
+	}
+	return diffWireStatusTagMask(p.wire, o.wire)
+}
+
+// EqualModuloManagedFields implements runtime.LazySubtreePatcher on *V1Pod.
+func (p *V1Pod) EqualModuloManagedFields(other runtime.Object) (bool, bool) {
+	if p == nil || p.wire == nil || p.decoded != nil {
+		return false, false
+	}
+	o, ok := other.(*V1Pod)
+	if !ok || o == nil || o.wire == nil || o.decoded != nil {
+		return false, false
+	}
+	if p.TypeMeta != o.TypeMeta {
+		return false, true
+	}
+	return p.wire.EqualModuloManagedFields(o.wire), true
+}
+
 // HasEqualSpecWireBytes reports whether p and other are lazy and have byte-identical spec sub-messages.
 func (p *Pod) HasEqualSpecWireBytes(other runtime.Object) bool {
 	if p == nil || p.wire == nil || p.decoded != nil {
@@ -1490,6 +1707,53 @@ func (p *Pod) HasEqualSpecWireBytes(other runtime.Object) bool {
 		return false
 	}
 	return bytes.Equal(p.wire.EffectiveSubMessage(podFieldSpec), o.wire.EffectiveSubMessage(podFieldSpec))
+}
+
+// DiffSpecTagMask returns the bitmask of PodSpec field tags that differ on the wire between p and other.
+func (p *Pod) DiffSpecTagMask(other runtime.Object) (uint64, bool) {
+	if p == nil || p.wire == nil || p.decoded != nil {
+		return 0, false
+	}
+	o, ok := other.(*Pod)
+	if !ok || o == nil || o.wire == nil || o.decoded != nil {
+		return 0, false
+	}
+	return DiffSpecTagMask(p.wire.EffectiveSubMessage(podFieldSpec), o.wire.EffectiveSubMessage(podFieldSpec))
+}
+
+// DiffStatusTagMask returns the bitmask of PodStatus field tags that differ on the wire between p and other.
+func (p *Pod) DiffStatusTagMask(other runtime.Object) (uint64, bool) {
+	if p == nil || p.wire == nil || p.decoded != nil {
+		return 0, false
+	}
+	o, ok := other.(*Pod)
+	if !ok || o == nil || o.wire == nil || o.decoded != nil {
+		return 0, false
+	}
+	return diffWireStatusTagMask(p.wire, o.wire)
+}
+
+// HasEqualOwnerReferences reports whether p and other are lazy and have byte-identical metadata.ownerReferences.
+func (p *Pod) HasEqualOwnerReferences(other *Pod) bool {
+	if p == nil || other == nil || p.wire == nil || other.wire == nil || p.decoded != nil || other.decoded != nil {
+		return false
+	}
+	return p.wire.HasEqualOwnerReferences(other.wire)
+}
+
+// EqualModuloManagedFields implements runtime.LazySubtreePatcher on *Pod.
+func (p *Pod) EqualModuloManagedFields(other runtime.Object) (bool, bool) {
+	if p == nil || p.wire == nil || p.decoded != nil {
+		return false, false
+	}
+	o, ok := other.(*Pod)
+	if !ok || o == nil || o.wire == nil || o.decoded != nil {
+		return false, false
+	}
+	if p.TypeMeta != o.TypeMeta {
+		return false, true
+	}
+	return p.wire.EqualModuloManagedFields(o.wire), true
 }
 
 // HasEqualStatusWireBytes reports whether p and other are lazy and have byte-identical status sub-messages.
@@ -1507,8 +1771,88 @@ func (p *Pod) HasEqualStatusWireBytes(other runtime.Object) bool {
 	return bytes.Equal(p.wire.EffectiveSubMessage(podFieldStatus), o.wire.EffectiveSubMessage(podFieldStatus))
 }
 
+func equalMetaTimePtr(a, b *metav1.Time) bool {
+	if a == b {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return a.Equal(b)
+}
+
+func equalMetaInt64Ptr(a, b *int64) bool {
+	if a == b {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return *a == *b
+}
+
+func equalMetaBoolPtr(a, b *bool) bool {
+	if a == b {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return *a == *b
+}
+
+func equalMetaOwnerReferences(a, b []metav1.OwnerReference) bool {
+	if (a == nil) != (b == nil) || len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].APIVersion != b[i].APIVersion ||
+			a[i].Kind != b[i].Kind ||
+			a[i].Name != b[i].Name ||
+			a[i].UID != b[i].UID ||
+			!equalMetaBoolPtr(a[i].Controller, b[i].Controller) ||
+			!equalMetaBoolPtr(a[i].BlockOwnerDeletion, b[i].BlockOwnerDeletion) {
+			return false
+		}
+	}
+	return true
+}
+
+// projectObjectMetaDiffForUpdate populates selfOut and peerOut with only the non-stripSet ObjectMeta
+// fields that differ between selfMeta and peerMeta, preserving nil-vs-empty map/slice distinctions.
+func projectObjectMetaDiffForUpdate(selfMeta, peerMeta, selfOut, peerOut *metav1.ObjectMeta) {
+	if selfMeta.GenerateName != peerMeta.GenerateName {
+		selfOut.GenerateName = selfMeta.GenerateName
+		peerOut.GenerateName = peerMeta.GenerateName
+	}
+	if !equalMetaTimePtr(selfMeta.DeletionTimestamp, peerMeta.DeletionTimestamp) {
+		selfOut.DeletionTimestamp = selfMeta.DeletionTimestamp
+		peerOut.DeletionTimestamp = peerMeta.DeletionTimestamp
+	}
+	if !equalMetaInt64Ptr(selfMeta.DeletionGracePeriodSeconds, peerMeta.DeletionGracePeriodSeconds) {
+		selfOut.DeletionGracePeriodSeconds = selfMeta.DeletionGracePeriodSeconds
+		peerOut.DeletionGracePeriodSeconds = peerMeta.DeletionGracePeriodSeconds
+	}
+	if (selfMeta.Labels == nil) != (peerMeta.Labels == nil) || !maps.Equal(selfMeta.Labels, peerMeta.Labels) {
+		selfOut.Labels = selfMeta.Labels
+		peerOut.Labels = peerMeta.Labels
+	}
+	if (selfMeta.Annotations == nil) != (peerMeta.Annotations == nil) || !maps.Equal(selfMeta.Annotations, peerMeta.Annotations) {
+		selfOut.Annotations = selfMeta.Annotations
+		peerOut.Annotations = peerMeta.Annotations
+	}
+	if !equalMetaOwnerReferences(selfMeta.OwnerReferences, peerMeta.OwnerReferences) {
+		selfOut.OwnerReferences = selfMeta.OwnerReferences
+		peerOut.OwnerReferences = peerMeta.OwnerReferences
+	}
+	if (selfMeta.Finalizers == nil) != (peerMeta.Finalizers == nil) || !slices.Equal(selfMeta.Finalizers, peerMeta.Finalizers) {
+		selfOut.Finalizers = selfMeta.Finalizers
+		peerOut.Finalizers = peerMeta.Finalizers
+	}
+}
+
 // ProjectForUpdate implements runtime.LazyUpdateProjector for structured-merge-diff Update comparisons,
-// omitting Spec and/or Status when either excluded by resetFields or byte-identical on the wire.
+// omitting Spec, Status, and unchanged ObjectMeta fields when excluded by resetFields/stripSet or equal on the wire.
 func (p *V1Pod) ProjectForUpdate(peer runtime.Object, ignoreSpec, ignoreStatus bool) (runtime.Object, runtime.Object, bool, error) {
 	if p == nil || p.wire == nil || p.decoded != nil {
 		return nil, nil, false, nil
@@ -1516,33 +1860,69 @@ func (p *V1Pod) ProjectForUpdate(peer runtime.Object, ignoreSpec, ignoreStatus b
 	if peerV1, ok := peer.(*V1Pod); ok && peerV1 != nil && peerV1.wire != nil && peerV1.decoded == nil {
 		selfSpec := p.wire.EffectiveSubMessage(podFieldSpec)
 		peerSpec := peerV1.wire.EffectiveSubMessage(podFieldSpec)
-		omitSpec := ignoreSpec || bytes.Equal(selfSpec, peerSpec)
+		var specDiffMask uint64
+		fullSpec := false
+		if !ignoreSpec {
+			if mask, diffOK := DiffSpecTagMask(selfSpec, peerSpec); diffOK {
+				if mask&SpecTagMaskContainersAndVolumes != 0 {
+					fullSpec = true
+				} else {
+					specDiffMask = mask
+				}
+			} else {
+				fullSpec = true
+			}
+		}
 
-		selfStatus := p.wire.EffectiveSubMessage(podFieldStatus)
-		peerStatus := peerV1.wire.EffectiveSubMessage(podFieldStatus)
-		omitStatus := ignoreStatus || bytes.Equal(selfStatus, peerStatus)
+		var statusDiffMask uint64
+		fullStatus := false
+		if !ignoreStatus {
+			if sMask, sOK := diffWireStatusTagMask(p.wire, peerV1.wire); sOK {
+				statusDiffMask = sMask
+			} else {
+				fullStatus = true
+			}
+		}
 
-		if !omitSpec && !omitStatus {
+		if fullSpec && fullStatus {
 			return nil, nil, false, nil
 		}
 
+		var selfMeta, peerMeta metav1.ObjectMeta
+		p.BorrowObjectMetaInto(&selfMeta, true)
+		peerV1.BorrowObjectMetaInto(&peerMeta, true)
+
 		selfProj := &v1.Pod{TypeMeta: p.TypeMeta}
 		peerProj := &v1.Pod{TypeMeta: peerV1.TypeMeta}
-		p.wire.ExtractObjectMetaForUpdate(&selfProj.ObjectMeta, true)
-		peerV1.wire.ExtractObjectMetaForUpdate(&peerProj.ObjectMeta, true)
-		if !omitSpec {
+		projectObjectMetaDiffForUpdate(&selfMeta, &peerMeta, &selfProj.ObjectMeta, &peerProj.ObjectMeta)
+
+		if fullSpec {
 			if err := selfProj.Spec.Unmarshal(selfSpec); err != nil {
 				return nil, nil, false, err
 			}
 			if err := peerProj.Spec.Unmarshal(peerSpec); err != nil {
 				return nil, nil, false, err
 			}
-		}
-		if !omitStatus {
-			if err := selfProj.Status.Unmarshal(selfStatus); err != nil {
+		} else if specDiffMask != 0 {
+			if err := extractSpecSubtreeFromBytes(selfSpec, specDiffMask, &selfProj.Spec); err != nil {
 				return nil, nil, false, err
 			}
-			if err := peerProj.Status.Unmarshal(peerStatus); err != nil {
+			if err := extractSpecSubtreeFromBytes(peerSpec, specDiffMask, &peerProj.Spec); err != nil {
+				return nil, nil, false, err
+			}
+		}
+		if fullStatus {
+			if err := p.wire.ExtractV1StatusInto(&selfProj.Status); err != nil {
+				return nil, nil, false, err
+			}
+			if err := peerV1.wire.ExtractV1StatusInto(&peerProj.Status); err != nil {
+				return nil, nil, false, err
+			}
+		} else if statusDiffMask != 0 {
+			if err := p.wire.ExtractV1StatusSubtreeInto(statusDiffMask, &selfProj.Status); err != nil {
+				return nil, nil, false, err
+			}
+			if err := peerV1.wire.ExtractV1StatusSubtreeInto(statusDiffMask, &peerProj.Status); err != nil {
 				return nil, nil, false, err
 			}
 		}
@@ -1560,13 +1940,11 @@ func (p *V1Pod) ProjectForUpdate(peer runtime.Object, ignoreSpec, ignoreStatus b
 	if !ok || peerDec == nil {
 		return nil, nil, false, nil
 	}
+	var selfMeta metav1.ObjectMeta
+	p.BorrowObjectMetaInto(&selfMeta, true)
 	selfProj := &v1.Pod{TypeMeta: p.TypeMeta}
-	p.wire.ExtractObjectMetaForUpdate(&selfProj.ObjectMeta, true)
-	peerProj := &v1.Pod{
-		TypeMeta:   peerDec.TypeMeta,
-		ObjectMeta: peerDec.ObjectMeta,
-	}
-	peerProj.ManagedFields = nil
+	peerProj := &v1.Pod{TypeMeta: peerDec.TypeMeta}
+	projectObjectMetaDiffForUpdate(&selfMeta, &peerDec.ObjectMeta, &selfProj.ObjectMeta, &peerProj.ObjectMeta)
 	if !ignoreSpec {
 		if err := selfProj.Spec.Unmarshal(p.wire.EffectiveSubMessage(podFieldSpec)); err != nil {
 			return nil, nil, false, err
@@ -1582,17 +1960,51 @@ func (p *V1Pod) ProjectForUpdate(peer runtime.Object, ignoreSpec, ignoreStatus b
 	return selfProj, peerProj, true, nil
 }
 
+// SpecTagMaskForField implements runtime.LazySubtreePatcher on *V1Pod.
+func (p *V1Pod) SpecTagMaskForField(fieldName string) (uint64, bool) {
+	return SpecTagMaskForField(fieldName)
+}
+
+// StatusTagMaskForField implements runtime.LazySubtreePatcher on *V1Pod.
+func (p *V1Pod) StatusTagMaskForField(fieldName string) (uint64, bool) {
+	return StatusTagMaskForField(fieldName)
+}
+
 // ExtractScopedPatchBase implements runtime.LazyScopedPatcher on external *V1Pod.
 func (p *V1Pod) ExtractScopedPatchBase(includeMetadata, includeStatus, dropManagedFields bool) (runtime.Object, error) {
+	var statusMask uint64
+	if includeStatus {
+		statusMask = ^uint64(0)
+	}
+	return p.ExtractSubtreePatchBase(includeMetadata, 0, statusMask, dropManagedFields)
+}
+
+// ExtractSubtreePatchBase implements runtime.LazySubtreePatcher on external *V1Pod.
+func (p *V1Pod) ExtractSubtreePatchBase(includeMetadata bool, specTagMask, statusTagMask uint64, dropManagedFields bool) (runtime.Object, error) {
 	base := &v1.Pod{TypeMeta: p.TypeMeta}
 	if p.wire == nil {
 		return base, nil
 	}
 	if includeMetadata {
 		p.wire.ExtractObjectMetaForUpdate(&base.ObjectMeta, dropManagedFields)
+		if dropManagedFields && p.canCache() {
+			p.wire.CacheDecodedMeta(&base.ObjectMeta)
+		}
 	}
-	if includeStatus {
+	if specTagMask != 0 {
+		if err := p.wire.ExtractV1SpecSubtreeInto(specTagMask, &base.Spec); err != nil {
+			return nil, err
+		}
+	}
+	if statusTagMask == ^uint64(0) {
 		if err := p.wire.ExtractV1StatusInto(&base.Status); err != nil {
+			return nil, err
+		}
+		if p.canCache() {
+			p.wire.CacheDecodedStatus(base.Status.DeepCopy())
+		}
+	} else if statusTagMask != 0 {
+		if err := p.wire.ExtractV1StatusSubtreeInto(statusTagMask, &base.Status); err != nil {
 			return nil, err
 		}
 	}
@@ -1601,6 +2013,15 @@ func (p *V1Pod) ExtractScopedPatchBase(includeMetadata, includeStatus, dropManag
 
 // SpliceScopedPatchResult implements runtime.LazyScopedPatcher on external *V1Pod.
 func (p *V1Pod) SpliceScopedPatchResult(patched runtime.Object, includeMetadata, includeStatus bool) (runtime.Object, error) {
+	var statusMask uint64
+	if includeStatus {
+		statusMask = ^uint64(0)
+	}
+	return p.SpliceSubtreePatchResult(patched, includeMetadata, 0, statusMask)
+}
+
+// SpliceSubtreePatchResult implements runtime.LazySubtreePatcher on external *V1Pod.
+func (p *V1Pod) SpliceSubtreePatchResult(patched runtime.Object, includeMetadata bool, specTagMask, statusTagMask uint64) (runtime.Object, error) {
 	decObj, err := runtime.EnsureDecodedObject(patched)
 	if err != nil {
 		return nil, err
@@ -1612,12 +2033,35 @@ func (p *V1Pod) SpliceScopedPatchResult(patched runtime.Object, includeMetadata,
 	var metaPtr *metav1.ObjectMeta
 	if includeMetadata {
 		metaPtr = &patchedV1.ObjectMeta
+	} else if p.canCache() {
+		p.wire.DisownCachedMeta()
 	}
-	var statusPtr *v1.PodStatus
-	if includeStatus {
-		statusPtr = &patchedV1.Status
+	specBytes := p.wire.EffectiveSubMessage(podFieldSpec)
+	if specTagMask != 0 {
+		specBytes, err = SpliceSpecByTagMask(specBytes, &patchedV1.Spec, specTagMask)
+		if err != nil {
+			return nil, err
+		}
 	}
-	newWire, err := p.wire.ReplaceSubMessages(metaPtr, p.wire.EffectiveSubMessage(podFieldSpec), statusPtr)
+	var newWire *WirePod
+	switch {
+	case statusTagMask == ^uint64(0):
+		newWire, err = p.wire.ReplaceSubMessages(metaPtr, specBytes, &patchedV1.Status)
+	case statusTagMask != 0:
+		var statusBytes []byte
+		var emptySlices uint8
+		statusBytes, emptySlices, err = SpliceStatusByTagMask(
+			p.wire.EffectiveSubMessage(podFieldStatus),
+			p.wire.statusEmptySlices,
+			&patchedV1.Status,
+			statusTagMask,
+		)
+		if err == nil {
+			newWire, err = p.wire.ReplaceSubMessagesWithStatusBytes(metaPtr, specBytes, statusBytes, emptySlices, nil)
+		}
+	default:
+		newWire, err = p.wire.ReplaceSubMessages(metaPtr, specBytes, nil)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -1626,17 +2070,52 @@ func (p *V1Pod) SpliceScopedPatchResult(patched runtime.Object, includeMetadata,
 	return out, nil
 }
 
+// SpecTagMaskForField implements runtime.LazySubtreePatcher on *Pod.
+func (p *Pod) SpecTagMaskForField(fieldName string) (uint64, bool) {
+	return SpecTagMaskForField(fieldName)
+}
+
+// StatusTagMaskForField implements runtime.LazySubtreePatcher on *Pod.
+func (p *Pod) StatusTagMaskForField(fieldName string) (uint64, bool) {
+	return StatusTagMaskForField(fieldName)
+}
+
 // ExtractScopedPatchBase implements runtime.LazyScopedPatcher on internal *Pod.
 func (p *Pod) ExtractScopedPatchBase(includeMetadata, includeStatus, dropManagedFields bool) (runtime.Object, error) {
+	var statusMask uint64
+	if includeStatus {
+		statusMask = ^uint64(0)
+	}
+	return p.ExtractSubtreePatchBase(includeMetadata, 0, statusMask, dropManagedFields)
+}
+
+// ExtractSubtreePatchBase implements runtime.LazySubtreePatcher on internal *Pod.
+func (p *Pod) ExtractSubtreePatchBase(includeMetadata bool, specTagMask, statusTagMask uint64, dropManagedFields bool) (runtime.Object, error) {
 	base := &core.Pod{TypeMeta: p.TypeMeta}
 	if p.wire == nil {
 		return base, nil
 	}
 	if includeMetadata {
 		p.wire.ExtractObjectMetaForUpdate(&base.ObjectMeta, dropManagedFields)
+		if dropManagedFields && p.wireOwn == p {
+			p.wire.CacheDecodedMeta(&base.ObjectMeta)
+		}
 	}
-	if includeStatus {
+	if specTagMask != 0 {
+		if err := p.wire.ExtractCoreSpecSubtreeInto(specTagMask, &base.Spec); err != nil {
+			return nil, err
+		}
+	}
+	if statusTagMask == ^uint64(0) {
 		if err := p.wire.ExtractCoreStatusInto(&base.Status); err != nil {
+			return nil, err
+		}
+		if p.wireOwn == p {
+			cp := base.Status.DeepCopy()
+			p.wire.CacheDecodedStatus((*v1.PodStatus)(unsafe.Pointer(cp)))
+		}
+	} else if statusTagMask != 0 {
+		if err := p.wire.ExtractCoreStatusSubtreeInto(statusTagMask, &base.Status); err != nil {
 			return nil, err
 		}
 	}
@@ -1645,6 +2124,15 @@ func (p *Pod) ExtractScopedPatchBase(includeMetadata, includeStatus, dropManaged
 
 // SpliceScopedPatchResult implements runtime.LazyScopedPatcher on internal *Pod.
 func (p *Pod) SpliceScopedPatchResult(patched runtime.Object, includeMetadata, includeStatus bool) (runtime.Object, error) {
+	var statusMask uint64
+	if includeStatus {
+		statusMask = ^uint64(0)
+	}
+	return p.SpliceSubtreePatchResult(patched, includeMetadata, 0, statusMask)
+}
+
+// SpliceSubtreePatchResult implements runtime.LazySubtreePatcher on internal *Pod.
+func (p *Pod) SpliceSubtreePatchResult(patched runtime.Object, includeMetadata bool, specTagMask, statusTagMask uint64) (runtime.Object, error) {
 	decObj, err := runtime.EnsureDecodedObject(patched)
 	if err != nil {
 		return nil, err
@@ -1656,18 +2144,61 @@ func (p *Pod) SpliceScopedPatchResult(patched runtime.Object, includeMetadata, i
 	var metaPtr *metav1.ObjectMeta
 	if includeMetadata {
 		metaPtr = &patchedCore.ObjectMeta
+	} else if p.wireOwn == p {
+		p.wire.DisownCachedMeta()
 	}
-	var statusPtr *v1.PodStatus
-	if includeStatus {
-		statusPtr = (*v1.PodStatus)(unsafe.Pointer(&patchedCore.Status))
+	specBytes := p.wire.EffectiveSubMessage(podFieldSpec)
+	if specTagMask != 0 {
+		specBytes, err = SpliceSpecByTagMask(specBytes, (*v1.PodSpec)(unsafe.Pointer(&patchedCore.Spec)), specTagMask)
+		if err != nil {
+			return nil, err
+		}
 	}
-	newWire, err := p.wire.ReplaceSubMessages(metaPtr, p.wire.EffectiveSubMessage(podFieldSpec), statusPtr)
+	var newWire *WirePod
+	v1StatusPtr := (*v1.PodStatus)(unsafe.Pointer(&patchedCore.Status))
+	switch {
+	case statusTagMask == ^uint64(0):
+		newWire, err = p.wire.ReplaceSubMessages(metaPtr, specBytes, v1StatusPtr)
+	case statusTagMask != 0:
+		var statusBytes []byte
+		var emptySlices uint8
+		statusBytes, emptySlices, err = SpliceStatusByTagMask(
+			p.wire.EffectiveSubMessage(podFieldStatus),
+			p.wire.statusEmptySlices,
+			v1StatusPtr,
+			statusTagMask,
+		)
+		if err == nil {
+			newWire, err = p.wire.ReplaceSubMessagesWithStatusBytes(metaPtr, specBytes, statusBytes, emptySlices, nil)
+		}
+	default:
+		newWire, err = p.wire.ReplaceSubMessages(metaPtr, specBytes, nil)
+	}
 	if err != nil {
 		return nil, err
 	}
 	out := &Pod{TypeMeta: p.TypeMeta, wire: newWire}
 	out.wireOwn = out
 	return out, nil
+}
+
+// ReadOnlyCoreStatus returns a read-only *core.PodStatus without DeepCopying when already cached on p.
+func (p *Pod) ReadOnlyCoreStatus() (*core.PodStatus, error) {
+	if p.decoded != nil {
+		return &p.decoded.Status, nil
+	}
+	if p.wire != nil {
+		return p.wire.ReadOnlyCoreStatus(p.wireOwn == p)
+	}
+	return &core.PodStatus{}, nil
+}
+
+// CacheDecodedMeta stores a decoded ObjectMeta on p's WirePod for reuse across update steps.
+func (p *Pod) CacheDecodedMeta(meta *metav1.ObjectMeta) {
+	if p == nil || p.wire == nil || meta == nil || p.wireOwn != p {
+		return
+	}
+	p.wire.CacheDecodedMeta(meta)
 }
 
 // ExtractObjectMetaForUpdate unmarshals ObjectMeta from p, eliding ManagedFields when dropManagedFields is true.
@@ -1713,7 +2244,7 @@ func (p *Pod) ExtractMetaAndStatusForUpdate(dropManagedFields bool) (metav1.Obje
 
 // CacheDecodedStatus stores a decoded PodStatus on p's WirePod for reuse in subsequent validation steps.
 func (p *Pod) CacheDecodedStatus(status *core.PodStatus) {
-	if p == nil || p.wire == nil || status == nil {
+	if p == nil || p.wire == nil || status == nil || p.wireOwn != p {
 		return
 	}
 	p.wire.CacheDecodedStatus((*v1.PodStatus)(unsafe.Pointer(status)))
@@ -1721,6 +2252,9 @@ func (p *Pod) CacheDecodedStatus(status *core.PodStatus) {
 
 // ReplaceMetaAndStatusFromOldSpec updates p in-place to hold meta + old.Spec (on the wire) + status.
 func (p *Pod) ReplaceMetaAndStatusFromOldSpec(meta *metav1.ObjectMeta, status *core.PodStatus, old *Pod) error {
+	if meta == nil && old.wireOwn == old {
+		old.wire.DisownCachedMeta()
+	}
 	var statusPtr *v1.PodStatus
 	if status != nil {
 		statusPtr = (*v1.PodStatus)(unsafe.Pointer(status))
@@ -1737,7 +2271,25 @@ func (p *Pod) ReplaceMetaAndStatusFromOldSpec(meta *metav1.ObjectMeta, status *c
 
 // ReplaceMetaWithOldSpecAndStatus updates p in-place to hold meta + old.Spec (on the wire) + old.Status (on the wire).
 func (p *Pod) ReplaceMetaWithOldSpecAndStatus(meta *metav1.ObjectMeta, old *Pod) error {
+	if meta == nil && old.wireOwn == old {
+		old.wire.DisownCachedMeta()
+	}
 	newWire, err := old.wire.ReplaceSubMessages(meta, old.wire.EffectiveSubMessage(podFieldSpec), nil)
+	if err != nil {
+		return err
+	}
+	p.decoded = nil
+	p.wire = newWire
+	p.wireOwn = p
+	return nil
+}
+
+// ReplaceMetaAndKeepSpecWithOldStatus updates p in-place to hold meta + p.Spec (on the wire) + old.Status (on the wire).
+func (p *Pod) ReplaceMetaAndKeepSpecWithOldStatus(meta *metav1.ObjectMeta, old *Pod) error {
+	if meta == nil && old.wireOwn == old {
+		old.wire.DisownCachedMeta()
+	}
+	newWire, err := old.wire.ReplaceSubMessages(meta, p.wire.EffectiveSubMessage(podFieldSpec), nil)
 	if err != nil {
 		return err
 	}

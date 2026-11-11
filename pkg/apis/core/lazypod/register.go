@@ -115,26 +115,44 @@ func validateV1PodDeclaratively(ctx context.Context, op operation.Operation, obj
 		oldLazy, _ = oldObj.(*V1Pod)
 	}
 
-	if op.Type == operation.Update && oldLazy != nil && newLazy.IsLazy() && oldLazy.IsLazy() && newLazy.HasEqualSpecWireBytes(oldLazy) {
-		projNew := &v1.Pod{TypeMeta: newLazy.TypeMeta}
-		projOld := &v1.Pod{TypeMeta: oldLazy.TypeMeta}
-		metaEqual := !newLazy.wire.meta.IsDirty() && !oldLazy.wire.meta.IsDirty() &&
-			bytes.Equal(newLazy.wire.meta.Bytes(), oldLazy.wire.meta.Bytes())
-		if !metaEqual {
-			newLazy.ExtractObjectMetaInto(&projNew.ObjectMeta)
-			oldLazy.ExtractObjectMetaInto(&projOld.ObjectMeta)
-		}
-		newStatusBytes := newLazy.wire.EffectiveSubMessage(podFieldStatus)
-		oldStatusBytes := oldLazy.wire.EffectiveSubMessage(podFieldStatus)
-		if !bytes.Equal(newStatusBytes, oldStatusBytes) {
-			if err := newLazy.wire.ExtractV1StatusInto(&projNew.Status); err != nil {
-				return field.ErrorList{field.InternalError(field.NewPath("status"), err)}
+	if op.Type == operation.Update && oldLazy != nil && newLazy.IsLazy() && oldLazy.IsLazy() {
+		if specDiffMask, diffOK := newLazy.DiffSpecTagMask(oldLazy); diffOK && (specDiffMask&SpecTagMaskContainersAndVolumes) == 0 {
+			projNew := &v1.Pod{TypeMeta: newLazy.TypeMeta}
+			projOld := &v1.Pod{TypeMeta: oldLazy.TypeMeta}
+			metaEqual := !newLazy.wire.meta.IsDirty() && !oldLazy.wire.meta.IsDirty() &&
+				bytes.Equal(newLazy.wire.meta.Bytes(), oldLazy.wire.meta.Bytes())
+			if !metaEqual {
+				newLazy.BorrowObjectMetaInto(&projNew.ObjectMeta, false)
+				oldLazy.BorrowObjectMetaInto(&projOld.ObjectMeta, false)
 			}
-			if err := oldLazy.wire.ExtractV1StatusInto(&projOld.Status); err != nil {
-				return field.ErrorList{field.InternalError(field.NewPath("status"), err)}
+			if specDiffMask != 0 {
+				valMask := CoupleSpecValidationTags(specDiffMask)
+				if err := newLazy.wire.ExtractV1SpecSubtreeInto(valMask, &projNew.Spec); err != nil {
+					return field.ErrorList{field.InternalError(field.NewPath("spec"), err)}
+				}
+				if err := oldLazy.wire.ExtractV1SpecSubtreeInto(valMask, &projOld.Spec); err != nil {
+					return field.ErrorList{field.InternalError(field.NewPath("spec"), err)}
+				}
 			}
+			if statusDiffMask, statusOK := newLazy.DiffStatusTagMask(oldLazy); statusOK {
+				if valStatusMask := statusDiffMask & StatusTagMaskDeclarativeValidated; valStatusMask != 0 {
+					if err := newLazy.wire.ExtractV1StatusSubtreeInto(valStatusMask, &projNew.Status); err != nil {
+						return field.ErrorList{field.InternalError(field.NewPath("status"), err)}
+					}
+					if err := oldLazy.wire.ExtractV1StatusSubtreeInto(valStatusMask, &projOld.Status); err != nil {
+						return field.ErrorList{field.InternalError(field.NewPath("status"), err)}
+					}
+				}
+			} else {
+				if err := newLazy.wire.ExtractV1StatusInto(&projNew.Status); err != nil {
+					return field.ErrorList{field.InternalError(field.NewPath("status"), err)}
+				}
+				if err := oldLazy.wire.ExtractV1StatusInto(&projOld.Status); err != nil {
+					return field.ErrorList{field.InternalError(field.NewPath("status"), err)}
+				}
+			}
+			return corev1.Validate_Pod(ctx, op, nil, projNew, projOld)
 		}
-		return corev1.Validate_Pod(ctx, op, nil, projNew, projOld)
 	}
 
 	decNew, err := decodeV1PodNonMutating(newLazy)
@@ -163,6 +181,9 @@ func Install(scheme *runtime.Scheme) error {
 
 	scheme.AddTypeDefaultingFunc(&V1Pod{}, func(obj interface{}) {
 		SetObjectDefaults_V1Pod(obj.(*V1Pod))
+	})
+	scheme.AddTypeDefaultingFunc(&V1PodList{}, func(obj interface{}) {
+		SetObjectDefaults_V1PodList(obj.(*V1PodList))
 	})
 	scheme.AddValidationFunc((*V1Pod)(nil), validateV1PodDeclaratively)
 
@@ -205,6 +226,7 @@ func Install(scheme *runtime.Scheme) error {
 		v1Copy.TypeMeta = out.TypeMeta
 		out.wire = nil
 		out.wireOwn = nil
+		out.wireCanCache = false
 		out.decoded = &v1Copy
 		return nil
 	}); err != nil {
@@ -260,6 +282,16 @@ func SetObjectDefaults_V1Pod(in *V1Pod) {
 	}
 }
 
+// SetObjectDefaults_V1PodList applies v1.Pod defaults to each item in a V1PodList.
+func SetObjectDefaults_V1PodList(in *V1PodList) {
+	if in == nil {
+		return
+	}
+	for i := range in.Items {
+		SetObjectDefaults_V1Pod(&in.Items[i])
+	}
+}
+
 // Convert_v1_Pod_To_core_Pod transfers the lazy WirePod buffer from V1Pod to internal Pod
 // in O(1) without decoding when V1Pod is in lazy wire form, or uses zero-copy layout casting if decoded.
 func Convert_v1_Pod_To_core_Pod(in *V1Pod, out *Pod, _ conversion.Scope) error {
@@ -267,6 +299,7 @@ func Convert_v1_Pod_To_core_Pod(in *V1Pod, out *Pod, _ conversion.Scope) error {
 		out.wire = in.wire
 		if in.wireOwn == in {
 			in.wireOwn = nil
+			in.wireCanCache = false
 			out.wireOwn = out
 		} else {
 			out.wireOwn = nil
@@ -292,11 +325,13 @@ func Convert_core_Pod_To_v1_Pod(in *Pod, out *V1Pod, _ conversion.Scope) error {
 	if in.wire != nil && in.decoded == nil {
 		out.wire = in.wire
 		out.wireOwn = nil
+		out.wireCanCache = in.wireOwn == in
 		out.decoded = nil
 		return nil
 	}
 	out.wire = nil
 	out.wireOwn = nil
+	out.wireCanCache = false
 	if in.decoded != nil {
 		v1Copy := *(*v1.Pod)(unsafe.Pointer(in.decoded))
 		v1Copy.TypeMeta = out.TypeMeta

@@ -241,6 +241,19 @@ type LazyScopedPatcher interface {
 	HasEqualSpecWireBytes(other Object) bool
 }
 
+// LazySubtreePatcher extends LazyScopedPatcher with fine-grained Spec and Status field-tag bitmask
+// projection/splicing (~uint64(0) represents the entire Status sub-message) and wire-level equality modulo managedFields.
+type LazySubtreePatcher interface {
+	LazyScopedPatcher
+	SpecTagMaskForField(fieldName string) (uint64, bool)
+	StatusTagMaskForField(fieldName string) (uint64, bool)
+	DiffSpecTagMask(other Object) (uint64, bool)
+	DiffStatusTagMask(other Object) (uint64, bool)
+	ExtractSubtreePatchBase(includeMetadata bool, specTagMask, statusTagMask uint64, dropManagedFields bool) (Object, error)
+	SpliceSubtreePatchResult(patched Object, includeMetadata bool, specTagMask, statusTagMask uint64) (Object, error)
+	EqualModuloManagedFields(other Object) (equal, ok bool)
+}
+
 // VersionedObjectCreator can be implemented by an internal runtime.Object to provide
 // a custom versioned runtime.Object (such as a lazy wire wrapper) during Decode and ConvertToVersion.
 type VersionedObjectCreator interface {

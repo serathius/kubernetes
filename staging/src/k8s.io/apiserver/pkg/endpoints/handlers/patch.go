@@ -340,8 +340,17 @@ func (p *jsonPatcher) applyPatchToCurrentObject(requestContext context.Context, 
 		panic("PatchOptions required but not provided")
 	}
 	if scoped, ok := currentObject.(runtime.LazyScopedPatcher); ok && !scoped.IsDecoded() {
-		if includeMetadata, includeStatus, dropManagedFields, scopedOK := isScopedJSPatch(p.patchBytes, p.patchType, p.subresource); scopedOK {
-			baseObj, err := scoped.ExtractScopedPatchBase(includeMetadata, includeStatus, dropManagedFields)
+		subPatcher, _ := currentObject.(runtime.LazySubtreePatcher)
+		if includeMetadata, specTagMask, statusTagMask, dropManagedFields, scopedOK := isScopedJSPatch(p.patchBytes, p.patchType, p.subresource, subPatcher); scopedOK {
+			var (
+				baseObj runtime.Object
+				err     error
+			)
+			if subPatcher != nil {
+				baseObj, err = subPatcher.ExtractSubtreePatchBase(includeMetadata, specTagMask, statusTagMask, dropManagedFields)
+			} else {
+				baseObj, err = scoped.ExtractScopedPatchBase(includeMetadata, statusTagMask != 0, dropManagedFields)
+			}
 			if err != nil {
 				return nil, err
 			}
@@ -360,7 +369,12 @@ func (p *jsonPatcher) applyPatchToCurrentObject(requestContext context.Context, 
 			if err := p.decodePatchedJS(requestContext, patchedObjJS, appliedStrictErrs, decodedTarget); err != nil {
 				return nil, err
 			}
-			objToUpdate, err := scoped.SpliceScopedPatchResult(decodedTarget, includeMetadata, includeStatus)
+			var objToUpdate runtime.Object
+			if subPatcher != nil {
+				objToUpdate, err = subPatcher.SpliceSubtreePatchResult(decodedTarget, includeMetadata, specTagMask, statusTagMask)
+			} else {
+				objToUpdate, err = scoped.SpliceScopedPatchResult(decodedTarget, includeMetadata, statusTagMask != 0)
+			}
 			if err != nil {
 				return nil, err
 			}
@@ -506,42 +520,56 @@ func (p *smpPatcher) applyPatchToCurrentObject(requestContext context.Context, c
 		return nil, err
 	}
 	if lazyCur, ok := currentObject.(runtime.LazyObject); ok && !lazyCur.IsDecoded() {
-		if includeMetadata, includeStatus, scopedOK := isScopedPatchMap(patchMap, p.subresource); scopedOK {
+		subCur, _ := currentObject.(runtime.LazySubtreePatcher)
+		if includeMetadata, specTagMask, statusTagMask, scopedOK := isScopedPatchMap(patchMap, p.subresource, subCur); scopedOK {
 			currentVersionedObject, err := p.unsafeConvertor.ConvertToVersion(currentObject, p.kind.GroupVersion())
 			if err != nil {
 				return nil, err
 			}
 			if scoped, ok := currentVersionedObject.(runtime.LazyScopedPatcher); ok && !scoped.IsDecoded() {
-				dropManagedFields := !bytes.Contains(p.patchBytes, []byte("managedFields"))
-				baseVersionedObj, err := scoped.ExtractScopedPatchBase(includeMetadata, includeStatus, dropManagedFields)
-				if err != nil {
-					return nil, err
+				subVersioned, _ := currentVersionedObject.(runtime.LazySubtreePatcher)
+				if (specTagMask == 0 && (statusTagMask == 0 || statusTagMask == ^uint64(0))) || subVersioned != nil {
+					dropManagedFields := !bytes.Contains(p.patchBytes, []byte("managedFields"))
+					var baseVersionedObj runtime.Object
+					if subVersioned != nil {
+						baseVersionedObj, err = subVersioned.ExtractSubtreePatchBase(includeMetadata, specTagMask, statusTagMask, dropManagedFields)
+					} else {
+						baseVersionedObj, err = scoped.ExtractScopedPatchBase(includeMetadata, statusTagMask != 0, dropManagedFields)
+					}
+					if err != nil {
+						return nil, err
+					}
+					versionedObjToUpdate, err := p.creater.New(p.kind)
+					if err != nil {
+						return nil, err
+					}
+					versionedObjToUpdate, err = runtime.EnsureDecodedObject(versionedObjToUpdate)
+					if err != nil {
+						return nil, err
+					}
+					originalObjMap, err := runtime.DefaultUnstructuredConverter.ToUnstructuredTopLevel(baseVersionedObj, patchMap)
+					if err != nil {
+						return nil, err
+					}
+					reflect.ValueOf(versionedObjToUpdate).Elem().Set(reflect.ValueOf(baseVersionedObj).Elem())
+					if err := applyPatchToObject(requestContext, p.defaulter, originalObjMap, patchMap, versionedObjToUpdate, p.schemaReferenceObj, strictErrs, p.validationDirective, patchMap); err != nil {
+						return nil, err
+					}
+					var splicedVersioned runtime.Object
+					if subVersioned != nil {
+						splicedVersioned, err = subVersioned.SpliceSubtreePatchResult(versionedObjToUpdate, includeMetadata, specTagMask, statusTagMask)
+					} else {
+						splicedVersioned, err = scoped.SpliceScopedPatchResult(versionedObjToUpdate, includeMetadata, statusTagMask != 0)
+					}
+					if err != nil {
+						return nil, err
+					}
+					newObj, err := p.unsafeConvertor.ConvertToVersion(splicedVersioned, p.hubGroupVersion)
+					if err != nil {
+						return nil, err
+					}
+					return p.fieldManager.UpdateNoErrors(currentObject, newObj, managerOrUserAgent(p.options.FieldManager, p.userAgent)), nil
 				}
-				versionedObjToUpdate, err := p.creater.New(p.kind)
-				if err != nil {
-					return nil, err
-				}
-				versionedObjToUpdate, err = runtime.EnsureDecodedObject(versionedObjToUpdate)
-				if err != nil {
-					return nil, err
-				}
-				originalObjMap, err := runtime.DefaultUnstructuredConverter.ToUnstructuredTopLevel(baseVersionedObj, patchMap)
-				if err != nil {
-					return nil, err
-				}
-				reflect.ValueOf(versionedObjToUpdate).Elem().Set(reflect.ValueOf(baseVersionedObj).Elem())
-				if err := applyPatchToObject(requestContext, p.defaulter, originalObjMap, patchMap, versionedObjToUpdate, p.schemaReferenceObj, strictErrs, p.validationDirective, patchMap); err != nil {
-					return nil, err
-				}
-				splicedVersioned, err := scoped.SpliceScopedPatchResult(versionedObjToUpdate, includeMetadata, includeStatus)
-				if err != nil {
-					return nil, err
-				}
-				newObj, err := p.unsafeConvertor.ConvertToVersion(splicedVersioned, p.hubGroupVersion)
-				if err != nil {
-					return nil, err
-				}
-				return p.fieldManager.UpdateNoErrors(currentObject, newObj, managerOrUserAgent(p.options.FieldManager, p.userAgent)), nil
 			}
 		}
 	}
@@ -616,10 +644,6 @@ type applyPatcher struct {
 
 func (p *applyPatcher) applyPatchToCurrentObject(requestContext context.Context, obj runtime.Object) (runtime.Object, error) {
 	var err error
-	obj, err = runtime.EnsureDecodedObject(obj)
-	if err != nil {
-		return nil, err
-	}
 	force := false
 	if p.options.Force != nil {
 		force = *p.options.Force
@@ -656,6 +680,10 @@ func (p *applyPatcher) createNewObject(requestContext context.Context) (runtime.
 	if err != nil {
 		return nil, fmt.Errorf("failed to create new object: %v", err)
 	}
+	obj, err = runtime.EnsureDecodedObject(obj)
+	if err != nil {
+		return nil, err
+	}
 	return p.applyPatchToCurrentObject(requestContext, obj)
 }
 
@@ -674,72 +702,151 @@ func unmarshalSMPPatch(patchBytes []byte, validationDirective string) (map[strin
 	return patchMap, nil, nil
 }
 
-func isScopedPatchMap(patchMap map[string]interface{}, subresource string) (includeMetadata, includeStatus, ok bool) {
+func isScopedPatchMap(patchMap map[string]interface{}, subresource string, subPatcher runtime.LazySubtreePatcher) (includeMetadata bool, specTagMask, statusTagMask uint64, ok bool) {
 	if patchMap == nil {
-		return false, false, false
+		return false, 0, 0, false
 	}
 	for k, v := range patchMap {
 		if strings.HasPrefix(k, "$") {
-			return false, false, false
+			return false, 0, 0, false
 		}
 		switch k {
 		case "metadata":
 			if _, isMap := v.(map[string]interface{}); !isMap {
-				return false, false, false
+				return false, 0, 0, false
 			}
 			includeMetadata = true
 		case "status":
 			if subresource != "status" {
-				return false, false, false
+				return false, 0, 0, false
 			}
-			if _, isMap := v.(map[string]interface{}); !isMap {
-				return false, false, false
+			statusMap, isMap := v.(map[string]interface{})
+			if !isMap {
+				return false, 0, 0, false
 			}
-			includeStatus = true
+			if subPatcher == nil {
+				statusTagMask = ^uint64(0)
+				continue
+			}
+			for sk := range statusMap {
+				if strings.HasPrefix(sk, "$") {
+					statusTagMask = ^uint64(0)
+					break
+				}
+				m, known := subPatcher.StatusTagMaskForField(sk)
+				if !known {
+					statusTagMask = ^uint64(0)
+					break
+				}
+				statusTagMask |= m
+			}
+		case "spec":
+			if subPatcher == nil || (subresource != "" && subresource != "ephemeralcontainers") {
+				return false, 0, 0, false
+			}
+			specMap, isMap := v.(map[string]interface{})
+			if !isMap {
+				return false, 0, 0, false
+			}
+			for sk := range specMap {
+				if strings.HasPrefix(sk, "$") {
+					return false, 0, 0, false
+				}
+				if subresource == "ephemeralcontainers" && sk != "ephemeralContainers" {
+					return false, 0, 0, false
+				}
+				m, known := subPatcher.SpecTagMaskForField(sk)
+				if !known {
+					return false, 0, 0, false
+				}
+				specTagMask |= m
+			}
 		default:
-			return false, false, false
+			return false, 0, 0, false
 		}
 	}
-	return includeMetadata, includeStatus, true
+	return includeMetadata, specTagMask, statusTagMask, true
 }
 
-func isScopedJSPatch(patchBytes []byte, patchType types.PatchType, subresource string) (includeMetadata, includeStatus, dropManagedFields, ok bool) {
+func isScopedJSPatch(patchBytes []byte, patchType types.PatchType, subresource string, subPatcher runtime.LazySubtreePatcher) (includeMetadata bool, specTagMask, statusTagMask uint64, dropManagedFields, ok bool) {
 	dropManagedFields = !bytes.Contains(patchBytes, []byte("managedFields"))
 	switch patchType {
 	case types.MergePatchType:
 		var patchMap map[string]interface{}
 		if err := json.Unmarshal(patchBytes, &patchMap); err != nil || patchMap == nil {
-			return false, false, false, false
+			return false, 0, 0, false, false
 		}
-		incMeta, incStatus, scopedOK := isScopedPatchMap(patchMap, subresource)
-		return incMeta, incStatus, dropManagedFields, scopedOK
+		incMeta, specMask, statusMask, scopedOK := isScopedPatchMap(patchMap, subresource, subPatcher)
+		return incMeta, specMask, statusMask, dropManagedFields, scopedOK
 	case types.JSONPatchType:
 		var ops []jsonPatchOp
 		if err := json.Unmarshal(patchBytes, &ops); err != nil || len(ops) == 0 || len(ops) > maxJSONPatchOperations {
-			return false, false, false, false
+			return false, 0, 0, false, false
 		}
 		checkPath := func(p string) bool {
 			if strings.HasPrefix(p, "/metadata/") {
 				includeMetadata = true
 				return true
 			}
-			if subresource == "status" && (p == "/status" || strings.HasPrefix(p, "/status/")) {
-				includeStatus = true
+			if subresource == "status" {
+				if p == "/status" {
+					statusTagMask = ^uint64(0)
+					return true
+				}
+				if strings.HasPrefix(p, "/status/") {
+					if statusTagMask == ^uint64(0) || subPatcher == nil {
+						statusTagMask = ^uint64(0)
+						return true
+					}
+					rest := p[len("/status/"):]
+					seg := rest
+					if slash := strings.IndexByte(rest, '/'); slash >= 0 {
+						seg = rest[:slash]
+					}
+					if seg == "" || strings.ContainsRune(seg, '~') {
+						statusTagMask = ^uint64(0)
+						return true
+					}
+					if m, known := subPatcher.StatusTagMaskForField(seg); known {
+						statusTagMask |= m
+					} else {
+						statusTagMask = ^uint64(0)
+					}
+					return true
+				}
+			}
+			if subPatcher != nil && (subresource == "" || subresource == "ephemeralcontainers") && strings.HasPrefix(p, "/spec/") {
+				rest := p[len("/spec/"):]
+				seg := rest
+				if slash := strings.IndexByte(rest, '/'); slash >= 0 {
+					seg = rest[:slash]
+				}
+				if seg == "" || strings.ContainsRune(seg, '~') {
+					return false
+				}
+				if subresource == "ephemeralcontainers" && seg != "ephemeralContainers" {
+					return false
+				}
+				m, known := subPatcher.SpecTagMaskForField(seg)
+				if !known {
+					return false
+				}
+				specTagMask |= m
 				return true
 			}
 			return false
 		}
 		for _, op := range ops {
 			if !checkPath(op.Path) {
-				return false, false, false, false
+				return false, 0, 0, false, false
 			}
 			if op.From != "" && !checkPath(op.From) {
-				return false, false, false, false
+				return false, 0, 0, false, false
 			}
 		}
-		return includeMetadata, includeStatus, dropManagedFields, true
+		return includeMetadata, specTagMask, statusTagMask, dropManagedFields, true
 	default:
-		return false, false, false, false
+		return false, 0, 0, false, false
 	}
 }
 
