@@ -316,29 +316,30 @@ func (c *watchCache) WaitUntilFreshAndGetList(ctx context.Context, key string, o
 	return c.waitUntilFreshAndListNonRecursive(ctx, key, opts)
 }
 
-func (c *watchCache) waitUntilFreshAndListNonRecursive(ctx context.Context, key string, opts storage.ListOptions) (listResp, string, error) {
-	var resourceVersion string
-	if opts.ResourceVersionMatch == "" && opts.ResourceVersion == "" {
-		resourceVersion = ""
-	} else {
-		if opts.ResourceVersion == "" {
-			resourceVersion = "0"
-		} else {
-			resourceVersion = opts.ResourceVersion
-		}
-	}
-	obj, exists, readResourceVersion, err := c.WaitUntilFreshAndGet(ctx, resourceVersion, key)
+func (w *watchCache) waitUntilFreshAndListNonRecursive(ctx context.Context, key string, opts storage.ListOptions) (listResp, string, error) {
+	semantic, listRV, err := listNonRecursiveConsistency(w.config.versioner, opts)
 	if err != nil {
 		return listResp{}, "", err
 	}
+	snap, index, err := w.waitAndReadSnapshot(ctx, semantic, listRV, false, opts.Predicate.MatcherIndex(ctx))
+	if err != nil {
+		return listResp{}, "", err
+	}
+	span := tracing.SpanFromContext(ctx)
+	obj, exists, err := snap.GetByKey(key)
+	if err != nil {
+		span.AddEvent("GetByKey failed", attribute.String("error", err.Error()))
+		return listResp{}, "", err
+	}
+	span.AddEvent("GetByKey success")
 	if !exists {
-		return listResp{ResourceVersion: readResourceVersion, Range: store.EmptyRange()}, "", nil
+		return listResp{ResourceVersion: snap.ResourceVersion(), Range: store.EmptyRange()}, index, nil
 	}
 	elem, ok := obj.(*store.Element)
 	if !ok {
 		return listResp{}, "", fmt.Errorf("non *store.Element returned from storage: %v", obj)
 	}
-	return listResp{ResourceVersion: readResourceVersion, Range: store.SingleElementRange(elem)}, "", nil
+	return listResp{ResourceVersion: snap.ResourceVersion(), Range: store.SingleElementRange(elem)}, index, nil
 }
 
 // WaitUntilFreshAndList returns list of pointers to `storeElement` objects along
@@ -379,6 +380,17 @@ func (w *watchCache) waitUntilFreshAndListRecursive(ctx context.Context, key str
 		return listResp{}, "", err
 	}
 	return listResp{ResourceVersion: snap.ResourceVersion(), Range: snap.RangePrefix(key, continueKey)}, index, nil
+}
+
+func listNonRecursiveConsistency(versioner storage.Versioner, opts storage.ListOptions) (readConsistency, uint64, error) {
+	if opts.ResourceVersionMatch == "" && opts.ResourceVersion == "" {
+		return consistencyConsistent, 0, nil
+	}
+	listRV, err := versioner.ParseResourceVersion(opts.ResourceVersion)
+	if err != nil {
+		return "", 0, err
+	}
+	return consistencyNotOlderThan, listRV, nil
 }
 
 // NOTICE: Structure follows the shouldDelegateList function in
