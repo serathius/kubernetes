@@ -309,36 +309,41 @@ func (w *watchCache) waitUntilFreshLocked(ctx context.Context, resourceVersion u
 	return w.freshness.waitUntilFreshLockedWithLocker(ctx, resourceVersion, w.RLocker())
 }
 
-func (c *watchCache) WaitUntilFreshAndGetList(ctx context.Context, key string, opts storage.ListOptions) (listResp, string, error) {
-	if opts.Recursive {
-		return c.waitUntilFreshAndListRecursive(ctx, key, opts)
-	}
-	return c.waitUntilFreshAndListNonRecursive(ctx, key, opts)
-}
-
-func (c *watchCache) waitUntilFreshAndListNonRecursive(ctx context.Context, key string, opts storage.ListOptions) (listResp, string, error) {
-	var resourceVersion string
-	if opts.ResourceVersionMatch == "" && opts.ResourceVersion == "" {
-		resourceVersion = ""
-	} else {
-		if opts.ResourceVersion == "" {
-			resourceVersion = "0"
-		} else {
-			resourceVersion = opts.ResourceVersion
-		}
-	}
-	obj, exists, readResourceVersion, err := c.WaitUntilFreshAndGet(ctx, resourceVersion, key)
+func (w *watchCache) WaitUntilFreshAndGetList(ctx context.Context, key string, opts storage.ListOptions) (resp listResp, index string, err error) {
+	semantic, listRV, continueKey, err := listReadConsistency(key, w.config.versioner, opts)
 	if err != nil {
 		return listResp{}, "", err
 	}
+	snap, index, err := w.waitAndReadSnapshot(ctx, semantic, listRV, opts.Recursive, opts.Predicate.MatcherIndex(ctx))
+	if err != nil {
+		return listResp{}, "", err
+	}
+	rng, err := rangeFromSnapshot(ctx, snap, key, continueKey, opts.Recursive)
+	if err != nil {
+		return listResp{}, "", err
+	}
+	return listResp{ResourceVersion: snap.ResourceVersion(), Range: rng}, index, nil
+}
+
+func rangeFromSnapshot(ctx context.Context, snap store.Snapshot, key, continueKey string, recursive bool) (store.Range, error) {
+	if recursive {
+		return snap.RangePrefix(key, continueKey), nil
+	}
+	span := tracing.SpanFromContext(ctx)
+	obj, exists, err := snap.GetByKey(key)
+	if err != nil {
+		span.AddEvent("GetByKey failed", attribute.String("error", err.Error()))
+		return nil, err
+	}
+	span.AddEvent("GetByKey success")
 	if !exists {
-		return listResp{ResourceVersion: readResourceVersion, Range: store.EmptyRange()}, "", nil
+		return store.EmptyRange(), nil
 	}
 	elem, ok := obj.(*store.Element)
 	if !ok {
-		return listResp{}, "", fmt.Errorf("non *store.Element returned from storage: %v", obj)
+		return nil, fmt.Errorf("non *store.Element returned from storage: %v", obj)
 	}
-	return listResp{ResourceVersion: readResourceVersion, Range: store.SingleElementRange(elem)}, "", nil
+	return store.SingleElementRange(elem), nil
 }
 
 // WaitUntilFreshAndList returns list of pointers to `storeElement` objects along
@@ -368,27 +373,13 @@ const (
 	consistencyNotOlderThan readConsistency = "NotOlderThan"
 )
 
-func (w *watchCache) waitUntilFreshAndListRecursive(ctx context.Context, key string, opts storage.ListOptions) (resp listResp, index string, err error) {
-	recursive := true
-	semantic, listRV, continueKey, err := listRecursiveConsistency(key, w.config.versioner, opts)
-	if err != nil {
-		return listResp{}, "", err
-	}
-	snap, index, err := w.waitAndReadSnapshot(ctx, semantic, listRV, recursive, opts.Predicate.MatcherIndex(ctx))
-	if err != nil {
-		return listResp{}, "", err
-	}
-	return listResp{ResourceVersion: snap.ResourceVersion(), Range: snap.RangePrefix(key, continueKey)}, index, nil
-}
-
 // NOTICE: Structure follows the shouldDelegateList function in
 // staging/src/k8s.io/apiserver/pkg/storage/cacher/delegator.go
-func listRecursiveConsistency(keyPrefix string, versioner storage.Versioner, opts storage.ListOptions) (semantic readConsistency, listRV uint64, continueKey string, err error) {
+func listReadConsistency(keyPrefix string, versioner storage.Versioner, opts storage.ListOptions) (semantic readConsistency, listRV uint64, continueKey string, err error) {
 	listRV, err = versioner.ParseResourceVersion(opts.ResourceVersion)
 	if err != nil {
 		return "", 0, "", err
 	}
-	// The RV semantic below is for Recursive List, non-recursive lists should use waitUntilFreshAndListNonRecursive.
 	switch opts.ResourceVersionMatch {
 	case metav1.ResourceVersionMatchExact:
 		semantic = consistencyExact
@@ -397,7 +388,7 @@ func listRecursiveConsistency(keyPrefix string, versioner storage.Versioner, opt
 	case "":
 		var continueRV int64
 		// Continue
-		if len(opts.Predicate.Continue) > 0 {
+		if opts.Recursive && len(opts.Predicate.Continue) > 0 {
 			continueKey, continueRV, err = storage.DecodeContinue(opts.Predicate.Continue, keyPrefix)
 			if err != nil {
 				return "", 0, "", errors.NewBadRequest(fmt.Sprintf("invalid continue token: %v", err))
@@ -408,7 +399,7 @@ func listRecursiveConsistency(keyPrefix string, versioner storage.Versioner, opt
 			} else {
 				semantic = consistencyConsistent
 			}
-		} else if opts.Predicate.Limit > 0 && len(opts.ResourceVersion) > 0 && opts.ResourceVersion != "0" {
+		} else if opts.Recursive && opts.Predicate.Limit > 0 && len(opts.ResourceVersion) > 0 && opts.ResourceVersion != "0" {
 			// Legacy exact match
 			semantic = consistencyExact
 		} else if opts.ResourceVersion == "" {
