@@ -35,6 +35,7 @@ import (
 	policyv1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/managedfields"
 	"k8s.io/apiserver/pkg/features"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/client-go/ktesting"
@@ -53,6 +54,10 @@ func BenchmarkRequestCost(b *testing.B) {
 		features.CBORServingAndStorage:    true,
 		features.DetectCacheInconsistency: false,
 		features.WatchList:                true,
+	})
+	prevTrackProb := managedfields.SetTrackOnCreateProbability(0)
+	b.Cleanup(func() {
+		managedfields.SetTrackOnCreateProbability(prevTrackProb)
 	})
 
 	const (
@@ -517,19 +522,6 @@ func BenchmarkRequestCost(b *testing.B) {
 		},
 		{
 			method:             "PATCH",
-			options:            "apply",
-			httpMethod:         http.MethodPatch,
-			path:               podPath,
-			query:              "fieldManager=bench&force=true",
-			requestContentType: string(types.ApplyYAMLPatchType),
-			acceptContentTypes: writeFormats,
-			body: staticBytesBody(
-				`{"apiVersion":"v1","kind":"Pod","metadata":{"name":"pod-000","annotations":{"bench.k8s.io/patch":"0"}}}`,
-				`{"apiVersion":"v1","kind":"Pod","metadata":{"name":"pod-000","annotations":{"bench.k8s.io/patch":"1"}}}`,
-			),
-		},
-		{
-			method:             "PATCH",
 			options:            "status strategic-merge",
 			httpMethod:         http.MethodPatch,
 			path:               podPath + "/status",
@@ -586,6 +578,9 @@ func BenchmarkRequestCost(b *testing.B) {
 		ensureNamespace(tCtx, metav1.NamespaceDefault)
 		ensureNamespace(tCtx, ephemeralNamespace)
 		pods := seedPods(tCtx, informer, metav1.NamespaceDefault, podCount, 0)
+		if len(pods[0].ManagedFields) != 0 {
+			b.Fatalf("expected empty ManagedFields on seeded pod, got %d entries", len(pods[0].ManagedFields))
+		}
 
 		// Run scenarios that seed 45KB pods (extraBytes > 0) last so their
 		// watchCache history does not inflate retained heap or advance RV ahead

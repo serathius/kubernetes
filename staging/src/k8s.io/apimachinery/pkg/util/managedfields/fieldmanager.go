@@ -56,3 +56,11 @@ func ValidateManagedFields(encodedManagedFields []metav1.ManagedFieldsEntry) err
 	_, err := internal.DecodeManagedFields(encodedManagedFields)
 	return err
 }
+
+// SetTrackOnCreateProbability overrides the probability of tracking managedFields on object creation
+// for newly constructed default FieldManagers and returns the previous value.
+func SetTrackOnCreateProbability(p float32) float32 {
+	prev := internal.TrackOnCreateProbability
+	internal.TrackOnCreateProbability = p
+	return prev
+}

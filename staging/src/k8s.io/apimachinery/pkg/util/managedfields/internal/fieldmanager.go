@@ -39,6 +39,9 @@ const DefaultMaxUpdateManagers int = 10
 // starts being tracked from the object's creation, instead of from the first time the object is applied to.
 const DefaultTrackOnCreateProbability float32 = 1
 
+// TrackOnCreateProbability controls the probability used by NewDefaultFieldManager when tracking managedFields on create.
+var TrackOnCreateProbability float32 = DefaultTrackOnCreateProbability
+
 var atMostEverySecond = NewAtMostEvery(time.Second)
 
 // FieldManager updates the managed fields and merges applied
@@ -67,7 +70,7 @@ func NewDefaultFieldManager(f Manager, typeConverter TypeConverter, objectConver
 									NewStripMetaManager(f),
 								), kind.GroupVersion(), subresource,
 							), DefaultMaxUpdateManagers,
-						), objectCreater, DefaultTrackOnCreateProbability,
+						), objectCreater, TrackOnCreateProbability,
 					), typeConverter, objectConverter, kind.GroupVersion(),
 				),
 			), kind,
