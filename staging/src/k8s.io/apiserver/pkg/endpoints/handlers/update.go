@@ -119,7 +119,15 @@ func UpdateResource(r rest.Updater, scope *RequestScope, admit admission.Interfa
 
 		decoder := scope.Serializer.DecoderToVersion(decodeSerializer, scope.HubGroupVersion)
 		span.AddEvent("About to convert to expected version")
-		obj, gvk, err := decoder.Decode(body, &defaultGVK, original)
+		var (
+			obj runtime.Object
+			gvk *schema.GroupVersionKind
+		)
+		if allowLazy {
+			obj, gvk, err = runtime.DecodeOwnedPayload(decoder, body, &defaultGVK, original)
+		} else {
+			obj, gvk, err = decoder.Decode(body, &defaultGVK, original)
+		}
 		if err != nil {
 			strictError, isStrictError := runtime.AsStrictDecodingError(err)
 			switch {

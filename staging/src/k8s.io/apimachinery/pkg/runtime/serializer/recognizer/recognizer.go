@@ -78,6 +78,15 @@ func (d *decoder) RecognizesData(data []byte) (bool, bool, error) {
 }
 
 func (d *decoder) Decode(data []byte, gvk *schema.GroupVersionKind, into runtime.Object) (runtime.Object, *schema.GroupVersionKind, error) {
+	return d.decode(data, gvk, into, false, false)
+}
+
+// DecodeOwned implements runtime.OwnedPayloadDecoder.
+func (d *decoder) DecodeOwned(data []byte, gvk *schema.GroupVersionKind, into runtime.Object, fromStorage bool) (runtime.Object, *schema.GroupVersionKind, error) {
+	return d.decode(data, gvk, into, true, fromStorage)
+}
+
+func (d *decoder) decode(data []byte, gvk *schema.GroupVersionKind, into runtime.Object, ownedPayload, fromStorage bool) (runtime.Object, *schema.GroupVersionKind, error) {
 	var (
 		lastErr error
 		skipped []runtime.Decoder
@@ -99,6 +108,11 @@ func (d *decoder) Decode(data []byte, gvk *schema.GroupVersionKind, into runtime
 			if !ok {
 				continue
 			}
+			if ownedPayload {
+				if od, isOwned := r.(runtime.OwnedPayloadDecoder); isOwned {
+					return od.DecodeOwned(data, gvk, into, fromStorage)
+				}
+			}
 			return r.Decode(data, gvk, into)
 		default:
 			skipped = append(skipped, t)
@@ -107,7 +121,20 @@ func (d *decoder) Decode(data []byte, gvk *schema.GroupVersionKind, into runtime
 
 	// try recognizers that returned unknown or didn't recognize their data
 	for _, r := range skipped {
-		out, actual, err := r.Decode(data, gvk, into)
+		var (
+			out    runtime.Object
+			actual *schema.GroupVersionKind
+			err    error
+		)
+		if ownedPayload {
+			if od, isOwned := r.(runtime.OwnedPayloadDecoder); isOwned {
+				out, actual, err = od.DecodeOwned(data, gvk, into, fromStorage)
+			} else {
+				out, actual, err = r.Decode(data, gvk, into)
+			}
+		} else {
+			out, actual, err = r.Decode(data, gvk, into)
+		}
 		if err != nil {
 			// if we got an object back from the decoder, and the
 			// error was a strict decoding error (e.g. unknown or

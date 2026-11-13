@@ -441,6 +441,11 @@ func (r *EphemeralContainersREST) New() runtime.Object {
 	return r.store.New()
 }
 
+// AllowsLazyUpdate enables lazy wire-backed updates on pods/ephemeralcontainers.
+func (r *EphemeralContainersREST) AllowsLazyUpdate() bool {
+	return true
+}
+
 // Destroy cleans up resources on shutdown.
 func (r *EphemeralContainersREST) Destroy() {
 	// Given that underlying store is shared with REST,
@@ -469,6 +474,11 @@ func (r *ResizeREST) Get(ctx context.Context, name string, options *metav1.GetOp
 // New creates a new pod resource
 func (r *ResizeREST) New() runtime.Object {
 	return r.store.New()
+}
+
+// AllowsLazyUpdate enables lazy wire-backed updates on pods/resize.
+func (r *ResizeREST) AllowsLazyUpdate() bool {
+	return true
 }
 
 // Destroy cleans up resources on shutdown.

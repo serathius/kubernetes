@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"sync"
 	"unsafe"
 
 	v1 "k8s.io/api/core/v1"
@@ -43,7 +44,7 @@ func init() {
 				return false
 			}
 			if a.wire != nil && a.decoded == nil && b.wire != nil && b.decoded == nil {
-				if bytes.Equal(a.wire.Bytes(), b.wire.Bytes()) {
+				if a.wire.WireBytesEqual(b.wire) {
 					return true
 				}
 			}
@@ -62,7 +63,7 @@ func init() {
 				return false
 			}
 			if a.wire != nil && a.decoded == nil && b.wire != nil && b.decoded == nil {
-				if bytes.Equal(a.wire.Bytes(), b.wire.Bytes()) {
+				if a.wire.WireBytesEqual(b.wire) {
 					return true
 				}
 			}
@@ -97,6 +98,12 @@ func decodeV1PodNonMutating(p *V1Pod) (*v1.Pod, error) {
 	return dec, nil
 }
 
+var v1PodPairPool = sync.Pool{
+	New: func() any {
+		return new([2]v1.Pod)
+	},
+}
+
 func validateV1PodDeclaratively(ctx context.Context, op operation.Operation, obj, oldObj interface{}) field.ErrorList {
 	switch op.Request.SubresourcePath() {
 	case "/", "/ephemeralcontainers", "/eviction", "/resize", "/status":
@@ -116,42 +123,61 @@ func validateV1PodDeclaratively(ctx context.Context, op operation.Operation, obj
 	}
 
 	if op.Type == operation.Update && oldLazy != nil && newLazy.IsLazy() && oldLazy.IsLazy() {
-		if specDiffMask, diffOK := newLazy.DiffSpecTagMask(oldLazy); diffOK && (specDiffMask&SpecTagMaskContainersAndVolumes) == 0 {
-			projNew := &v1.Pod{TypeMeta: newLazy.TypeMeta}
-			projOld := &v1.Pod{TypeMeta: oldLazy.TypeMeta}
+		if specDiffMask, diffOK := newLazy.DiffSpecTagMask(oldLazy); diffOK {
+			pair := v1PodPairPool.Get().(*[2]v1.Pod)
+			projNew := &pair[0]
+			projOld := &pair[1]
+			projNew.TypeMeta = newLazy.TypeMeta
+			projOld.TypeMeta = oldLazy.TypeMeta
 			metaEqual := !newLazy.wire.meta.IsDirty() && !oldLazy.wire.meta.IsDirty() &&
 				bytes.Equal(newLazy.wire.meta.Bytes(), oldLazy.wire.meta.Bytes())
 			if !metaEqual {
 				newLazy.BorrowObjectMetaInto(&projNew.ObjectMeta, false)
 				oldLazy.BorrowObjectMetaInto(&projOld.ObjectMeta, false)
 			}
-			if specDiffMask != 0 {
-				valMask := CoupleSpecValidationTags(specDiffMask)
+			if valMask := CoupleSpecValidationTags(specDiffMask) & SpecTagMaskDeclarativeValidated; valMask != 0 {
 				if err := newLazy.wire.ExtractV1SpecSubtreeInto(valMask, &projNew.Spec); err != nil {
+					*pair = [2]v1.Pod{}
+					v1PodPairPool.Put(pair)
 					return field.ErrorList{field.InternalError(field.NewPath("spec"), err)}
 				}
 				if err := oldLazy.wire.ExtractV1SpecSubtreeInto(valMask, &projOld.Spec); err != nil {
+					*pair = [2]v1.Pod{}
+					v1PodPairPool.Put(pair)
 					return field.ErrorList{field.InternalError(field.NewPath("spec"), err)}
 				}
 			}
 			if statusDiffMask, statusOK := newLazy.DiffStatusTagMask(oldLazy); statusOK {
 				if valStatusMask := statusDiffMask & StatusTagMaskDeclarativeValidated; valStatusMask != 0 {
 					if err := newLazy.wire.ExtractV1StatusSubtreeInto(valStatusMask, &projNew.Status); err != nil {
+						*pair = [2]v1.Pod{}
+						v1PodPairPool.Put(pair)
 						return field.ErrorList{field.InternalError(field.NewPath("status"), err)}
 					}
 					if err := oldLazy.wire.ExtractV1StatusSubtreeInto(valStatusMask, &projOld.Status); err != nil {
+						*pair = [2]v1.Pod{}
+						v1PodPairPool.Put(pair)
 						return field.ErrorList{field.InternalError(field.NewPath("status"), err)}
 					}
 				}
 			} else {
 				if err := newLazy.wire.ExtractV1StatusInto(&projNew.Status); err != nil {
+					*pair = [2]v1.Pod{}
+					v1PodPairPool.Put(pair)
 					return field.ErrorList{field.InternalError(field.NewPath("status"), err)}
 				}
 				if err := oldLazy.wire.ExtractV1StatusInto(&projOld.Status); err != nil {
+					*pair = [2]v1.Pod{}
+					v1PodPairPool.Put(pair)
 					return field.ErrorList{field.InternalError(field.NewPath("status"), err)}
 				}
 			}
-			return corev1.Validate_Pod(ctx, op, nil, projNew, projOld)
+			errs := corev1.Validate_Pod(ctx, op, nil, projNew, projOld)
+			if len(errs) == 0 {
+				*pair = [2]v1.Pod{}
+				v1PodPairPool.Put(pair)
+			}
+			return errs
 		}
 	}
 

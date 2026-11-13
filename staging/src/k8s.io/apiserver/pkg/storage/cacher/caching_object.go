@@ -17,7 +17,6 @@ limitations under the License.
 package cacher
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"reflect"
@@ -127,6 +126,20 @@ func (o *cachingObject) getSerializationResult(id runtime.Identifier) *serializa
 	return result
 }
 
+type singleWriteBuffer struct {
+	buf []byte
+}
+
+func (b *singleWriteBuffer) Write(p []byte) (int, error) {
+	if b.buf == nil {
+		b.buf = make([]byte, len(p))
+		copy(b.buf, p)
+		return len(p), nil
+	}
+	b.buf = append(b.buf, p...)
+	return len(p), nil
+}
+
 // CacheEncode implements runtime.CacheableObject interface.
 // It serializes the object and writes the result to given io.Writer trying
 // to first use the already cached result and falls back to a given encode
@@ -136,13 +149,13 @@ func (o *cachingObject) getSerializationResult(id runtime.Identifier) *serializa
 func (o *cachingObject) CacheEncode(id runtime.Identifier, encode func(runtime.Object, io.Writer) error, w io.Writer) error {
 	result := o.getSerializationResult(id)
 	result.once.Do(func() {
-		buffer := bytes.NewBuffer(nil)
+		var buffer singleWriteBuffer
 		// TODO(wojtek-t): This is currently making a copy to avoid races
 		//   in cases where encoding is making subtle object modifications,
 		//   e.g. #82497
 		//   Figure out if we can somehow avoid this under some conditions.
-		result.err = encode(o.GetObject(), buffer)
-		result.raw = buffer.Bytes()
+		result.err = encode(o.GetObject(), &buffer)
+		result.raw = buffer.buf
 	})
 	// Once invoked, fields of serialization will not change.
 	if result.err != nil {

@@ -375,16 +375,44 @@ func summarizeData(data []byte, maxLength int) string {
 	}
 }
 
+const maxPreallocatedRequestBodyBytes = 256 * 1024
+
+func readAllWithContentLengthHint(r io.Reader, contentLength int64) ([]byte, error) {
+	if contentLength <= 0 || contentLength > maxPreallocatedRequestBodyBytes {
+		return io.ReadAll(r)
+	}
+	data := make([]byte, 0, contentLength+1)
+	for {
+		if len(data) == cap(data) {
+			rest, err := io.ReadAll(r)
+			data = append(data, rest...)
+			return data, err
+		}
+		n, err := r.Read(data[len(data):cap(data)])
+		data = data[:len(data)+n]
+		if err != nil {
+			if err == io.EOF {
+				return data, nil
+			}
+			return nil, err
+		}
+	}
+}
+
 func limitedReadBody(req *http.Request, limit int64) ([]byte, error) {
 	defer req.Body.Close()
 	if limit <= 0 {
-		return io.ReadAll(req.Body)
+		return readAllWithContentLengthHint(req.Body, req.ContentLength)
 	}
 	lr := &io.LimitedReader{
 		R: req.Body,
 		N: limit + 1,
 	}
-	data, err := io.ReadAll(lr)
+	sizeHint := req.ContentLength
+	if sizeHint > limit {
+		sizeHint = limit + 1
+	}
+	data, err := readAllWithContentLengthHint(lr, sizeHint)
 	if err != nil {
 		return nil, err
 	}

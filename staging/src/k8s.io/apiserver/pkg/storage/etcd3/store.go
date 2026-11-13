@@ -346,15 +346,43 @@ func (s *store) Create(ctx context.Context, key string, obj, out runtime.Object,
 	}
 
 	if out != nil {
-		err = s.decoder.Decode(data, out, txnResp.Revision)
-		if err != nil {
-			span.AddEvent("Decode failed", attribute.Int("len", len(data)), attribute.String("err", err.Error()))
+		if copied, copyErr := s.copyLazyDestination(obj, out, txnResp.Revision); copyErr != nil {
+			span.AddEvent("Decode failed", attribute.Int("len", len(data)), attribute.String("err", copyErr.Error()))
 			recordDecodeError(s.groupResource, preparedKey)
-			return err
+			return copyErr
+		} else if !copied {
+			err = s.decoder.Decode(data, out, txnResp.Revision)
+			if err != nil {
+				span.AddEvent("Decode failed", attribute.Int("len", len(data)), attribute.String("err", err.Error()))
+				recordDecodeError(s.groupResource, preparedKey)
+				return err
+			}
 		}
 		span.AddEvent("Decode succeeded", attribute.Int("len", len(data)))
 	}
 	return nil
+}
+
+type lazyStorageDestinationCopier interface {
+	LazyCopyIntoStorageDestination(out runtime.Object) (bool, error)
+}
+
+func (s *store) copyLazyDestination(src, dst runtime.Object, rev int64) (bool, error) {
+	if src == nil || dst == nil {
+		return false, nil
+	}
+	copier, ok := src.(lazyStorageDestinationCopier)
+	if !ok {
+		return false, nil
+	}
+	copied, err := copier.LazyCopyIntoStorageDestination(dst)
+	if err != nil || !copied {
+		return copied, err
+	}
+	if err := s.versioner.UpdateObject(dst, uint64(rev)); err != nil {
+		klog.Errorf("failed to update object version: %v", err)
+	}
+	return true, nil
 }
 
 // Delete implements storage.Interface.Delete.
@@ -424,10 +452,15 @@ func (s *store) deleteOnce(ctx context.Context, key string, out runtime.Object, 
 	}
 
 	if !expectTransformOrDecodeError {
-		err = s.decoder.Decode(origState.Data, out, txnResp.Revision)
-		if err != nil {
+		if copied, copyErr := s.copyLazyDestination(origState.Obj, out, txnResp.Revision); copyErr != nil {
 			recordDecodeError(s.groupResource, key)
-			return origState, success, err
+			return origState, success, copyErr
+		} else if !copied {
+			err = s.decoder.Decode(origState.Data, out, txnResp.Revision)
+			if err != nil {
+				recordDecodeError(s.groupResource, key)
+				return origState, success, err
+			}
 		}
 	}
 	return origState, success, nil
@@ -515,10 +548,15 @@ func (s *store) updateOnce(ctx context.Context, preparedKey string, destination 
 		}
 		// recheck that the data from etcd is not stale before short-circuiting a write
 		if !origState.Stale {
-			err = s.decoder.Decode(origState.Data, destination, origState.Rev)
-			if err != nil {
+			if copied, copyErr := s.copyLazyDestination(origState.Obj, destination, origState.Rev); copyErr != nil {
 				recordDecodeError(s.groupResource, preparedKey)
-				return origState, false, err
+				return origState, false, copyErr
+			} else if !copied {
+				err = s.decoder.Decode(origState.Data, destination, origState.Rev)
+				if err != nil {
+					recordDecodeError(s.groupResource, preparedKey)
+					return origState, false, err
+				}
 			}
 			return origState, true, nil
 		}
@@ -567,11 +605,17 @@ func (s *store) updateOnce(ctx context.Context, preparedKey string, destination 
 		return origState, false, nil
 	}
 
-	err = s.decoder.Decode(data, destination, txnResp.Revision)
-	if err != nil {
-		span.AddEvent("Decode failed", attribute.Int("len", len(data)), attribute.String("err", err.Error()))
+	if copied, copyErr := s.copyLazyDestination(ret, destination, txnResp.Revision); copyErr != nil {
+		span.AddEvent("Decode failed", attribute.Int("len", len(data)), attribute.String("err", copyErr.Error()))
 		recordDecodeError(s.groupResource, preparedKey)
-		return origState, success, err
+		return origState, success, copyErr
+	} else if !copied {
+		err = s.decoder.Decode(data, destination, txnResp.Revision)
+		if err != nil {
+			span.AddEvent("Decode failed", attribute.Int("len", len(data)), attribute.String("err", err.Error()))
+			recordDecodeError(s.groupResource, preparedKey)
+			return origState, success, err
+		}
 	}
 	span.AddEvent("Decode succeeded", attribute.Int("len", len(data)))
 	return origState, success, nil

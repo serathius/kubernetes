@@ -90,6 +90,9 @@ func (s *DryRunnableStorage) GuaranteedUpdate(
 		if err != nil {
 			return err
 		}
+		if lazyCur, ok := current.(runtime.LazyObject); ok && !lazyCur.IsDecoded() {
+			current = current.DeepCopyObject()
+		}
 		err = preconditions.Check(key, current)
 		if err != nil {
 			return err
@@ -111,7 +114,17 @@ func (s *DryRunnableStorage) Stats(ctx context.Context) (storage.Stats, error) {
 	return s.Storage.Stats(ctx)
 }
 
+type lazyStorageCopier interface {
+	LazyCopyIntoStorageDestination(out runtime.Object) (bool, error)
+}
+
 func (s *DryRunnableStorage) copyInto(in, out runtime.Object) error {
+	if copier, ok := in.(lazyStorageCopier); ok {
+		if copied, err := copier.LazyCopyIntoStorageDestination(out); err != nil || copied {
+			return err
+		}
+	}
+
 	var data []byte
 
 	data, err := runtime.Encode(s.Codec, in)

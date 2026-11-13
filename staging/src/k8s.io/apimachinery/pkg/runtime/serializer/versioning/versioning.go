@@ -17,6 +17,7 @@ limitations under the License.
 package versioning
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"reflect"
@@ -127,6 +128,15 @@ func identifier(encodeGV runtime.GroupVersioner, encoder runtime.Encoder) runtim
 // successful, the returned runtime.Object will be the value passed as into. Note that this may bypass conversion if you pass an
 // into that matches the serialized version.
 func (c *codec) Decode(data []byte, defaultGVK *schema.GroupVersionKind, into runtime.Object) (runtime.Object, *schema.GroupVersionKind, error) {
+	return c.decode(data, defaultGVK, into, false, false)
+}
+
+// DecodeOwned implements runtime.OwnedPayloadDecoder.
+func (c *codec) DecodeOwned(data []byte, defaultGVK *schema.GroupVersionKind, into runtime.Object, fromStorage bool) (runtime.Object, *schema.GroupVersionKind, error) {
+	return c.decode(data, defaultGVK, into, true, fromStorage)
+}
+
+func (c *codec) decode(data []byte, defaultGVK *schema.GroupVersionKind, into runtime.Object, ownedPayload, fromStorage bool) (runtime.Object, *schema.GroupVersionKind, error) {
 	// If the into object is unstructured and expresses an opinion about its group/version,
 	// create a new instance of the type so we always exercise the conversion path (skips short-circuiting on `into == obj`)
 	decodeInto := into
@@ -137,7 +147,18 @@ func (c *codec) Decode(data []byte, defaultGVK *schema.GroupVersionKind, into ru
 	}
 
 	var strictDecodingErrs []error
-	obj, gvk, err := c.decoder.Decode(data, defaultGVK, decodeInto)
+	var obj runtime.Object
+	var gvk *schema.GroupVersionKind
+	var err error
+	if ownedPayload {
+		if od, ok := c.decoder.(runtime.OwnedPayloadDecoder); ok {
+			obj, gvk, err = od.DecodeOwned(data, defaultGVK, decodeInto, fromStorage)
+		} else {
+			obj, gvk, err = c.decoder.Decode(data, defaultGVK, decodeInto)
+		}
+	} else {
+		obj, gvk, err = c.decoder.Decode(data, defaultGVK, decodeInto)
+	}
 	if err != nil {
 		if strictErr, ok := runtime.AsStrictDecodingError(err); obj != nil && ok {
 			// save the strictDecodingError and let the caller decide what to do with it
@@ -284,6 +305,76 @@ func (c *codec) doEncode(obj runtime.Object, w io.Writer, memAlloc runtime.Memor
 
 	// Conversion is responsible for setting the proper group, version, and kind onto the outgoing object
 	return encodeFn(out, w)
+}
+
+// EncodeToSlice serializes obj directly into a newly allocated []byte slice when the underlying
+// encoder supports single-slice encoding, falling back to bytes.Buffer otherwise.
+func (c *codec) EncodeToSlice(obj runtime.Object) ([]byte, error) {
+	if _, ok := obj.(runtime.CacheableObject); ok {
+		var buf bytes.Buffer
+		if err := c.Encode(obj, &buf); err != nil {
+			return nil, err
+		}
+		return buf.Bytes(), nil
+	}
+	se, ok := c.encoder.(interface {
+		EncodeToSlice(runtime.Object) ([]byte, error)
+	})
+	if !ok {
+		var buf bytes.Buffer
+		if err := c.doEncode(obj, &buf, nil); err != nil {
+			return nil, err
+		}
+		return buf.Bytes(), nil
+	}
+	switch obj := obj.(type) {
+	case *runtime.Unknown:
+		return se.EncodeToSlice(obj)
+	case runtime.Unstructured:
+		if _, isList := obj.(*unstructured.UnstructuredList); !isList {
+			objGVK := obj.GetObjectKind().GroupVersionKind()
+			if len(objGVK.Version) == 0 {
+				return se.EncodeToSlice(obj)
+			}
+			targetGVK, ok := c.encodeVersion.KindForGroupVersionKinds([]schema.GroupVersionKind{objGVK})
+			if !ok {
+				return nil, runtime.NewNotRegisteredGVKErrForTarget(c.originalSchemeName, objGVK, c.encodeVersion)
+			}
+			if targetGVK == objGVK {
+				return se.EncodeToSlice(obj)
+			}
+		}
+	}
+
+	gvks, isUnversioned, err := c.typer.ObjectKinds(obj)
+	if err != nil {
+		return nil, err
+	}
+
+	objectKind := obj.GetObjectKind()
+	old := objectKind.GroupVersionKind()
+	defer objectKind.SetGroupVersionKind(old)
+
+	if c.encodeVersion == nil || isUnversioned {
+		if e, ok := obj.(runtime.NestedObjectEncoder); ok {
+			if err := e.EncodeNestedObjects(runtime.WithVersionEncoder{Encoder: c.encoder, ObjectTyper: c.typer}); err != nil {
+				return nil, err
+			}
+		}
+		objectKind.SetGroupVersionKind(gvks[0])
+		return se.EncodeToSlice(obj)
+	}
+
+	out, err := c.convertor.ConvertToVersion(obj, c.encodeVersion)
+	if err != nil {
+		return nil, err
+	}
+	if e, ok := out.(runtime.NestedObjectEncoder); ok {
+		if err := e.EncodeNestedObjects(runtime.WithVersionEncoder{Version: c.encodeVersion, Encoder: c.encoder, ObjectTyper: c.typer}); err != nil {
+			return nil, err
+		}
+	}
+	return se.EncodeToSlice(out)
 }
 
 // Identifier implements runtime.Encoder interface.

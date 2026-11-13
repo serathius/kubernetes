@@ -46,6 +46,10 @@ type ObjState struct {
 	Stale bool
 }
 
+type rawStorageBytesProvider interface {
+	RawStorageBytes() ([]byte, bool)
+}
+
 func GetStateFromObject(versioner Versioner, codec runtime.Codec, obj runtime.Object, current bool) (*ObjState, error) {
 	state := &ObjState{
 		Obj:     obj,
@@ -65,6 +69,13 @@ func GetStateFromObject(versioner Versioner, codec runtime.Codec, obj runtime.Ob
 	}
 	state.Rev = int64(rv)
 	state.Meta.ResourceVersion = uint64(state.Rev)
+
+	if provider, ok := obj.(rawStorageBytesProvider); ok {
+		if raw, ok := provider.RawStorageBytes(); ok {
+			state.Data = raw
+			return state, nil
+		}
+	}
 
 	// Compute the serialized form - for that we need to temporarily clean
 	// its resource version field (those are not stored in etcd).

@@ -43,13 +43,57 @@ func NewCodec(e Encoder, d Decoder) Codec {
 	return codec{e, d}
 }
 
+type sliceEncoder interface {
+	EncodeToSlice(obj Object) ([]byte, error)
+}
+
+// OwnedPayloadDecoder decodes an immutable, caller-owned byte slice without
+// defensively copying the inner wire payload when supported by the target object.
+// When fromStorage is true, data is the exact RV-stripped storage envelope.
+type OwnedPayloadDecoder interface {
+	DecodeOwned(data []byte, defaults *schema.GroupVersionKind, into Object, fromStorage bool) (Object, *schema.GroupVersionKind, error)
+}
+
 // Encode is a convenience wrapper for encoding to a []byte from an Encoder
 func Encode(e Encoder, obj Object) ([]byte, error) {
+	if c, ok := e.(codec); ok {
+		e = c.Encoder
+	}
+	if se, ok := e.(sliceEncoder); ok {
+		return se.EncodeToSlice(obj)
+	}
 	buf := &bytes.Buffer{}
 	if err := e.Encode(obj, buf); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+// DecodeOwnedStorage decodes an immutable, caller-owned storage slice into into
+// (or a newly created object when into is nil), falling back to d.Decode when d
+// does not implement OwnedPayloadDecoder.
+func DecodeOwnedStorage(d Decoder, data []byte, into Object) (Object, error) {
+	if c, ok := d.(codec); ok {
+		d = c.Decoder
+	}
+	if od, ok := d.(OwnedPayloadDecoder); ok {
+		obj, _, err := od.DecodeOwned(data, nil, into, true)
+		return obj, err
+	}
+	obj, _, err := d.Decode(data, nil, into)
+	return obj, err
+}
+
+// DecodeOwnedPayload decodes an immutable, caller-owned request payload slice
+// without copying inner wire bytes, falling back to d.Decode when unsupported.
+func DecodeOwnedPayload(d Decoder, data []byte, defaults *schema.GroupVersionKind, into Object) (Object, *schema.GroupVersionKind, error) {
+	if c, ok := d.(codec); ok {
+		d = c.Decoder
+	}
+	if od, ok := d.(OwnedPayloadDecoder); ok {
+		return od.DecodeOwned(data, defaults, into, false)
+	}
+	return d.Decode(data, defaults, into)
 }
 
 // Decode is a convenience wrapper for decoding data into an Object.

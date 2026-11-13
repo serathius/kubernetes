@@ -26,6 +26,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"sigs.k8s.io/structured-merge-diff/v7/fieldpath"
@@ -87,6 +88,12 @@ func (podStrategy) GetResetFields() map[fieldpath.APIVersion]*fieldpath.Set {
 	return fields
 }
 
+var corePodPairPool = sync.Pool{
+	New: func() any {
+		return new([2]api.Pod)
+	},
+}
+
 func ensureDecodedPod(obj runtime.Object) *api.Pod {
 	dec, err := runtime.EnsureDecodedObject(obj)
 	if err != nil {
@@ -119,13 +126,17 @@ func (podStrategy) PrepareForCreate(ctx context.Context, obj runtime.Object) {
 func (podStrategy) PrepareForUpdate(ctx context.Context, obj, old runtime.Object) {
 	if newLazy, ok1 := obj.(*lazypod.Pod); ok1 && newLazy.IsLazy() {
 		if oldLazy, ok2 := old.(*lazypod.Pod); ok2 && oldLazy.IsLazy() {
-			if specDiffMask, diffOK := newLazy.DiffSpecTagMask(oldLazy); diffOK && (specDiffMask&^lazypod.SpecTagMaskFastMutable) == 0 {
+			if specDiffMask, diffOK := newLazy.DiffSpecTagMask(oldLazy); diffOK &&
+				(specDiffMask&^(lazypod.SpecTagMaskFastMutable|lazypod.SpecTagMaskContainers)) == 0 {
 				specReady := true
 				if specDiffMask != 0 {
 					var newSubSpec, oldSubSpec api.PodSpec
 					if err1 := newLazy.Wire().ExtractCoreSpecSubtreeInto(specDiffMask, &newSubSpec); err1 != nil {
 						specReady = false
 					} else if err2 := oldLazy.Wire().ExtractCoreSpecSubtreeInto(specDiffMask, &oldSubSpec); err2 != nil {
+						specReady = false
+					} else if specDiffMask&lazypod.SpecTagMaskContainers != 0 &&
+						!onlyContainerImagesChangedInSpec(&newSubSpec, &oldSubSpec) {
 						specReady = false
 					} else if !apiequality.Semantic.DeepEqual(newSubSpec, oldSubSpec) {
 						newLazy.SetGeneration(newLazy.GetGeneration() + 1)
@@ -196,12 +207,14 @@ func (podStrategy) AllowCreateOnUpdate(ctx context.Context) bool {
 func (podStrategy) ValidateUpdate(ctx context.Context, obj, old runtime.Object) field.ErrorList {
 	if newLazy, ok1 := obj.(*lazypod.Pod); ok1 && newLazy.IsLazy() {
 		if oldLazy, ok2 := old.(*lazypod.Pod); ok2 && oldLazy.IsLazy() {
-			if specDiffMask, diffOK := newLazy.DiffSpecTagMask(oldLazy); diffOK && (specDiffMask&^lazypod.SpecTagMaskFastMutable) == 0 {
+			if specDiffMask, diffOK := newLazy.DiffSpecTagMask(oldLazy); diffOK &&
+				(specDiffMask&^(lazypod.SpecTagMaskFastMutable|lazypod.SpecTagMaskContainers)) == 0 {
 				if specDiffMask == 0 {
 					var newMeta, oldMeta metav1.ObjectMeta
 					newLazy.BorrowObjectMetaInto(&newMeta, false)
 					oldLazy.BorrowObjectMetaInto(&oldMeta, true)
-					if newMeta.Annotations[api.TolerationsAnnotationKey] == "" {
+					if newMeta.Annotations[api.TolerationsAnnotationKey] == "" &&
+						!hasDeprecatedAppArmorContainerAnnotation(newMeta.Annotations) {
 						fldPath := field.NewPath("metadata")
 						allErrs := corevalidation.ValidateObjectMetaUpdate(&newMeta, &oldMeta, fldPath)
 						allErrs = append(allErrs, corevalidation.ValidateObjectMeta(&newMeta, true, corevalidation.ValidatePodName, fldPath)...)
@@ -216,7 +229,8 @@ func (podStrategy) ValidateUpdate(ctx context.Context, obj, old runtime.Object) 
 					var newMeta, oldMeta metav1.ObjectMeta
 					newLazy.BorrowObjectMetaInto(&newMeta, false)
 					oldLazy.BorrowObjectMetaInto(&oldMeta, true)
-					if newMeta.Annotations[api.TolerationsAnnotationKey] == "" {
+					if newMeta.Annotations[api.TolerationsAnnotationKey] == "" &&
+						!hasDeprecatedAppArmorContainerAnnotation(newMeta.Annotations) {
 						var newSubSpec, oldSubSpec api.PodSpec
 						if err1 := newLazy.Wire().ExtractCoreSpecSubtreeInto(specDiffMask, &newSubSpec); err1 == nil {
 							if err2 := oldLazy.Wire().ExtractCoreSpecSubtreeInto(specDiffMask, &oldSubSpec); err2 == nil {
@@ -240,6 +254,41 @@ func (podStrategy) ValidateUpdate(ctx context.Context, obj, old runtime.Object) 
 	return corevalidation.ValidatePodUpdate(pod, oldPod, opts)
 }
 
+func hasDeprecatedAppArmorContainerAnnotation(annotations map[string]string) bool {
+	for k := range annotations {
+		if strings.HasPrefix(k, apiv1.DeprecatedAppArmorBetaContainerAnnotationKeyPrefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func onlyContainerImagesChanged(newCtrs, oldCtrs []api.Container) bool {
+	if len(newCtrs) != len(oldCtrs) {
+		return false
+	}
+	for i := range newCtrs {
+		if newCtrs[i].Image != oldCtrs[i].Image {
+			if len(newCtrs[i].Image) == 0 || len(strings.TrimSpace(newCtrs[i].Image)) != len(newCtrs[i].Image) {
+				return false
+			}
+			cp := newCtrs[i]
+			cp.Image = oldCtrs[i].Image
+			if !apiequality.Semantic.DeepEqual(cp, oldCtrs[i]) {
+				return false
+			}
+		} else if !apiequality.Semantic.DeepEqual(newCtrs[i], oldCtrs[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func onlyContainerImagesChangedInSpec(newSpec, oldSpec *api.PodSpec) bool {
+	return onlyContainerImagesChanged(newSpec.Containers, oldSpec.Containers) &&
+		onlyContainerImagesChanged(newSpec.InitContainers, oldSpec.InitContainers)
+}
+
 func validateFastMutablePodSpecUpdate(newMeta, oldMeta *metav1.ObjectMeta, newLazy *lazypod.Pod, newSpec, oldSpec *api.PodSpec, specDiffMask uint64, opts corevalidation.PodValidationOptions) bool {
 	fldPath := field.NewPath("metadata")
 	if len(corevalidation.ValidateObjectMetaUpdate(newMeta, oldMeta, fldPath)) > 0 {
@@ -249,6 +298,9 @@ func validateFastMutablePodSpecUpdate(newMeta, oldMeta *metav1.ObjectMeta, newLa
 		return false
 	}
 	if len(corevalidation.ValidatePodSpecificAnnotationUpdates(newLazy, oldMeta.Annotations, fldPath.Child("annotations"), opts)) > 0 {
+		return false
+	}
+	if specDiffMask&lazypod.SpecTagMaskContainers != 0 && !onlyContainerImagesChangedInSpec(newSpec, oldSpec) {
 		return false
 	}
 	specPath := field.NewPath("spec")
@@ -661,11 +713,23 @@ func (podStatusStrategy) ValidateUpdate(ctx context.Context, obj, old runtime.Ob
 					RestartPolicy: restartPolicy,
 					OS:            podOS,
 				}
-				tmpNew := &api.Pod{ObjectMeta: newMeta, Spec: minSpec, Status: *newStatusRO}
-				tmpOld := &api.Pod{ObjectMeta: oldMeta, Spec: minSpec, Status: *oldStatusRO}
+				pair := corePodPairPool.Get().(*[2]api.Pod)
+				tmpNew := &pair[0]
+				tmpOld := &pair[1]
+				tmpNew.ObjectMeta = newMeta
+				tmpNew.Spec = minSpec
+				tmpNew.Status = *newStatusRO
+				tmpOld.ObjectMeta = oldMeta
+				tmpOld.Spec = minSpec
+				tmpOld.Status = *oldStatusRO
 				opts := corevalidation.GetValidationOptionsFromPodSpecAndMeta(nil, nil, &newMeta, &oldMeta)
 				opts.ResourceIsPod = true
-				return corevalidation.ValidatePodStatusUpdate(tmpNew, tmpOld, opts)
+				errs := corevalidation.ValidatePodStatusUpdate(tmpNew, tmpOld, opts)
+				if len(errs) == 0 {
+					*pair = [2]api.Pod{}
+					corePodPairPool.Put(pair)
+				}
+				return errs
 			}
 		}
 	}
@@ -717,6 +781,44 @@ func dropNonEphemeralContainerUpdates(newPod, oldPod *api.Pod) *api.Pod {
 }
 
 func (podEphemeralContainersStrategy) PrepareForUpdate(ctx context.Context, obj, old runtime.Object) {
+	if newLazy, ok1 := obj.(*lazypod.Pod); ok1 && newLazy.IsLazy() {
+		if oldLazy, ok2 := old.(*lazypod.Pod); ok2 && oldLazy.IsLazy() {
+			var newSubSpec, oldSubSpec api.PodSpec
+			if err1 := newLazy.Wire().ExtractCoreSpecSubtreeInto(lazypod.SpecTagMaskEphemeralContainers, &newSubSpec); err1 == nil {
+				if err2 := oldLazy.Wire().ExtractCoreSpecSubtreeInto(lazypod.SpecTagMaskEphemeralContainers, &oldSubSpec); err2 == nil {
+					tmpNew := api.Pod{Spec: newSubSpec}
+					tmpOld := api.Pod{Spec: oldSubSpec}
+					podutil.DropDisabledPodFields(&tmpNew, &tmpOld)
+					specDiffMask, diffOK := newLazy.DiffSpecTagMask(oldLazy)
+					if diffOK && (specDiffMask&^lazypod.SpecTagMaskEphemeralContainers) == 0 &&
+						newLazy.Wire().HasEqualNonManagedMeta(oldLazy.Wire()) &&
+						newLazy.HasEqualStatusWireBytes(oldLazy) &&
+						!newLazy.HasLegacyInitContainerAnnotations() &&
+						apiequality.Semantic.DeepEqual(tmpNew.Spec.EphemeralContainers, newSubSpec.EphemeralContainers) {
+						if !apiequality.Semantic.DeepEqual(tmpNew.Spec.EphemeralContainers, oldSubSpec.EphemeralContainers) {
+							newLazy.SetGeneration(newLazy.GetGeneration() + 1)
+						}
+						return
+					}
+					var metaPtr *metav1.ObjectMeta
+					if !newLazy.Wire().HasEqualNonManagedMeta(oldLazy.Wire()) {
+						var newMeta, oldMeta metav1.ObjectMeta
+						newLazy.ExtractObjectMetaForUpdate(&newMeta, false)
+						oldLazy.BorrowObjectMetaInto(&oldMeta, true)
+						metav1.ResetObjectMetaForStatus(&newMeta, &oldMeta)
+						podutil.DropInitContainerAnnotations(newMeta.Annotations)
+						metaPtr = &newMeta
+					}
+					if err := newLazy.ReplaceMetaAndSpliceSpecOntoOld(metaPtr, &tmpNew.Spec, lazypod.SpecTagMaskEphemeralContainers, oldLazy); err == nil {
+						if !apiequality.Semantic.DeepEqual(tmpNew.Spec.EphemeralContainers, oldSubSpec.EphemeralContainers) {
+							newLazy.SetGeneration(newLazy.GetGeneration() + 1)
+						}
+						return
+					}
+				}
+			}
+		}
+	}
 	newPod := ensureDecodedPod(obj)
 	oldPod := ensureDecodedPod(old)
 
@@ -726,11 +828,148 @@ func (podEphemeralContainersStrategy) PrepareForUpdate(ctx context.Context, obj,
 }
 
 func (podEphemeralContainersStrategy) ValidateUpdate(ctx context.Context, obj, old runtime.Object) field.ErrorList {
+	if newLazy, ok1 := obj.(*lazypod.Pod); ok1 && newLazy.IsLazy() {
+		if oldLazy, ok2 := old.(*lazypod.Pod); ok2 && oldLazy.IsLazy() {
+			if specDiffMask, diffOK := newLazy.DiffSpecTagMask(oldLazy); diffOK &&
+				(specDiffMask&^lazypod.SpecTagMaskEphemeralContainers) == 0 &&
+				validateFastEphemeralContainersUpdate(newLazy, oldLazy) {
+				return nil
+			}
+			pair := corePodPairPool.Get().(*[2]api.Pod)
+			tmpNew := &pair[0]
+			tmpOld := &pair[1]
+			newLazy.BorrowObjectMetaInto(&tmpNew.ObjectMeta, false)
+			oldLazy.BorrowObjectMetaInto(&tmpOld.ObjectMeta, true)
+			err1 := newLazy.Wire().ExtractCoreSpecSubtreeInto(^uint64(0), &tmpNew.Spec)
+			err2 := oldLazy.Wire().ExtractCoreSpecSubtreeInto(lazypod.SpecTagMaskEphemeralContainers, &tmpOld.Spec)
+			if err1 == nil && err2 == nil {
+				opts := corevalidation.GetValidationOptionsFromPodSpecAndMeta(&tmpNew.Spec, &tmpOld.Spec, &tmpNew.ObjectMeta, &tmpOld.ObjectMeta)
+				opts.ResourceIsPod = true
+				errs := corevalidation.ValidatePodEphemeralContainersUpdate(tmpNew, tmpOld, opts)
+				if len(errs) == 0 {
+					*pair = [2]api.Pod{}
+					corePodPairPool.Put(pair)
+				}
+				return errs
+			}
+			*pair = [2]api.Pod{}
+			corePodPairPool.Put(pair)
+		}
+	}
 	newPod := ensureDecodedPod(obj)
 	oldPod := ensureDecodedPod(old)
 	opts := corevalidation.GetValidationOptionsFromPodSpecAndMeta(&newPod.Spec, &oldPod.Spec, &newPod.ObjectMeta, &oldPod.ObjectMeta)
 	opts.ResourceIsPod = true
 	return corevalidation.ValidatePodEphemeralContainersUpdate(newPod, oldPod, opts)
+}
+
+func isSimpleValidEphemeralContainer(ec *api.EphemeralContainer) bool {
+	if len(utilvalidation.IsDNS1123Label(ec.Name)) > 0 {
+		return false
+	}
+	if len(ec.Image) == 0 || len(strings.TrimSpace(ec.Image)) != len(ec.Image) {
+		return false
+	}
+	switch ec.ImagePullPolicy {
+	case api.PullAlways, api.PullIfNotPresent, api.PullNever:
+	default:
+		return false
+	}
+	if !strings.HasPrefix(ec.TerminationMessagePath, "/") {
+		return false
+	}
+	switch ec.TerminationMessagePolicy {
+	case api.TerminationMessageReadFile, api.TerminationMessageFallbackToLogsOnError:
+	default:
+		return false
+	}
+	return len(ec.Ports) == 0 &&
+		len(ec.EnvFrom) == 0 &&
+		len(ec.Env) == 0 &&
+		len(ec.Resources.Limits) == 0 &&
+		len(ec.Resources.Requests) == 0 &&
+		len(ec.Resources.Claims) == 0 &&
+		len(ec.ResizePolicy) == 0 &&
+		ec.RestartPolicy == nil &&
+		len(ec.RestartPolicyRules) == 0 &&
+		len(ec.VolumeMounts) == 0 &&
+		len(ec.VolumeDevices) == 0 &&
+		ec.LivenessProbe == nil &&
+		ec.ReadinessProbe == nil &&
+		ec.StartupProbe == nil &&
+		ec.Lifecycle == nil &&
+		ec.SecurityContext == nil
+}
+
+func validateFastEphemeralContainersUpdate(newLazy, oldLazy *lazypod.Pod) bool {
+	var newMeta, oldMeta metav1.ObjectMeta
+	newLazy.BorrowObjectMetaInto(&newMeta, false)
+	oldLazy.BorrowObjectMetaInto(&oldMeta, true)
+	if _, isMirror := oldMeta.Annotations[api.MirrorPodAnnotationKey]; isMirror {
+		return false
+	}
+	if newMeta.Annotations[api.TolerationsAnnotationKey] != "" || hasDeprecatedAppArmorContainerAnnotation(newMeta.Annotations) {
+		return false
+	}
+	fldPath := field.NewPath("metadata")
+	if len(corevalidation.ValidateObjectMetaUpdate(&newMeta, &oldMeta, fldPath)) > 0 {
+		return false
+	}
+	if len(corevalidation.ValidateObjectMeta(&newMeta, true, corevalidation.ValidatePodName, fldPath)) > 0 {
+		return false
+	}
+	opts := corevalidation.GetValidationOptionsFromPodSpecAndMeta(nil, nil, &newMeta, &oldMeta)
+	opts.ResourceIsPod = true
+	if len(corevalidation.ValidatePodSpecificAnnotationUpdates(newLazy, oldMeta.Annotations, fldPath.Child("annotations"), opts)) > 0 {
+		return false
+	}
+	var newSubSpec, oldSubSpec api.PodSpec
+	if err := newLazy.Wire().ExtractCoreSpecSubtreeInto(lazypod.SpecTagMaskContainers|lazypod.SpecTagMaskEphemeralContainers, &newSubSpec); err != nil {
+		return false
+	}
+	if err := oldLazy.Wire().ExtractCoreSpecSubtreeInto(lazypod.SpecTagMaskEphemeralContainers, &oldSubSpec); err != nil {
+		return false
+	}
+	if len(newSubSpec.Containers) == 0 {
+		return false
+	}
+	otherNames := make(map[string]struct{}, len(newSubSpec.Containers)+len(newSubSpec.InitContainers))
+	allNames := make(map[string]struct{}, len(newSubSpec.Containers)+len(newSubSpec.InitContainers)+len(newSubSpec.EphemeralContainers))
+	for i := range newSubSpec.Containers {
+		name := newSubSpec.Containers[i].Name
+		otherNames[name] = struct{}{}
+		allNames[name] = struct{}{}
+	}
+	for i := range newSubSpec.InitContainers {
+		name := newSubSpec.InitContainers[i].Name
+		otherNames[name] = struct{}{}
+		allNames[name] = struct{}{}
+	}
+	newByName := make(map[string]*api.EphemeralContainer, len(newSubSpec.EphemeralContainers))
+	for i := range newSubSpec.EphemeralContainers {
+		ec := &newSubSpec.EphemeralContainers[i]
+		if !isSimpleValidEphemeralContainer(ec) {
+			return false
+		}
+		if _, dup := allNames[ec.Name]; dup {
+			return false
+		}
+		allNames[ec.Name] = struct{}{}
+		if ec.TargetContainerName != "" {
+			if _, exists := otherNames[ec.TargetContainerName]; !exists {
+				return false
+			}
+		}
+		newByName[ec.Name] = ec
+	}
+	for i := range oldSubSpec.EphemeralContainers {
+		oldEC := &oldSubSpec.EphemeralContainers[i]
+		newEC, ok := newByName[oldEC.Name]
+		if !ok || !apiequality.Semantic.DeepEqual(*oldEC, *newEC) {
+			return false
+		}
+	}
+	return true
 }
 
 // WarningsOnUpdate returns warnings for the given update.
@@ -829,6 +1068,52 @@ func dropNonResizeUpdatesForVolumes(new, old []api.Volume) []api.Volume {
 }
 
 func (podResizeStrategy) PrepareForUpdate(ctx context.Context, obj, old runtime.Object) {
+	if newLazy, ok1 := obj.(*lazypod.Pod); ok1 && newLazy.IsLazy() {
+		if oldLazy, ok2 := old.(*lazypod.Pod); ok2 && oldLazy.IsLazy() &&
+			!oldLazy.Wire().HasSpecResources() && !newLazy.Wire().HasSpecResources() {
+			specDiffMask, diffOK := newLazy.DiffSpecTagMask(oldLazy)
+			volumesNeedKeepNew := utilfeature.DefaultFeatureGate.Enabled(features.InPlacePodVerticalScalingMemoryBackedVolumes) &&
+				(!diffOK || specDiffMask&lazypod.SpecTagMaskVolumes != 0)
+			if !volumesNeedKeepNew {
+				var newSubSpec, oldSubSpec api.PodSpec
+				if err1 := newLazy.Wire().ExtractCoreSpecSubtreeInto(lazypod.SpecTagMaskContainers, &newSubSpec); err1 == nil {
+					if err2 := oldLazy.Wire().ExtractCoreSpecSubtreeInto(lazypod.SpecTagMaskContainers, &oldSubSpec); err2 == nil &&
+						hasMatchingContainerOrder(newSubSpec.Containers, oldSubSpec.Containers) &&
+						hasMatchingContainerOrder(newSubSpec.InitContainers, oldSubSpec.InitContainers) {
+						mergedSpec := api.PodSpec{
+							Containers:     dropNonResizeUpdatesForContainers(newSubSpec.Containers, oldSubSpec.Containers),
+							InitContainers: dropNonResizeUpdatesForContainers(newSubSpec.InitContainers, oldSubSpec.InitContainers),
+						}
+						if diffOK && (specDiffMask&^lazypod.SpecTagMaskContainers) == 0 &&
+							newLazy.Wire().HasEqualNonManagedMeta(oldLazy.Wire()) &&
+							newLazy.HasEqualStatusWireBytes(oldLazy) &&
+							!newLazy.HasLegacyInitContainerAnnotations() &&
+							apiequality.Semantic.DeepEqual(mergedSpec, newSubSpec) {
+							if !apiequality.Semantic.DeepEqual(mergedSpec, oldSubSpec) {
+								newLazy.SetGeneration(newLazy.GetGeneration() + 1)
+							}
+							return
+						}
+						var metaPtr *metav1.ObjectMeta
+						if !newLazy.Wire().HasEqualNonManagedMeta(oldLazy.Wire()) {
+							var newMeta, oldMeta metav1.ObjectMeta
+							newLazy.ExtractObjectMetaForUpdate(&newMeta, false)
+							oldLazy.BorrowObjectMetaInto(&oldMeta, true)
+							metav1.ResetObjectMetaForStatus(&newMeta, &oldMeta)
+							podutil.DropInitContainerAnnotations(newMeta.Annotations)
+							metaPtr = &newMeta
+						}
+						if err := newLazy.ReplaceMetaAndSpliceSpecOntoOld(metaPtr, &mergedSpec, lazypod.SpecTagMaskContainers, oldLazy); err == nil {
+							if !apiequality.Semantic.DeepEqual(mergedSpec, oldSubSpec) {
+								newLazy.SetGeneration(newLazy.GetGeneration() + 1)
+							}
+							return
+						}
+					}
+				}
+			}
+		}
+	}
 	newPod := ensureDecodedPod(obj)
 	oldPod := ensureDecodedPod(old)
 
@@ -852,11 +1137,171 @@ func (podResizeStrategy) PrepareForUpdate(ctx context.Context, obj, old runtime.
 }
 
 func (podResizeStrategy) ValidateUpdate(ctx context.Context, obj, old runtime.Object) field.ErrorList {
+	if newLazy, ok1 := obj.(*lazypod.Pod); ok1 && newLazy.IsLazy() {
+		if oldLazy, ok2 := old.(*lazypod.Pod); ok2 && oldLazy.IsLazy() {
+			if specDiffMask, diffOK := newLazy.DiffSpecTagMask(oldLazy); diffOK &&
+				(specDiffMask&^lazypod.SpecTagMaskContainers) == 0 &&
+				!oldLazy.Wire().HasSpecResources() && !newLazy.Wire().HasSpecResources() &&
+				validateFastPodResize(newLazy, oldLazy) {
+				return nil
+			}
+		}
+	}
 	newPod := ensureDecodedPod(obj)
 	oldPod := ensureDecodedPod(old)
 	opts := corevalidation.GetValidationOptionsFromPodSpecAndMeta(&newPod.Spec, &oldPod.Spec, &newPod.ObjectMeta, &oldPod.ObjectMeta)
 	opts.ResourceIsPod = true
 	return corevalidation.ValidatePodResize(newPod, oldPod, opts)
+}
+
+func hasMatchingContainerOrder(newCtrs, oldCtrs []api.Container) bool {
+	if len(newCtrs) != len(oldCtrs) {
+		return false
+	}
+	for i := range oldCtrs {
+		if newCtrs[i].Name != oldCtrs[i].Name {
+			return false
+		}
+	}
+	return true
+}
+
+func resizeResourcesRemoved(newList, oldList api.ResourceList) bool {
+	if len(oldList) > len(newList) {
+		return true
+	}
+	for name := range oldList {
+		if _, ok := newList[name]; !ok {
+			return true
+		}
+	}
+	return false
+}
+
+func maskContainerCPUMemoryResources(ctr, oldCtr *api.Container) api.Container {
+	masked := *ctr
+	var lim, req api.ResourceList
+	if ctr.Resources.Limits != nil || oldCtr.Resources.Limits != nil {
+		lim = ctr.Resources.Limits.DeepCopy()
+		if lim == nil {
+			lim = make(api.ResourceList)
+		}
+		delete(lim, api.ResourceCPU)
+		delete(lim, api.ResourceMemory)
+		if v, ok := oldCtr.Resources.Limits[api.ResourceCPU]; ok {
+			lim[api.ResourceCPU] = v
+		}
+		if v, ok := oldCtr.Resources.Limits[api.ResourceMemory]; ok {
+			lim[api.ResourceMemory] = v
+		}
+	}
+	if ctr.Resources.Requests != nil || oldCtr.Resources.Requests != nil {
+		req = ctr.Resources.Requests.DeepCopy()
+		if req == nil {
+			req = make(api.ResourceList)
+		}
+		delete(req, api.ResourceCPU)
+		delete(req, api.ResourceMemory)
+		if v, ok := oldCtr.Resources.Requests[api.ResourceCPU]; ok {
+			req[api.ResourceCPU] = v
+		}
+		if v, ok := oldCtr.Resources.Requests[api.ResourceMemory]; ok {
+			req[api.ResourceMemory] = v
+		}
+	}
+	masked.Resources = api.ResourceRequirements{Limits: lim, Requests: req, Claims: ctr.Resources.Claims}
+	return masked
+}
+
+func validateFastPodResize(newLazy, oldLazy *lazypod.Pod) bool {
+	var newMeta, oldMeta metav1.ObjectMeta
+	newLazy.BorrowObjectMetaInto(&newMeta, false)
+	oldLazy.BorrowObjectMetaInto(&oldMeta, true)
+	if _, isMirror := oldMeta.Annotations[api.MirrorPodAnnotationKey]; isMirror {
+		return false
+	}
+	if newMeta.Annotations[api.TolerationsAnnotationKey] != "" || hasDeprecatedAppArmorContainerAnnotation(newMeta.Annotations) {
+		return false
+	}
+	if podOS := oldLazy.Wire().SpecOS(); podOS != nil && podOS.Name != api.Linux {
+		return false
+	}
+	fldPath := field.NewPath("metadata")
+	if len(corevalidation.ValidateObjectMetaUpdate(&newMeta, &oldMeta, fldPath)) > 0 {
+		return false
+	}
+	if len(corevalidation.ValidateObjectMeta(&newMeta, true, corevalidation.ValidatePodName, fldPath)) > 0 {
+		return false
+	}
+	var newSubSpec, oldSubSpec api.PodSpec
+	if err := newLazy.Wire().ExtractCoreSpecSubtreeInto(lazypod.SpecTagMaskContainers, &newSubSpec); err != nil {
+		return false
+	}
+	if err := oldLazy.Wire().ExtractCoreSpecSubtreeInto(lazypod.SpecTagMaskContainers, &oldSubSpec); err != nil {
+		return false
+	}
+	if len(newSubSpec.Containers) == 0 ||
+		!hasMatchingContainerOrder(newSubSpec.Containers, oldSubSpec.Containers) ||
+		!hasMatchingContainerOrder(newSubSpec.InitContainers, oldSubSpec.InitContainers) {
+		return false
+	}
+	oldQOS := oldLazy.Wire().StatusQOSClass()
+	if oldQOS == "" {
+		oldQOS = qos.ComputePodQOS(&api.Pod{Spec: oldSubSpec})
+	}
+	if oldQOS != qos.ComputePodQOS(&api.Pod{Spec: newSubSpec}) {
+		return false
+	}
+	opts := corevalidation.GetValidationOptionsFromPodSpecAndMeta(&newSubSpec, &oldSubSpec, &newMeta, &oldMeta)
+	opts.ResourceIsPod = true
+	specPath := field.NewPath("spec")
+	for i := range newSubSpec.Containers {
+		newCtr, oldCtr := &newSubSpec.Containers[i], &oldSubSpec.Containers[i]
+		if apiequality.Semantic.DeepEqual(*newCtr, *oldCtr) {
+			continue
+		}
+		if len(newCtr.Resources.Claims) > 0 ||
+			resizeResourcesRemoved(newCtr.Resources.Requests, oldCtr.Resources.Requests) ||
+			resizeResourcesRemoved(newCtr.Resources.Limits, oldCtr.Resources.Limits) {
+			return false
+		}
+		if len(corevalidation.ValidateContainerResourceRequirements(&newCtr.Resources, nil, specPath.Child("containers").Index(i).Child("resources"), opts)) > 0 {
+			return false
+		}
+		if !apiequality.Semantic.DeepEqual(maskContainerCPUMemoryResources(newCtr, oldCtr), *oldCtr) {
+			return false
+		}
+	}
+	allowInitResize := utilfeature.DefaultFeatureGate.Enabled(features.InPlacePodVerticalScalingInitContainers)
+	for i := range newSubSpec.InitContainers {
+		newCtr, oldCtr := &newSubSpec.InitContainers[i], &oldSubSpec.InitContainers[i]
+		if apiequality.Semantic.DeepEqual(*newCtr, *oldCtr) {
+			continue
+		}
+		isSidecar := podutil.IsRestartableInitContainer(newCtr)
+		if !isSidecar && !allowInitResize {
+			return false
+		}
+		if !isSidecar {
+			for _, rp := range newCtr.ResizePolicy {
+				if rp.RestartPolicy == api.RestartContainer {
+					return false
+				}
+			}
+		}
+		if len(newCtr.Resources.Claims) > 0 ||
+			resizeResourcesRemoved(newCtr.Resources.Requests, oldCtr.Resources.Requests) ||
+			resizeResourcesRemoved(newCtr.Resources.Limits, oldCtr.Resources.Limits) {
+			return false
+		}
+		if len(corevalidation.ValidateContainerResourceRequirements(&newCtr.Resources, nil, specPath.Child("initContainers").Index(i).Child("resources"), opts)) > 0 {
+			return false
+		}
+		if !apiequality.Semantic.DeepEqual(maskContainerCPUMemoryResources(newCtr, oldCtr), *oldCtr) {
+			return false
+		}
+	}
+	return true
 }
 
 // WarningsOnUpdate returns warnings for the given update.

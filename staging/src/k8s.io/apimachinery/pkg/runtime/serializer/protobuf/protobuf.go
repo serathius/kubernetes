@@ -113,6 +113,16 @@ const serializerIdentifier runtime.Identifier = "protobuf"
 // not fully qualified with kind/version/group, the type of the into will be used to alter the returned gvk. On success or most
 // errors, the method will return the calculated schema kind.
 func (s *Serializer) Decode(originalData []byte, gvk *schema.GroupVersionKind, into runtime.Object) (runtime.Object, *schema.GroupVersionKind, error) {
+	return s.decode(originalData, gvk, into, false, false)
+}
+
+// DecodeOwned implements runtime.OwnedPayloadDecoder, allowing lazy wire-backed
+// objects to reference originalData directly without allocating a payload copy.
+func (s *Serializer) DecodeOwned(originalData []byte, gvk *schema.GroupVersionKind, into runtime.Object, fromStorage bool) (runtime.Object, *schema.GroupVersionKind, error) {
+	return s.decode(originalData, gvk, into, true, fromStorage)
+}
+
+func (s *Serializer) decode(originalData []byte, gvk *schema.GroupVersionKind, into runtime.Object, ownedPayload, fromStorage bool) (runtime.Object, *schema.GroupVersionKind, error) {
 	prefixLen := len(s.prefix)
 	switch {
 	case len(originalData) == 0:
@@ -154,6 +164,18 @@ func (s *Serializer) Decode(originalData []byte, gvk *schema.GroupVersionKind, i
 			}
 			// top-level unmarshal resets before delegating unmarshaling to the object
 			unmarshaler.Reset()
+			if ownedPayload {
+				if osu, ok := into.(ownedStorageUnmarshaler); ok {
+					var storageEnv []byte
+					if fromStorage {
+						storageEnv = originalData
+					}
+					if err := osu.UnmarshalOwnedStorage(storageEnv, unk.Raw); err != nil {
+						return nil, &actual, err
+					}
+					return into, &actual, nil
+				}
+			}
 			if err := unmarshaler.Unmarshal(unk.Raw); err != nil {
 				return nil, &actual, err
 			}
@@ -178,7 +200,67 @@ func (s *Serializer) Decode(originalData []byte, gvk *schema.GroupVersionKind, i
 		return nil, &actual, runtime.NewMissingVersionErr(fmt.Sprintf("%#v", unk.TypeMeta))
 	}
 
-	return unmarshalToObject(s.typer, s.creater, &actual, into, unk.Raw)
+	var storageEnv []byte
+	if fromStorage {
+		storageEnv = originalData
+	}
+	return unmarshalToObject(s.typer, s.creater, &actual, into, storageEnv, unk.Raw, ownedPayload)
+}
+
+// EncodeToSlice serializes obj directly into a single newly allocated []byte slice without
+// intermediate bytes.Buffer or AllocatorPool copies.
+func (s *Serializer) EncodeToSlice(obj runtime.Object) ([]byte, error) {
+	if _, ok := obj.(runtime.CacheableObject); ok {
+		var buf bytes.Buffer
+		if err := s.Encode(obj, &buf); err != nil {
+			return nil, err
+		}
+		return buf.Bytes(), nil
+	}
+	if s.options.StreamingCollectionsEncoding {
+		if _, err := getStreamingListData(obj); err == nil {
+			var buf bytes.Buffer
+			if err := s.Encode(obj, &buf); err != nil {
+				return nil, err
+			}
+			return buf.Bytes(), nil
+		}
+	}
+	prefixSize := uint64(len(s.prefix))
+	switch t := obj.(type) {
+	case *runtime.Unknown:
+		estimatedSize := prefixSize + uint64(t.Size())
+		data := make([]byte, estimatedSize)
+		i, err := t.MarshalTo(data[prefixSize:])
+		if err != nil {
+			return nil, err
+		}
+		copy(data, s.prefix)
+		return data[:prefixSize+uint64(i)], nil
+	case bufferedMarshaller:
+		kind := obj.GetObjectKind().GroupVersionKind()
+		unk := runtime.Unknown{
+			TypeMeta: runtime.TypeMeta{
+				Kind:       kind.Kind,
+				APIVersion: kind.GroupVersion().String(),
+			},
+		}
+		encodedSize := uint64(t.Size())
+		estimatedSize := prefixSize + estimateUnknownSize(&unk, encodedSize)
+		data := make([]byte, estimatedSize)
+		i, err := unk.NestedMarshalTo(data[prefixSize:], t, encodedSize)
+		if err != nil {
+			return nil, err
+		}
+		copy(data, s.prefix)
+		return data[:prefixSize+uint64(i)], nil
+	default:
+		var buf bytes.Buffer
+		if err := s.Encode(obj, &buf); err != nil {
+			return nil, err
+		}
+		return buf.Bytes(), nil
+	}
 }
 
 // EncodeWithAllocator writes an object to the provided writer.
@@ -189,7 +271,9 @@ func (s *Serializer) EncodeWithAllocator(obj runtime.Object, w io.Writer, memAll
 
 // Encode serializes the provided object to the given writer.
 func (s *Serializer) Encode(obj runtime.Object, w io.Writer) error {
-	return s.encode(obj, w, &runtime.SimpleAllocator{})
+	memAlloc := runtime.AllocatorPool.Get().(*runtime.Allocator)
+	defer runtime.PutAllocator(memAlloc)
+	return s.encode(obj, w, memAlloc)
 }
 
 func (s *Serializer) encode(obj runtime.Object, w io.Writer, memAlloc runtime.MemoryAllocator) error {
@@ -424,11 +508,15 @@ func (s *RawSerializer) Decode(originalData []byte, gvk *schema.GroupVersionKind
 		return nil, actual, runtime.NewMissingVersionErr("<protobuf encoded body - must provide default type>")
 	}
 
-	return unmarshalToObject(s.typer, s.creater, actual, into, data)
+	return unmarshalToObject(s.typer, s.creater, actual, into, nil, data, false)
+}
+
+type ownedStorageUnmarshaler interface {
+	UnmarshalOwnedStorage(storageData, rawPayload []byte) error
 }
 
 // unmarshalToObject is the common code between decode in the raw and normal serializer.
-func unmarshalToObject(typer runtime.ObjectTyper, creater runtime.ObjectCreater, actual *schema.GroupVersionKind, into runtime.Object, data []byte) (runtime.Object, *schema.GroupVersionKind, error) {
+func unmarshalToObject(typer runtime.ObjectTyper, creater runtime.ObjectCreater, actual *schema.GroupVersionKind, into runtime.Object, originalData, data []byte, ownedStorage bool) (runtime.Object, *schema.GroupVersionKind, error) {
 	// use the target if necessary
 	obj, err := runtime.UseOrCreateObject(typer, creater, *actual, into)
 	if err != nil {
@@ -441,6 +529,17 @@ func unmarshalToObject(typer runtime.ObjectTyper, creater runtime.ObjectCreater,
 	}
 	// top-level unmarshal resets before delegating unmarshaling to the object
 	unmarshaler.Reset()
+	if ownedStorage {
+		if osu, ok := obj.(ownedStorageUnmarshaler); ok {
+			if err := osu.UnmarshalOwnedStorage(originalData, data); err != nil {
+				return nil, actual, err
+			}
+			if actual != nil {
+				obj.GetObjectKind().SetGroupVersionKind(*actual)
+			}
+			return obj, actual, nil
+		}
+	}
 	if err := unmarshaler.Unmarshal(data); err != nil {
 		return nil, actual, err
 	}
@@ -452,7 +551,9 @@ func unmarshalToObject(typer runtime.ObjectTyper, creater runtime.ObjectCreater,
 
 // Encode serializes the provided object to the given writer. Overrides is ignored.
 func (s *RawSerializer) Encode(obj runtime.Object, w io.Writer) error {
-	return s.encode(obj, w, &runtime.SimpleAllocator{})
+	memAlloc := runtime.AllocatorPool.Get().(*runtime.Allocator)
+	defer runtime.PutAllocator(memAlloc)
+	return s.encode(obj, w, memAlloc)
 }
 
 // EncodeWithAllocator writes an object to the provided writer.

@@ -931,7 +931,7 @@ func decodeObj(codec runtime.Codec, versioner storage.Versioner, data []byte, re
 	if newFunc != nil {
 		into = newFunc()
 	}
-	obj, _, err := codec.Decode(data, nil, into)
+	obj, err := runtime.DecodeOwnedStorage(codec, data, into)
 	if err != nil {
 		if fatalOnDecodeError.Load() {
 			// we are running in a test environment and thus an

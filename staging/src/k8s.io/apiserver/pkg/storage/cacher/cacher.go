@@ -1152,6 +1152,9 @@ func (c *Cacher) dispatchEvent(event *watchCacheEvent) {
 	// Since add() can block, we explicitly add when cacher is unlocked.
 	// Dispatching event in nonblocking way first, which make faster watchers
 	// not be blocked by slower ones.
+	if len(c.watchersBuffer) == 0 {
+		return
+	}
 	if event.Type == watch.Bookmark {
 		for _, watcher := range c.watchersBuffer {
 			watcher.nonblockingAdd(event)

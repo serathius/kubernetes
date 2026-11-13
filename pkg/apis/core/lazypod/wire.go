@@ -19,10 +19,12 @@ package lazypod
 import (
 	"bytes"
 	"fmt"
+	"maps"
 	"math/bits"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"unsafe"
 
 	"google.golang.org/protobuf/encoding/protowire"
@@ -30,6 +32,7 @@ import (
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/serializer/protobuf/lazy"
+	"k8s.io/apimachinery/pkg/types"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/kubernetes/pkg/apis/core"
 	corev1 "k8s.io/kubernetes/pkg/apis/core/v1"
@@ -87,11 +90,24 @@ const (
 	specFieldEvictionResponders            = 44
 
 	// Exported PodSpec tag bitmasks for scoped update validation.
+	SpecTagMaskVolumes               = uint64(1) << specFieldVolumes
+	SpecTagMaskContainers            = (uint64(1) << specFieldContainers) | (uint64(1) << specFieldInitContainers)
+	SpecTagMaskEphemeralContainers   = uint64(1) << specFieldEphemeralContainers
+	SpecTagMaskResources             = uint64(1) << specFieldResources
+	SpecTagMaskResize                = SpecTagMaskContainers | SpecTagMaskResources
 	SpecTagMaskActiveDeadlineSeconds = uint64(1) << specFieldActiveDeadlineSeconds
 	SpecTagMaskTolerations           = uint64(1) << specFieldTolerations
 	SpecTagMaskSchedulingGates       = uint64(1) << specFieldSchedulingGates
 	SpecTagMaskFastMutable           = SpecTagMaskActiveDeadlineSeconds | SpecTagMaskTolerations | SpecTagMaskSchedulingGates
-	SpecTagMaskContainersAndVolumes  = (uint64(1) << specFieldVolumes) | (uint64(1) << specFieldContainers) | (uint64(1) << specFieldInitContainers) | (uint64(1) << specFieldResources)
+	SpecTagMaskContainersAndVolumes  = SpecTagMaskVolumes | SpecTagMaskContainers | SpecTagMaskResources
+	SpecTagMaskDeclarativeValidated  = (uint64(1) << specFieldContainers) |
+		(uint64(1) << specFieldActiveDeadlineSeconds) |
+		(uint64(1) << specFieldSecurityContext) |
+		(uint64(1) << specFieldInitContainers) |
+		(uint64(1) << specFieldTolerations) |
+		(uint64(1) << specFieldEphemeralContainers) |
+		(uint64(1) << specFieldSchedulingGroup) |
+		(uint64(1) << specFieldEvictionResponders)
 
 	statusFieldPhase                                = 1
 	statusFieldConditions                           = 2
@@ -238,8 +254,10 @@ const (
 //
 // +k8s:deepcopy-gen=false
 type WirePod struct {
-	raw  []byte
-	meta lazy.WireObjectMeta
+	storageRaw []byte
+	raw        []byte
+	split      bool
+	meta       lazy.WireObjectMeta
 
 	specBytes   []byte
 	statusBytes []byte
@@ -251,15 +269,21 @@ type WirePod struct {
 
 	hasConditionsMod    bool
 	nonManagedMetaDirty bool
-	cachedMetaOwned     bool
 	hasCachedManaged    bool
 	statusEmptySlices   uint8
+	cachedMetaOwned     uint32
 	conditionsEncoded   []byte
+	sharedMeta          *atomic.Pointer[metav1.ObjectMeta]
 	cachedMeta          *metav1.ObjectMeta
 	cachedManagedFields []metav1.ManagedFieldsEntry
 	cachedStatus        *v1.PodStatus
 
 	defaults *wireDefaultPlan
+}
+
+type wirePodWithSharedMeta struct {
+	pod        WirePod
+	sharedMeta atomic.Pointer[metav1.ObjectMeta]
 }
 
 const (
@@ -297,7 +321,17 @@ func scanPodTopLevel(raw []byte) (metaBytes, specBytes, statusBytes []byte) {
 
 // NewWirePod creates a WirePod over raw v1.Pod Protobuf bytes (without the k8s\x00 magic prefix).
 func NewWirePod(raw []byte) *WirePod {
-	w := &WirePod{raw: raw}
+	return NewWirePodFromOwnedStorage(nil, raw)
+}
+
+// NewWirePodFromOwnedStorage creates a WirePod backed by an immutable storage envelope slice
+// storageRaw (k8s\x00 + Unknown + V1Pod) and its inner V1Pod sub-slice raw without copying.
+func NewWirePodFromOwnedStorage(storageRaw, raw []byte) *WirePod {
+	alloc := &wirePodWithSharedMeta{}
+	w := &alloc.pod
+	w.storageRaw = storageRaw
+	w.raw = raw
+	w.sharedMeta = &alloc.sharedMeta
 	metaBytes, specBytes, statusBytes := scanPodTopLevel(raw)
 	w.specBytes = specBytes
 	w.statusBytes = statusBytes
@@ -313,7 +347,9 @@ func (w *WirePod) Clone() *WirePod {
 		return nil
 	}
 	cp := &WirePod{
+		storageRaw:          w.storageRaw,
 		raw:                 w.raw,
+		split:               w.split,
 		meta:                w.meta.Clone(),
 		specBytes:           w.specBytes,
 		statusBytes:         w.statusBytes,
@@ -323,8 +359,8 @@ func (w *WirePod) Clone() *WirePod {
 		hasNominatedNodeMod: w.hasNominatedNodeMod,
 		hasConditionsMod:    w.hasConditionsMod,
 		nonManagedMetaDirty: w.nonManagedMetaDirty,
-		cachedMetaOwned:     false,
 		statusEmptySlices:   w.statusEmptySlices,
+		sharedMeta:          w.sharedMeta,
 		cachedMeta:          w.cachedMeta,
 		cachedStatus:        w.cachedStatus,
 		defaults:            w.defaults.clone(),
@@ -341,13 +377,38 @@ func (w *WirePod) Clone() *WirePod {
 
 // Reset clears the WirePod and reinitializes it over raw.
 func (w *WirePod) Reset(raw []byte) {
+	w.ResetFromOwnedStorage(nil, raw)
+}
+
+// ResetFromOwnedStorage reinitializes w over storageRaw and its inner V1Pod sub-slice raw.
+func (w *WirePod) ResetFromOwnedStorage(storageRaw, raw []byte) {
 	metaBytes, specBytes, statusBytes := scanPodTopLevel(raw)
 	*w = WirePod{
+		storageRaw:  storageRaw,
 		raw:         raw,
 		specBytes:   specBytes,
 		statusBytes: statusBytes,
+		sharedMeta:  new(atomic.Pointer[metav1.ObjectMeta]),
 	}
 	w.meta.InitFromParentWithBytes(raw, metaBytes, podFieldMetadata)
+}
+
+// RawStorageBytes returns the exact outer storage-encoded envelope bytes when w came from
+// storage without any pending non-ResourceVersion mutations or wire defaults.
+func (w *WirePod) RawStorageBytes() ([]byte, bool) {
+	if w == nil || len(w.storageRaw) == 0 || w.split || w.nonManagedMetaDirty {
+		return nil, false
+	}
+	if !w.meta.HasOnlyResourceVersionDirty() {
+		return nil, false
+	}
+	if w.defaults != nil && (w.defaults.specDirty || w.defaults.statusDirty) {
+		return nil, false
+	}
+	if w.hasNodeNameMod || w.hasNominatedNodeMod || w.hasConditionsMod {
+		return nil, false
+	}
+	return w.storageRaw, true
 }
 
 func (w *WirePod) subMessage(topField protowire.Number) []byte {
@@ -357,6 +418,9 @@ func (w *WirePod) subMessage(topField protowire.Number) []byte {
 	case podFieldStatus:
 		return w.statusBytes
 	default:
+		if w.split {
+			return nil
+		}
 		return lazy.SubMessage(w.raw, topField)
 	}
 }
@@ -2687,14 +2751,29 @@ func (d *wireVolumeDefaulter) SetProjectedDefaultMode(m int32) {
 // Wire Splicing for Spec & Status Defaulting + Mutations
 // ============================================================================
 
+func (w *WirePod) baseRaw() []byte {
+	if !w.split {
+		return w.raw
+	}
+	metaBytes := w.meta.Bytes()
+	raw := make([]byte, 0, len(metaBytes)+len(w.specBytes)+len(w.statusBytes)+18)
+	raw = protowire.AppendTag(raw, podFieldMetadata, protowire.BytesType)
+	raw = protowire.AppendBytes(raw, metaBytes)
+	raw = protowire.AppendTag(raw, podFieldSpec, protowire.BytesType)
+	raw = protowire.AppendBytes(raw, w.specBytes)
+	raw = protowire.AppendTag(raw, podFieldStatus, protowire.BytesType)
+	raw = protowire.AppendBytes(raw, w.statusBytes)
+	return raw
+}
+
 func (w *WirePod) effectiveRaw() []byte {
 	hasSpecDef := w.defaults != nil && w.defaults.specDirty
 	hasStatDef := w.defaults != nil && w.defaults.statusDirty
 	if !hasSpecDef && !hasStatDef && !w.hasNodeNameMod && !w.hasNominatedNodeMod && !w.hasConditionsMod {
-		return w.raw
+		return w.baseRaw()
 	}
 
-	b := w.raw
+	b := w.baseRaw()
 	out := make([]byte, 0, len(b)+128)
 
 	needSpec := hasSpecDef || w.hasNodeNameMod
@@ -3504,6 +3583,13 @@ func (w *WirePod) SerializedSize() int {
 	if w == nil {
 		return 0
 	}
+	if w.split {
+		specBytes := w.EffectiveSubMessage(podFieldSpec)
+		statusBytes := w.EffectiveSubMessage(podFieldStatus)
+		return w.meta.StandaloneFieldSize() +
+			1 + protowire.SizeBytes(len(specBytes)) +
+			1 + protowire.SizeBytes(len(statusBytes))
+	}
 	return w.meta.SerializedSize(w.effectiveRaw())
 }
 
@@ -3513,6 +3599,20 @@ func (w *WirePod) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	if w == nil {
 		return 0, nil
 	}
+	if w.split {
+		specBytes := w.EffectiveSubMessage(podFieldSpec)
+		statusBytes := w.EffectiveSubMessage(podFieldStatus)
+		totalSize := w.meta.StandaloneFieldSize() +
+			1 + protowire.SizeBytes(len(specBytes)) +
+			1 + protowire.SizeBytes(len(statusBytes))
+		dst := dAtA[len(dAtA)-totalSize : len(dAtA)-totalSize]
+		dst = w.meta.AppendStandaloneField(dst)
+		dst = protowire.AppendTag(dst, podFieldSpec, protowire.BytesType)
+		dst = protowire.AppendBytes(dst, specBytes)
+		dst = protowire.AppendTag(dst, podFieldStatus, protowire.BytesType)
+		dst = protowire.AppendBytes(dst, statusBytes)
+		return totalSize, nil
+	}
 	return w.meta.MarshalToSizedBuffer(dAtA, w.effectiveRaw())
 }
 
@@ -3521,13 +3621,32 @@ func (w *WirePod) Bytes() []byte {
 	if w == nil {
 		return nil
 	}
-	raw := w.effectiveRaw()
-	if !w.meta.IsDirty() {
-		return raw
+	if !w.split {
+		raw := w.effectiveRaw()
+		if !w.meta.IsDirty() {
+			return raw
+		}
 	}
-	buf := make([]byte, w.meta.SerializedSize(raw))
-	_, _ = w.meta.MarshalToSizedBuffer(buf, raw)
+	buf := make([]byte, w.SerializedSize())
+	_, _ = w.MarshalToSizedBuffer(buf)
 	return buf
+}
+
+// WireBytesEqual reports whether w and other produce identical serialized wire bytes without concatenating split buffers.
+func (w *WirePod) WireBytesEqual(other *WirePod) bool {
+	if w == nil || other == nil {
+		return w == other
+	}
+	if w.statusEmptySlices != other.statusEmptySlices {
+		return false
+	}
+	if !bytes.Equal(w.EffectiveSubMessage(podFieldSpec), other.EffectiveSubMessage(podFieldSpec)) {
+		return false
+	}
+	if !bytes.Equal(w.EffectiveSubMessage(podFieldStatus), other.EffectiveSubMessage(podFieldStatus)) {
+		return false
+	}
+	return bytes.Equal(w.EffectiveSubMessage(podFieldMetadata), other.EffectiveSubMessage(podFieldMetadata))
 }
 
 // DecodeToV1Pod unmarshals the wire bytes into a *v1.Pod, applying any pending ObjectMeta mutations.
@@ -3565,20 +3684,176 @@ func (w *WirePod) MarkNonManagedMetaDirty() {
 	if w != nil {
 		w.nonManagedMetaDirty = true
 		w.cachedMeta = nil
-		w.cachedMetaOwned = false
+		atomic.StoreUint32(&w.cachedMetaOwned, 0)
 	}
+}
+
+func (w *WirePod) mutateCachedMeta(fn func(*metav1.ObjectMeta)) {
+	if w == nil {
+		return
+	}
+	cm := w.cachedMeta
+	if cm == nil && !w.nonManagedMetaDirty && w.sharedMeta != nil {
+		cm = w.sharedMeta.Load()
+	}
+	w.nonManagedMetaDirty = true
+	if cm == nil {
+		return
+	}
+	if w.cachedMeta != nil && atomic.LoadUint32(&w.cachedMetaOwned) != 0 {
+		fn(w.cachedMeta)
+		return
+	}
+	cp := *cm
+	cp.ResourceVersion = w.meta.GetResourceVersion()
+	cp.Generation = w.meta.GetGeneration()
+	fn(&cp)
+	w.cachedMeta = &cp
+	atomic.StoreUint32(&w.cachedMetaOwned, 0)
+}
+
+// SetNamespace updates metadata.namespace on w without wiping cached ObjectMeta.
+func (w *WirePod) SetNamespace(namespace string) {
+	if w == nil {
+		return
+	}
+	w.meta.SetNamespace(namespace)
+	w.mutateCachedMeta(func(cm *metav1.ObjectMeta) { cm.Namespace = namespace })
+}
+
+// SetName updates metadata.name on w without wiping cached ObjectMeta.
+func (w *WirePod) SetName(name string) {
+	if w == nil {
+		return
+	}
+	w.meta.SetName(name)
+	w.mutateCachedMeta(func(cm *metav1.ObjectMeta) { cm.Name = name })
+}
+
+// SetGenerateName updates metadata.generateName on w without wiping cached ObjectMeta.
+func (w *WirePod) SetGenerateName(name string) {
+	if w == nil {
+		return
+	}
+	w.meta.SetGenerateName(name)
+	w.mutateCachedMeta(func(cm *metav1.ObjectMeta) { cm.GenerateName = name })
+}
+
+// SetUID updates metadata.uid on w without wiping cached ObjectMeta.
+func (w *WirePod) SetUID(uid types.UID) {
+	if w == nil {
+		return
+	}
+	w.meta.SetUID(uid)
+	w.mutateCachedMeta(func(cm *metav1.ObjectMeta) { cm.UID = uid })
+}
+
+// SetSelfLink updates metadata.selfLink on w without wiping cached ObjectMeta.
+func (w *WirePod) SetSelfLink(selfLink string) {
+	if w == nil {
+		return
+	}
+	w.meta.SetSelfLink(selfLink)
+	w.mutateCachedMeta(func(cm *metav1.ObjectMeta) { cm.SelfLink = selfLink })
+}
+
+// SetCreationTimestamp updates metadata.creationTimestamp on w without wiping cached ObjectMeta.
+func (w *WirePod) SetCreationTimestamp(timestamp metav1.Time) {
+	if w == nil {
+		return
+	}
+	w.meta.SetCreationTimestamp(timestamp)
+	w.mutateCachedMeta(func(cm *metav1.ObjectMeta) { cm.CreationTimestamp = timestamp })
+}
+
+// SetDeletionTimestamp updates metadata.deletionTimestamp on w without wiping cached ObjectMeta.
+func (w *WirePod) SetDeletionTimestamp(timestamp *metav1.Time) {
+	if w == nil {
+		return
+	}
+	w.meta.SetDeletionTimestamp(timestamp)
+	w.mutateCachedMeta(func(cm *metav1.ObjectMeta) {
+		if timestamp == nil {
+			cm.DeletionTimestamp = nil
+		} else {
+			ts := *timestamp
+			cm.DeletionTimestamp = &ts
+		}
+	})
+}
+
+// SetDeletionGracePeriodSeconds updates metadata.deletionGracePeriodSeconds on w without wiping cached ObjectMeta.
+func (w *WirePod) SetDeletionGracePeriodSeconds(gracePeriodSeconds *int64) {
+	if w == nil {
+		return
+	}
+	w.meta.SetDeletionGracePeriodSeconds(gracePeriodSeconds)
+	w.mutateCachedMeta(func(cm *metav1.ObjectMeta) {
+		if gracePeriodSeconds == nil {
+			cm.DeletionGracePeriodSeconds = nil
+		} else {
+			gp := *gracePeriodSeconds
+			cm.DeletionGracePeriodSeconds = &gp
+		}
+	})
+}
+
+// SetLabels updates metadata.labels on w without wiping cached ObjectMeta.
+func (w *WirePod) SetLabels(labels map[string]string) {
+	if w == nil {
+		return
+	}
+	w.meta.SetLabels(labels)
+	w.mutateCachedMeta(func(cm *metav1.ObjectMeta) { cm.Labels = maps.Clone(labels) })
+}
+
+// SetAnnotations updates metadata.annotations on w without wiping cached ObjectMeta.
+func (w *WirePod) SetAnnotations(annotations map[string]string) {
+	if w == nil {
+		return
+	}
+	w.meta.SetAnnotations(annotations)
+	w.mutateCachedMeta(func(cm *metav1.ObjectMeta) { cm.Annotations = maps.Clone(annotations) })
+}
+
+// SetFinalizers updates metadata.finalizers on w without wiping cached ObjectMeta.
+func (w *WirePod) SetFinalizers(finalizers []string) {
+	if w == nil {
+		return
+	}
+	w.meta.SetFinalizers(finalizers)
+	w.mutateCachedMeta(func(cm *metav1.ObjectMeta) { cm.Finalizers = slices.Clone(finalizers) })
+}
+
+// SetOwnerReferences updates metadata.ownerReferences on w without wiping cached ObjectMeta.
+func (w *WirePod) SetOwnerReferences(references []metav1.OwnerReference) {
+	if w == nil {
+		return
+	}
+	w.meta.SetOwnerReferences(references)
+	w.mutateCachedMeta(func(cm *metav1.ObjectMeta) {
+		if references == nil {
+			cm.OwnerReferences = nil
+			return
+		}
+		cp := make([]metav1.OwnerReference, len(references))
+		for i := range references {
+			references[i].DeepCopyInto(&cp[i])
+		}
+		cm.OwnerReferences = cp
+	})
 }
 
 // DisownCachedMeta marks w.cachedMeta as shared so future map getters clone maps before returning.
 func (w *WirePod) DisownCachedMeta() {
-	if w != nil {
-		w.cachedMetaOwned = false
+	if w != nil && atomic.LoadUint32(&w.cachedMetaOwned) != 0 {
+		atomic.StoreUint32(&w.cachedMetaOwned, 0)
 	}
 }
 
 // IsCachedMetaOwned reports whether w exclusively owns w.cachedMeta.
 func (w *WirePod) IsCachedMetaOwned() bool {
-	return w != nil && !w.nonManagedMetaDirty && w.cachedMetaOwned && w.cachedMeta != nil
+	return w != nil && w.cachedMeta != nil && atomic.LoadUint32(&w.cachedMetaOwned) != 0
 }
 
 // SetResourceVersion updates metadata.resourceVersion without invalidating cached non-managed ObjectMeta.
@@ -3587,12 +3862,43 @@ func (w *WirePod) SetResourceVersion(rv string) {
 		return
 	}
 	w.meta.SetResourceVersion(rv)
-	if w.cachedMeta != nil && !w.nonManagedMetaDirty {
-		if w.cachedMetaOwned {
+	if w.cachedMeta != nil {
+		if atomic.LoadUint32(&w.cachedMetaOwned) != 0 {
 			w.cachedMeta.ResourceVersion = rv
 		} else {
 			cp := *w.cachedMeta
 			cp.ResourceVersion = rv
+			w.cachedMeta = &cp
+		}
+	} else if !w.nonManagedMetaDirty && w.sharedMeta != nil {
+		if sm := w.sharedMeta.Load(); sm != nil && sm.ResourceVersion != rv {
+			cp := *sm
+			cp.ResourceVersion = rv
+			cp.Generation = w.meta.GetGeneration()
+			w.cachedMeta = &cp
+		}
+	}
+}
+
+// SetGeneration updates metadata.generation without invalidating cached non-managed ObjectMeta.
+func (w *WirePod) SetGeneration(gen int64) {
+	if w == nil {
+		return
+	}
+	w.meta.SetGeneration(gen)
+	if w.cachedMeta != nil {
+		if atomic.LoadUint32(&w.cachedMetaOwned) != 0 {
+			w.cachedMeta.Generation = gen
+		} else {
+			cp := *w.cachedMeta
+			cp.Generation = gen
+			w.cachedMeta = &cp
+		}
+	} else if !w.nonManagedMetaDirty && w.sharedMeta != nil {
+		if sm := w.sharedMeta.Load(); sm != nil && sm.Generation != gen {
+			cp := *sm
+			cp.ResourceVersion = w.meta.GetResourceVersion()
+			cp.Generation = gen
 			w.cachedMeta = &cp
 		}
 	}
@@ -3624,47 +3930,139 @@ func (w *WirePod) SetManagedFields(mf []metav1.ManagedFieldsEntry) {
 	w.hasCachedManaged = true
 }
 
-// CachedObjectMeta returns w.cachedMeta when clean and populated.
+// CachedObjectMeta returns a populated ObjectMeta (excluding ManagedFields) with up-to-date
+// ResourceVersion and Generation.
 func (w *WirePod) CachedObjectMeta() (*metav1.ObjectMeta, bool) {
-	if w == nil || w.nonManagedMetaDirty || w.cachedMeta == nil {
+	if w == nil {
 		return nil, false
 	}
-	return w.cachedMeta, true
+	if w.cachedMeta != nil {
+		return w.cachedMeta, true
+	}
+	if !w.nonManagedMetaDirty && w.sharedMeta != nil {
+		if sm := w.sharedMeta.Load(); sm != nil &&
+			sm.ResourceVersion == w.meta.GetResourceVersion() &&
+			sm.Generation == w.meta.GetGeneration() {
+			return sm, true
+		}
+	}
+	return nil, false
+}
+
+func (w *WirePod) sharedOrCachedMeta() (*metav1.ObjectMeta, bool) {
+	if w == nil {
+		return nil, false
+	}
+	if w.cachedMeta != nil {
+		return w.cachedMeta, true
+	}
+	if !w.nonManagedMetaDirty && w.sharedMeta != nil {
+		if sm := w.sharedMeta.Load(); sm != nil {
+			return sm, true
+		}
+	}
+	return nil, false
 }
 
 // OwnedObjectMeta returns w.cachedMeta only when exclusively owned by w (not shared across clones).
 func (w *WirePod) OwnedObjectMeta() (*metav1.ObjectMeta, bool) {
-	if w == nil || w.nonManagedMetaDirty || !w.cachedMetaOwned || w.cachedMeta == nil {
+	if w == nil || w.cachedMeta == nil || atomic.LoadUint32(&w.cachedMetaOwned) == 0 {
 		return nil, false
 	}
 	return w.cachedMeta, true
 }
 
-// BorrowObjectMetaInto populates out without DeepCopying maps/slices when w has no pending non-managedFields overrides.
+func (w *WirePod) loadOrDecodeMeta(canCache bool) *metav1.ObjectMeta {
+	if w.cachedMeta != nil {
+		return w.cachedMeta
+	}
+	if !w.nonManagedMetaDirty {
+		if w.sharedMeta != nil {
+			if sm := w.sharedMeta.Load(); sm != nil {
+				return sm
+			}
+			var baseDecoded metav1.ObjectMeta
+			_ = baseDecoded.Unmarshal(lazy.TrimManagedFieldsWireBytes(w.meta.Bytes()))
+			if !w.sharedMeta.CompareAndSwap(nil, &baseDecoded) {
+				if sm := w.sharedMeta.Load(); sm != nil {
+					return sm
+				}
+			}
+			return &baseDecoded
+		}
+		var decoded metav1.ObjectMeta
+		w.meta.ExtractObjectMetaWithoutManagedFieldsInto(w.meta.Bytes(), &decoded)
+		if canCache {
+			w.cachedMeta = &decoded
+			atomic.StoreUint32(&w.cachedMetaOwned, 1)
+		}
+		return &decoded
+	}
+	var decoded metav1.ObjectMeta
+	w.meta.ExtractObjectMetaWithoutManagedFieldsInto(w.meta.Bytes(), &decoded)
+	if canCache {
+		w.cachedMeta = &decoded
+		atomic.StoreUint32(&w.cachedMetaOwned, 1)
+	}
+	return &decoded
+}
+
+// Labels returns metadata.labels, warming cached ObjectMeta when w was decoded from a request payload.
+func (w *WirePod) Labels(canCache, allowDirectMap bool) map[string]string {
+	if w == nil {
+		return nil
+	}
+	if cm, ok := w.sharedOrCachedMeta(); ok {
+		if allowDirectMap && w.IsCachedMetaOwned() {
+			return cm.Labels
+		}
+		return maps.Clone(cm.Labels)
+	}
+	if len(w.storageRaw) == 0 {
+		cm := w.loadOrDecodeMeta(canCache)
+		if allowDirectMap && w.IsCachedMetaOwned() {
+			return cm.Labels
+		}
+		return maps.Clone(cm.Labels)
+	}
+	return w.meta.GetLabels()
+}
+
+// Annotations returns metadata.annotations, warming shared/cached ObjectMeta so subsequent validation reuses it.
+func (w *WirePod) Annotations(canCache, allowDirectMap bool) map[string]string {
+	if w == nil {
+		return nil
+	}
+	cm, ok := w.sharedOrCachedMeta()
+	if !ok {
+		if !w.meta.HasAnnotationsOverride() && !lazy.HasField(w.meta.Bytes(), lazy.MetaFieldAnnotations) {
+			return nil
+		}
+		if len(w.storageRaw) > 0 && len(w.meta.Bytes()) < 1024 {
+			return w.meta.GetAnnotations()
+		}
+		cm = w.loadOrDecodeMeta(canCache)
+	}
+	if allowDirectMap && w.IsCachedMetaOwned() {
+		return cm.Annotations
+	}
+	return maps.Clone(cm.Annotations)
+}
+
+// BorrowObjectMetaInto populates out without DeepCopying maps/slices.
 func (w *WirePod) BorrowObjectMetaInto(out *metav1.ObjectMeta, dropManagedFields, canCache bool) {
 	if w == nil {
 		return
 	}
-	if !w.nonManagedMetaDirty {
-		ro := w.cachedMeta
-		if ro == nil {
-			var decoded metav1.ObjectMeta
-			w.meta.ExtractObjectMetaWithoutManagedFieldsInto(w.meta.Bytes(), &decoded)
-			if canCache {
-				w.cachedMeta = &decoded
-				w.cachedMetaOwned = true
-			}
-			ro = &decoded
-		}
-		*out = *ro
-		if dropManagedFields {
-			out.ManagedFields = nil
-		} else {
-			out.ManagedFields = w.ManagedFields(canCache)
-		}
-		return
+	ro := w.loadOrDecodeMeta(canCache)
+	*out = *ro
+	out.ResourceVersion = w.meta.GetResourceVersion()
+	out.Generation = w.meta.GetGeneration()
+	if dropManagedFields {
+		out.ManagedFields = nil
+	} else {
+		out.ManagedFields = w.ManagedFields(canCache)
 	}
-	w.ExtractObjectMetaForUpdate(out, dropManagedFields)
 }
 
 // HasLegacyInitContainerAnnotations reports whether metadata.annotations contains any removed v1.7 init-container keys without allocating.
@@ -3672,21 +4070,13 @@ func (w *WirePod) HasLegacyInitContainerAnnotations() bool {
 	if w == nil {
 		return false
 	}
-	if w.cachedMeta != nil && !w.nonManagedMetaDirty {
-		ann := w.cachedMeta.Annotations
-		if len(ann) == 0 {
-			return false
-		}
-		_, ok1 := ann["pod.beta.kubernetes.io/init-containers"]
-		_, ok2 := ann["pod.alpha.kubernetes.io/init-containers"]
-		_, ok3 := ann["pod.beta.kubernetes.io/init-container-statuses"]
-		_, ok4 := ann["pod.alpha.kubernetes.io/init-container-statuses"]
-		return ok1 || ok2 || ok3 || ok4
+	if cm, ok := w.sharedOrCachedMeta(); ok {
+		return hasLegacyInitContainerAnnotationKey(cm.Annotations)
+	}
+	if w.meta.HasAnnotationsOverride() {
+		return hasLegacyInitContainerAnnotationKey(w.meta.Annotations(nil))
 	}
 	metaBytes := w.meta.Bytes()
-	if w.nonManagedMetaDirty {
-		metaBytes = w.EffectiveSubMessage(podFieldMetadata)
-	}
 	offset := 0
 	for offset < len(metaBytes) {
 		num, typ, tagLen := protowire.ConsumeTag(metaBytes[offset:])
@@ -3711,6 +4101,17 @@ func (w *WirePod) HasLegacyInitContainerAnnotations() bool {
 		offset += valLen
 	}
 	return false
+}
+
+func hasLegacyInitContainerAnnotationKey(ann map[string]string) bool {
+	if len(ann) == 0 {
+		return false
+	}
+	_, ok1 := ann["pod.beta.kubernetes.io/init-containers"]
+	_, ok2 := ann["pod.alpha.kubernetes.io/init-containers"]
+	_, ok3 := ann["pod.beta.kubernetes.io/init-container-statuses"]
+	_, ok4 := ann["pod.alpha.kubernetes.io/init-container-statuses"]
+	return ok1 || ok2 || ok3 || ok4
 }
 
 // HasEqualOwnerReferences reports whether w and other have byte-identical metadata.ownerReferences without allocating.
@@ -3763,6 +4164,15 @@ func nextOwnerRefBytes(metaBytes []byte, offset int) ([]byte, int) {
 
 // ReplaceSubMessages builds a new WirePod replacing metadata and/or status when non-nil while keeping specBytes intact.
 func (w *WirePod) ReplaceSubMessages(meta *metav1.ObjectMeta, specBytes []byte, status *v1.PodStatus) (*WirePod, error) {
+	return w.replaceSubMessages(meta, false, specBytes, status)
+}
+
+// ReplaceSubMessagesOwned builds a new WirePod taking exclusive ownership of meta without DeepCopying it.
+func (w *WirePod) ReplaceSubMessagesOwned(meta *metav1.ObjectMeta, specBytes []byte, status *v1.PodStatus) (*WirePod, error) {
+	return w.replaceSubMessages(meta, true, specBytes, status)
+}
+
+func (w *WirePod) replaceSubMessages(meta *metav1.ObjectMeta, ownMeta bool, specBytes []byte, status *v1.PodStatus) (*WirePod, error) {
 	if status != nil {
 		var emptySlices uint8
 		if status.ResourceClaimStatuses != nil && len(status.ResourceClaimStatuses) == 0 {
@@ -3775,7 +4185,13 @@ func (w *WirePod) ReplaceSubMessages(meta *metav1.ObjectMeta, specBytes []byte, 
 		if err != nil {
 			return nil, err
 		}
-		return w.ReplaceSubMessagesWithStatusBytes(meta, specBytes, statusBytes, emptySlices, status.DeepCopy())
+		var cachedSt *v1.PodStatus
+		if ownMeta {
+			cachedSt = status
+		} else {
+			cachedSt = status.DeepCopy()
+		}
+		return w.replaceSubMessagesWithStatusBytes(meta, ownMeta, specBytes, statusBytes, emptySlices, cachedSt)
 	}
 	var statusBytes []byte
 	var emptySlices uint8
@@ -3787,47 +4203,59 @@ func (w *WirePod) ReplaceSubMessages(meta *metav1.ObjectMeta, specBytes []byte, 
 			cachedSt = w.cachedStatus
 		}
 	}
-	return w.ReplaceSubMessagesWithStatusBytes(meta, specBytes, statusBytes, emptySlices, cachedSt)
+	return w.replaceSubMessagesWithStatusBytes(meta, ownMeta, specBytes, statusBytes, emptySlices, cachedSt)
 }
 
 // ReplaceSubMessagesWithStatusBytes builds a new WirePod from pre-encoded specBytes and statusBytes.
 func (w *WirePod) ReplaceSubMessagesWithStatusBytes(meta *metav1.ObjectMeta, specBytes, statusBytes []byte, emptySlices uint8, fullCachedStatus *v1.PodStatus) (*WirePod, error) {
-	var metaBytes []byte
-	var cachedM *metav1.ObjectMeta
-	var cachedMOwned bool
-	var cachedMF []metav1.ManagedFieldsEntry
-	var hasCachedMF bool
-	var err error
+	return w.replaceSubMessagesWithStatusBytes(meta, false, specBytes, statusBytes, emptySlices, fullCachedStatus)
+}
+
+// ReplaceSubMessagesWithStatusBytesOwned builds a new WirePod taking exclusive ownership of meta without DeepCopying it.
+func (w *WirePod) ReplaceSubMessagesWithStatusBytesOwned(meta *metav1.ObjectMeta, specBytes, statusBytes []byte, emptySlices uint8, fullCachedStatus *v1.PodStatus) (*WirePod, error) {
+	return w.replaceSubMessagesWithStatusBytes(meta, true, specBytes, statusBytes, emptySlices, fullCachedStatus)
+}
+
+func (w *WirePod) replaceSubMessagesWithStatusBytes(meta *metav1.ObjectMeta, ownMeta bool, specBytes, statusBytes []byte, emptySlices uint8, fullCachedStatus *v1.PodStatus) (*WirePod, error) {
+	nw := &WirePod{
+		split:             true,
+		specBytes:         specBytes,
+		statusBytes:       statusBytes,
+		statusEmptySlices: emptySlices,
+		cachedStatus:      fullCachedStatus,
+	}
 	if meta != nil {
-		metaBytes, err = meta.Marshal()
+		mSize := meta.Size()
+		metaBytes := make([]byte, mSize)
+		n, err := meta.MarshalToSizedBuffer(metaBytes)
 		if err != nil {
 			return nil, err
 		}
-		cp := meta.DeepCopy()
+		metaBytes = metaBytes[mSize-n:]
+		nw.meta.InitFromParentWithBytes(nil, metaBytes, podFieldMetadata)
+		cp := meta
+		if !ownMeta {
+			cp = meta.DeepCopy()
+		}
 		if cp.ManagedFields != nil {
-			cachedMF = cp.ManagedFields
-			hasCachedMF = true
+			nw.cachedManagedFields = cp.ManagedFields
+			nw.hasCachedManaged = true
 		}
 		cp.ManagedFields = nil
-		cachedM = cp
-		cachedMOwned = true
+		nw.cachedMeta = cp
+		nw.cachedMetaOwned = 1
 	} else if w != nil {
-		metaBytes = w.EffectiveSubMessage(podFieldMetadata)
-		if !w.nonManagedMetaDirty {
-			cachedM = w.cachedMeta
-		}
+		nw.meta = w.meta.Clone()
+		nw.nonManagedMetaDirty = w.nonManagedMetaDirty
+		nw.sharedMeta = w.sharedMeta
+		nw.cachedMeta = w.cachedMeta
 		if w.hasCachedManaged {
-			cachedMF = slices.Clone(w.cachedManagedFields)
-			hasCachedMF = true
+			nw.cachedManagedFields = slices.Clone(w.cachedManagedFields)
+			nw.hasCachedManaged = true
 		}
+	} else {
+		nw.meta.InitFromParentWithBytes(nil, nil, podFieldMetadata)
 	}
-	nw := AssembleWirePod(metaBytes, specBytes, statusBytes)
-	nw.statusEmptySlices = emptySlices
-	nw.cachedMeta = cachedM
-	nw.cachedMetaOwned = cachedMOwned
-	nw.cachedManagedFields = cachedMF
-	nw.hasCachedManaged = hasCachedMF
-	nw.cachedStatus = fullCachedStatus
 	return nw, nil
 }
 
@@ -3837,11 +4265,15 @@ func (w *WirePod) CacheDecodedMeta(meta *metav1.ObjectMeta) {
 	if w == nil || meta == nil || w.cachedMeta != nil || w.nonManagedMetaDirty {
 		return
 	}
+	if w.sharedMeta != nil && w.sharedMeta.Load() != nil {
+		return
+	}
 	cp := meta.DeepCopy()
 	cp.ManagedFields = nil
 	cp.ResourceVersion = w.meta.GetResourceVersion()
+	cp.Generation = w.meta.GetGeneration()
 	w.cachedMeta = cp
-	w.cachedMetaOwned = true
+	atomic.StoreUint32(&w.cachedMetaOwned, 1)
 }
 
 // ExtractObjectMetaForUpdate unmarshals ObjectMeta from the wire, eliding ManagedFields (tag 17)
@@ -3850,22 +4282,29 @@ func (w *WirePod) ExtractObjectMetaForUpdate(out *metav1.ObjectMeta, dropManaged
 	if w == nil {
 		return
 	}
+	if cm, ok := w.sharedOrCachedMeta(); ok {
+		cm.DeepCopyInto(out)
+		out.ResourceVersion = w.meta.GetResourceVersion()
+		out.Generation = w.meta.GetGeneration()
+		if !dropManagedFields {
+			if mf := w.ManagedFields(false); mf != nil {
+				out.ManagedFields = make([]metav1.ManagedFieldsEntry, len(mf))
+				for i := range mf {
+					mf[i].DeepCopyInto(&out.ManagedFields[i])
+				}
+			}
+		}
+		return
+	}
 	if dropManagedFields {
-		if w.cachedMeta != nil && !w.nonManagedMetaDirty {
-			w.cachedMeta.DeepCopyInto(out)
+		if !w.nonManagedMetaDirty && w.sharedMeta != nil {
+			ro := w.loadOrDecodeMeta(false)
+			ro.DeepCopyInto(out)
+			out.ResourceVersion = w.meta.GetResourceVersion()
+			out.Generation = w.meta.GetGeneration()
 			return
 		}
 		w.meta.ExtractObjectMetaWithoutManagedFieldsInto(w.meta.Bytes(), out)
-		return
-	}
-	if w.cachedMeta != nil && !w.nonManagedMetaDirty {
-		w.cachedMeta.DeepCopyInto(out)
-		if mf := w.ManagedFields(false); mf != nil {
-			out.ManagedFields = make([]metav1.ManagedFieldsEntry, len(mf))
-			for i := range mf {
-				mf[i].DeepCopyInto(&out.ManagedFields[i])
-			}
-		}
 		return
 	}
 	w.meta.ExtractObjectMetaInto(w.meta.Bytes(), out)
@@ -3873,9 +4312,29 @@ func (w *WirePod) ExtractObjectMetaForUpdate(out *metav1.ObjectMeta, dropManaged
 
 // SpecTagMaskForField returns the PodSpec Protobuf tag bitmask for a JSON PodSpec field name,
 // coupling fields that share defaulting or declarative validation rules, and returning false
-// for heavy container/volume/resource subtrees or unknown field names.
+// for unknown field names.
 func SpecTagMaskForField(fieldName string) (uint64, bool) {
 	switch fieldName {
+	case "volumes":
+		return uint64(1) << specFieldVolumes, true
+	case "containers":
+		mask := (uint64(1) << specFieldContainers) | (uint64(1) << specFieldHostNetwork)
+		if utilfeature.DefaultFeatureGate.Enabled(features.PodLevelResources) &&
+			!utilfeature.DefaultFeatureGate.Enabled(features.PodLevelResourcesFixDefaulting) {
+			mask |= (uint64(1) << specFieldInitContainers) | (uint64(1) << specFieldResources)
+		}
+		return mask, true
+	case "initContainers":
+		mask := (uint64(1) << specFieldInitContainers) | (uint64(1) << specFieldHostNetwork)
+		if utilfeature.DefaultFeatureGate.Enabled(features.PodLevelResources) &&
+			!utilfeature.DefaultFeatureGate.Enabled(features.PodLevelResourcesFixDefaulting) {
+			mask |= (uint64(1) << specFieldContainers) | (uint64(1) << specFieldResources)
+		}
+		return mask, true
+	case "resources":
+		return (uint64(1) << specFieldResources) | (uint64(1) << specFieldContainers) | (uint64(1) << specFieldInitContainers) | (uint64(1) << specFieldHostNetwork), true
+	case "hostNetwork":
+		return (uint64(1) << specFieldHostNetwork) | (uint64(1) << specFieldContainers) | (uint64(1) << specFieldInitContainers) | (uint64(1) << specFieldSecurityContext), true
 	case "restartPolicy":
 		return uint64(1) << specFieldRestartPolicy, true
 	case "terminationGracePeriodSeconds":
@@ -4018,10 +4477,17 @@ func (w *WirePod) ExtractV1SpecSubtreeInto(tagMask uint64, out *v1.PodSpec) erro
 	if w == nil || tagMask == 0 {
 		return nil
 	}
-	return extractSpecSubtreeFromBytes(w.EffectiveSubMessage(podFieldSpec), tagMask, out)
+	specBytes := w.EffectiveSubMessage(podFieldSpec)
+	if tagMask == ^uint64(0) {
+		if len(specBytes) == 0 {
+			return nil
+		}
+		return out.Unmarshal(specBytes)
+	}
+	return extractSpecSubtreeFromBytes(specBytes, tagMask, out)
 }
 
-func filterMessageByTagMask(msgBytes []byte, tagMask uint64, stackBuf *[512]byte) []byte {
+func filterMessageByTagMask(msgBytes []byte, tagMask uint64, stackBuf []byte) []byte {
 	if tagMask == 0 || len(msgBytes) == 0 {
 		return nil
 	}
@@ -4047,8 +4513,8 @@ func filterMessageByTagMask(msgBytes []byte, tagMask uint64, stackBuf *[512]byte
 }
 
 func extractSpecSubtreeFromBytes(specBytes []byte, tagMask uint64, out *v1.PodSpec) error {
-	var stackBuf [512]byte
-	filtered := filterMessageByTagMask(specBytes, tagMask, &stackBuf)
+	var stackBuf [2048]byte
+	filtered := filterMessageByTagMask(specBytes, tagMask, stackBuf[:])
 	if len(filtered) == 0 {
 		return nil
 	}
@@ -4084,7 +4550,7 @@ func (w *WirePod) ExtractV1StatusSubtreeInto(tagMask uint64, out *v1.PodStatus) 
 
 func extractStatusSubtreeFromBytes(statusBytes []byte, tagMask uint64, out *v1.PodStatus) error {
 	var stackBuf [512]byte
-	filtered := filterMessageByTagMask(statusBytes, tagMask, &stackBuf)
+	filtered := filterMessageByTagMask(statusBytes, tagMask, stackBuf[:])
 	if len(filtered) == 0 {
 		return nil
 	}
@@ -4096,8 +4562,46 @@ func (w *WirePod) ExtractCoreStatusSubtreeInto(tagMask uint64, out *core.PodStat
 	return w.ExtractV1StatusSubtreeInto(tagMask, (*v1.PodStatus)(unsafe.Pointer(out)))
 }
 
+func splicedMessageSize(baseBytes, patchedBytes []byte, tagMask uint64) int {
+	size := 0
+	for offset := 0; offset < len(baseBytes); {
+		fieldStart := offset
+		num, typ, tagLen := protowire.ConsumeTag(baseBytes[offset:])
+		if tagLen < 0 {
+			break
+		}
+		offset += tagLen
+		valLen := protowire.ConsumeFieldValue(num, typ, baseBytes[offset:])
+		if valLen < 0 {
+			break
+		}
+		offset += valLen
+		if num >= 1 && num < 64 && (tagMask&(uint64(1)<<uint(num))) != 0 {
+			continue
+		}
+		size += offset - fieldStart
+	}
+	for pOff := 0; pOff < len(patchedBytes); {
+		fStart := pOff
+		num, typ, tagLen := protowire.ConsumeTag(patchedBytes[pOff:])
+		if tagLen < 0 {
+			break
+		}
+		pOff += tagLen
+		valLen := protowire.ConsumeFieldValue(num, typ, patchedBytes[pOff:])
+		if valLen < 0 {
+			break
+		}
+		pOff += valLen
+		if num >= 1 && num < 64 && (tagMask&(uint64(1)<<uint(num))) != 0 {
+			size += pOff - fStart
+		}
+	}
+	return size
+}
+
 func spliceMessageByTagMask(baseBytes, patchedBytes []byte, tagMask uint64) []byte {
-	out := make([]byte, 0, len(baseBytes)+len(patchedBytes))
+	out := make([]byte, 0, splicedMessageSize(baseBytes, patchedBytes, tagMask))
 	emittedMask := uint64(0)
 
 	emitPatchedTag := func(target protowire.Number) {
@@ -4166,7 +4670,7 @@ func SpliceSpecByTagMask(baseSpecBytes []byte, patchedSpec *v1.PodSpec, tagMask 
 		return baseSpecBytes, nil
 	}
 	pSize := patchedSpec.Size()
-	var pStack [512]byte
+	var pStack [2048]byte
 	var patchedBytes []byte
 	if pSize <= len(pStack) {
 		n, err := patchedSpec.MarshalToSizedBuffer(pStack[:pSize])
@@ -4331,6 +4835,22 @@ func (w *WirePod) effectiveMetaWithoutManagedFields() []byte {
 	return lazy.TrimManagedFieldsWireBytes(w.EffectiveSubMessage(podFieldMetadata))
 }
 
+// HasSpecResources reports whether spec.resources (tag 40) is present on the wire.
+func (w *WirePod) HasSpecResources() bool {
+	if w == nil {
+		return false
+	}
+	return lazy.HasField(w.EffectiveSubMessage(podFieldSpec), specFieldResources)
+}
+
+// StatusQOSClass extracts status.qosClass (tag 9) from the wire without decoding PodStatus.
+func (w *WirePod) StatusQOSClass() core.PodQOSClass {
+	if w == nil {
+		return ""
+	}
+	return core.PodQOSClass(lazy.ExtractFirstStringField(w.subMessage(podFieldStatus), statusFieldQOSClass))
+}
+
 // EqualModuloManagedFields reports whether w and other have identical Spec, Status, and non-managedFields ObjectMeta wire bytes.
 func (w *WirePod) EqualModuloManagedFields(other *WirePod) bool {
 	if w == nil || other == nil {
@@ -4339,13 +4859,61 @@ func (w *WirePod) EqualModuloManagedFields(other *WirePod) bool {
 	if w.statusEmptySlices != other.statusEmptySlices {
 		return false
 	}
+	if w.meta.GetGeneration() != other.meta.GetGeneration() {
+		return false
+	}
 	if !bytes.Equal(w.EffectiveSubMessage(podFieldSpec), other.EffectiveSubMessage(podFieldSpec)) {
 		return false
 	}
 	if !bytes.Equal(w.EffectiveSubMessage(podFieldStatus), other.EffectiveSubMessage(podFieldStatus)) {
 		return false
 	}
+	if w.meta.EqualModuloManagedFields(&other.meta) {
+		return true
+	}
+	if cmA, okA := w.sharedOrCachedMeta(); okA {
+		if cmB, okB := other.sharedOrCachedMeta(); okB {
+			return equalObjectMetaModuloManagedFields(cmA, w.meta.GetResourceVersion(), cmB, other.meta.GetResourceVersion())
+		}
+	}
 	return bytes.Equal(w.effectiveMetaWithoutManagedFields(), other.effectiveMetaWithoutManagedFields())
+}
+
+// HasEqualNonManagedMeta reports whether w and other have identical non-managedFields ObjectMeta wire bytes.
+func (w *WirePod) HasEqualNonManagedMeta(other *WirePod) bool {
+	if w == nil || other == nil {
+		return w == other
+	}
+	if w.meta.GetGeneration() != other.meta.GetGeneration() {
+		return false
+	}
+	if w.meta.EqualModuloManagedFields(&other.meta) {
+		return true
+	}
+	if cmA, okA := w.sharedOrCachedMeta(); okA {
+		if cmB, okB := other.sharedOrCachedMeta(); okB {
+			return equalObjectMetaModuloManagedFields(cmA, w.meta.GetResourceVersion(), cmB, other.meta.GetResourceVersion())
+		}
+	}
+	return bytes.Equal(w.effectiveMetaWithoutManagedFields(), other.effectiveMetaWithoutManagedFields())
+}
+
+func equalObjectMetaModuloManagedFields(a *metav1.ObjectMeta, rvA string, b *metav1.ObjectMeta, rvB string) bool {
+	if rvA != rvB ||
+		a.Name != b.Name ||
+		a.GenerateName != b.GenerateName ||
+		a.Namespace != b.Namespace ||
+		a.SelfLink != b.SelfLink ||
+		a.UID != b.UID ||
+		!a.CreationTimestamp.Equal(&b.CreationTimestamp) ||
+		!a.DeletionTimestamp.Equal(b.DeletionTimestamp) ||
+		!equalInt64Ptr(a.DeletionGracePeriodSeconds, b.DeletionGracePeriodSeconds) {
+		return false
+	}
+	return maps.Equal(a.Labels, b.Labels) &&
+		maps.Equal(a.Annotations, b.Annotations) &&
+		slices.Equal(a.Finalizers, b.Finalizers) &&
+		lazy.EqualOwnerReferences(a.OwnerReferences, b.OwnerReferences)
 }
 
 // CacheDecodedStatus stores a decoded PodStatus on w for reuse across validation steps when

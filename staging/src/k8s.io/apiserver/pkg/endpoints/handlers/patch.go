@@ -741,7 +741,7 @@ func isScopedPatchMap(patchMap map[string]interface{}, subresource string, subPa
 				statusTagMask |= m
 			}
 		case "spec":
-			if subPatcher == nil || (subresource != "" && subresource != "ephemeralcontainers") {
+			if subPatcher == nil || (subresource != "" && subresource != "ephemeralcontainers" && subresource != "resize") {
 				return false, 0, 0, false
 			}
 			specMap, isMap := v.(map[string]interface{})
@@ -815,7 +815,7 @@ func isScopedJSPatch(patchBytes []byte, patchType types.PatchType, subresource s
 					return true
 				}
 			}
-			if subPatcher != nil && (subresource == "" || subresource == "ephemeralcontainers") && strings.HasPrefix(p, "/spec/") {
+			if subPatcher != nil && (subresource == "" || subresource == "ephemeralcontainers" || subresource == "resize") && strings.HasPrefix(p, "/spec/") {
 				rest := p[len("/spec/"):]
 				seg := rest
 				if slash := strings.IndexByte(rest, '/'); slash >= 0 {

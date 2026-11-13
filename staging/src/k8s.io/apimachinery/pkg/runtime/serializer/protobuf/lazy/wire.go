@@ -156,6 +156,105 @@ func (m *WireObjectMeta) IsDirty() bool {
 	return m != nil && m.dirty != 0
 }
 
+// HasOnlyResourceVersionDirty reports whether m has no pending mutations other than resourceVersion.
+func (m *WireObjectMeta) HasOnlyResourceVersionDirty() bool {
+	return m == nil || (m.dirty&^dirtyMetaResourceVersion) == 0
+}
+
+// EqualModuloManagedFields reports whether m and other are backed by the same base metaBytes
+// slice and carry identical non-managedFields dirty overrides.
+func (m *WireObjectMeta) EqualModuloManagedFields(other *WireObjectMeta) bool {
+	if m == nil || other == nil {
+		return m == other
+	}
+	if len(m.metaBytes) != len(other.metaBytes) {
+		return false
+	}
+	if len(m.metaBytes) > 0 && &m.metaBytes[0] != &other.metaBytes[0] {
+		return false
+	}
+	mask := m.dirty &^ dirtyMetaManagedFields
+	if mask != (other.dirty &^ dirtyMetaManagedFields) {
+		return false
+	}
+	if mask == 0 {
+		return true
+	}
+	if mask&dirtyMetaName != 0 && m.name != other.name {
+		return false
+	}
+	if mask&dirtyMetaGenerateName != 0 && m.generateName != other.generateName {
+		return false
+	}
+	if mask&dirtyMetaNamespace != 0 && m.namespace != other.namespace {
+		return false
+	}
+	if mask&dirtyMetaSelfLink != 0 && m.selfLink != other.selfLink {
+		return false
+	}
+	if mask&dirtyMetaUID != 0 && m.uid != other.uid {
+		return false
+	}
+	if mask&dirtyMetaResourceVersion != 0 && m.resourceVersion != other.resourceVersion {
+		return false
+	}
+	if mask&dirtyMetaGeneration != 0 && m.generation != other.generation {
+		return false
+	}
+	if mask&dirtyMetaCreationTimestamp != 0 && !m.creationTimestamp.Equal(&other.creationTimestamp) {
+		return false
+	}
+	if mask&dirtyMetaDeletionTimestamp != 0 && !m.deletionTimestamp.Equal(other.deletionTimestamp) {
+		return false
+	}
+	if mask&dirtyMetaDeletionGracePeriodSeconds != 0 {
+		if (m.deletionGracePeriodSeconds == nil) != (other.deletionGracePeriodSeconds == nil) {
+			return false
+		}
+		if m.deletionGracePeriodSeconds != nil && *m.deletionGracePeriodSeconds != *other.deletionGracePeriodSeconds {
+			return false
+		}
+	}
+	if mask&dirtyMetaLabels != 0 && !maps.Equal(m.labels, other.labels) {
+		return false
+	}
+	if mask&dirtyMetaAnnotations != 0 && !maps.Equal(m.annotations, other.annotations) {
+		return false
+	}
+	if mask&dirtyMetaOwnerReferences != 0 && !EqualOwnerReferences(m.ownerReferences, other.ownerReferences) {
+		return false
+	}
+	if mask&dirtyMetaFinalizers != 0 && !slices.Equal(m.finalizers, other.finalizers) {
+		return false
+	}
+	return true
+}
+
+// EqualOwnerReferences compares two OwnerReference slices by value, dereferencing optional bool pointers.
+func EqualOwnerReferences(a, b []metav1.OwnerReference) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].APIVersion != b[i].APIVersion ||
+			a[i].Kind != b[i].Kind ||
+			a[i].Name != b[i].Name ||
+			a[i].UID != b[i].UID ||
+			!equalBoolPtr(a[i].Controller, b[i].Controller) ||
+			!equalBoolPtr(a[i].BlockOwnerDeletion, b[i].BlockOwnerDeletion) {
+			return false
+		}
+	}
+	return true
+}
+
+func equalBoolPtr(a, b *bool) bool {
+	if (a == nil) != (b == nil) {
+		return false
+	}
+	return a == nil || *a == *b
+}
+
 // ClearDirty resets all pending dirty flags after wire materialization.
 func (m *WireObjectMeta) ClearDirty() {
 	if m != nil {
@@ -443,6 +542,11 @@ func (m *WireObjectMeta) SetAnnotations(annotations map[string]string) {
 	m.dirty |= dirtyMetaAnnotations
 }
 
+// HasAnnotationsOverride reports whether metadata.annotations has a pending override on m.
+func (m *WireObjectMeta) HasAnnotationsOverride() bool {
+	return m != nil && m.dirty&dirtyMetaAnnotations != 0
+}
+
 // HasAnnotationValue reports whether metadata.annotations[key] == val without allocating a map.
 func (m *WireObjectMeta) HasAnnotationValue(metaBytes []byte, key, val string) bool {
 	if m != nil && m.dirty&dirtyMetaAnnotations != 0 {
@@ -584,6 +688,9 @@ func (m *WireObjectMeta) ManagedFields(metaBytes []byte) []metav1.ManagedFieldsE
 
 // SetManagedFields records a lazy override for metadata.managedFields.
 func (m *WireObjectMeta) SetManagedFields(managedFields []metav1.ManagedFieldsEntry) {
+	if managedFields == nil && m.dirty&dirtyMetaManagedFields == 0 && !HasField(m.metaBytes, MetaFieldManagedFields) {
+		return
+	}
 	m.managedFields = managedFields
 	m.dirty |= dirtyMetaManagedFields
 }
@@ -853,6 +960,10 @@ func (m *WireObjectMeta) SpliceMetaFields(metaBytes []byte) []byte {
 		return metaBytes
 	}
 	out := make([]byte, 0, m.splicedMetaSize(metaBytes))
+	return m.appendSplicedMetaFields(out, metaBytes)
+}
+
+func (m *WireObjectMeta) appendSplicedMetaFields(out, metaBytes []byte) []byte {
 	emitted := uint16(0)
 
 	emitDirtyUpTo := func(limitNum protowire.Number) {
@@ -1198,8 +1309,8 @@ func (m *WireObjectMeta) MarshalToSizedBuffer(dAtA []byte, raw []byte) (int, err
 	}
 
 	found, metaFieldStart, metaFieldEnd, metaContent := findTopMetaSpan(raw)
-	newMeta := m.SpliceMetaFields(metaContent)
-	newMetaFieldLen := 1 + protowire.SizeBytes(len(newMeta))
+	newMetaLen := m.splicedMetaSize(metaContent)
+	newMetaFieldLen := 1 + protowire.SizeBytes(newMetaLen)
 	var totalSize int
 	if !found {
 		totalSize = newMetaFieldLen + len(raw)
@@ -1210,14 +1321,64 @@ func (m *WireObjectMeta) MarshalToSizedBuffer(dAtA []byte, raw []byte) (int, err
 	if found {
 		dst = append(dst, raw[:metaFieldStart]...)
 		dst = protowire.AppendTag(dst, MetadataFieldNumber, protowire.BytesType)
-		dst = protowire.AppendBytes(dst, newMeta)
+		dst = protowire.AppendVarint(dst, uint64(newMetaLen))
+		dst = m.appendSplicedMetaFields(dst, metaContent)
 		dst = append(dst, raw[metaFieldEnd:]...)
 	} else {
 		dst = protowire.AppendTag(dst, MetadataFieldNumber, protowire.BytesType)
-		dst = protowire.AppendBytes(dst, newMeta)
+		dst = protowire.AppendVarint(dst, uint64(newMetaLen))
+		dst = m.appendSplicedMetaFields(dst, metaContent)
 		dst = append(dst, raw...)
 	}
 	return totalSize, nil
+}
+
+// StandaloneFieldSize returns the exact protobuf wire size of the length-delimited
+// metadata field (tag + length varint + spliced ObjectMeta bytes) with zero allocations.
+func (m *WireObjectMeta) StandaloneFieldSize() int {
+	fieldNum := m.metaFieldNum
+	if fieldNum == 0 {
+		fieldNum = MetadataFieldNumber
+	}
+	tagSize := protowire.SizeTag(fieldNum)
+	if m.dirty == 0 {
+		return tagSize + protowire.SizeBytes(len(m.metaBytes))
+	}
+	if m.dirty == dirtyMetaResourceVersion {
+		rvStart, rvEnd := findMetaRVSpan(m.metaBytes)
+		newRVFieldLen := 1 + protowire.SizeBytes(len(m.resourceVersion))
+		newMetaLen := len(m.metaBytes) - (rvEnd - rvStart) + newRVFieldLen
+		return tagSize + protowire.SizeBytes(newMetaLen)
+	}
+	return tagSize + protowire.SizeBytes(m.splicedMetaSize(m.metaBytes))
+}
+
+// AppendStandaloneField appends the length-delimited metadata field (tag + length varint +
+// spliced ObjectMeta bytes) directly into dst without intermediate slice allocations.
+func (m *WireObjectMeta) AppendStandaloneField(dst []byte) []byte {
+	fieldNum := m.metaFieldNum
+	if fieldNum == 0 {
+		fieldNum = MetadataFieldNumber
+	}
+	if m.dirty == 0 {
+		dst = protowire.AppendTag(dst, fieldNum, protowire.BytesType)
+		return protowire.AppendBytes(dst, m.metaBytes)
+	}
+	if m.dirty == dirtyMetaResourceVersion {
+		rvStart, rvEnd := findMetaRVSpan(m.metaBytes)
+		newRVFieldLen := 1 + protowire.SizeBytes(len(m.resourceVersion))
+		newMetaLen := len(m.metaBytes) - (rvEnd - rvStart) + newRVFieldLen
+		dst = protowire.AppendTag(dst, fieldNum, protowire.BytesType)
+		dst = protowire.AppendVarint(dst, uint64(newMetaLen))
+		dst = append(dst, m.metaBytes[:rvStart]...)
+		dst = protowire.AppendTag(dst, MetaFieldResourceVersion, protowire.BytesType)
+		dst = protowire.AppendString(dst, m.resourceVersion)
+		return append(dst, m.metaBytes[rvEnd:]...)
+	}
+	newMetaLen := m.splicedMetaSize(m.metaBytes)
+	dst = protowire.AppendTag(dst, fieldNum, protowire.BytesType)
+	dst = protowire.AppendVarint(dst, uint64(newMetaLen))
+	return m.appendSplicedMetaFields(dst, m.metaBytes)
 }
 
 // SubMessage returns the payload of the first length-delimited field with tag topField in raw.

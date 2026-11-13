@@ -19,6 +19,7 @@ package lazypod_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"reflect"
 	"sync"
 	"testing"
@@ -38,6 +39,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/serializer/cbor"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/apimachinery/pkg/util/strategicpatch"
 	"k8s.io/apiserver/pkg/storage"
 	"k8s.io/apiserver/pkg/storage/etcd3"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
@@ -1083,6 +1085,584 @@ func TestWirePodDefaultingParityWithGeneratedDefaults(t *testing.T) {
 		})
 		if allocs != 0 {
 			t.Fatalf("expected 0 allocs/op on already-defaulted realistic Pod, got %v", allocs)
+		}
+	})
+}
+
+func makeLarge45KBPod() *v1.Pod {
+	bigData := string(bytes.Repeat([]byte("x"), 7*1024))
+	expSec := int64(3600)
+	pod := &v1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            "pod-45kb",
+			Namespace:       "default",
+			UID:             types.UID("22222222-2222-2222-2222-222222222222"),
+			ResourceVersion: "100",
+			Generation:      1,
+			CreationTimestamp: metav1.Time{
+				Time: time.Unix(1700000000, 0).UTC(),
+			},
+			Labels:      map[string]string{"app": "web"},
+			Annotations: map[string]string{"note": "v1"},
+		},
+		Spec: v1.PodSpec{
+			ServiceAccountName: "default",
+			OS:                 &v1.PodOS{Name: v1.Linux},
+			Volumes: []v1.Volume{
+				{Name: "vol-1", VolumeSource: v1.VolumeSource{ConfigMap: &v1.ConfigMapVolumeSource{LocalObjectReference: v1.LocalObjectReference{Name: bigData}}}},
+				{Name: "vol-2", VolumeSource: v1.VolumeSource{ConfigMap: &v1.ConfigMapVolumeSource{LocalObjectReference: v1.LocalObjectReference{Name: bigData}}}},
+				{Name: "vol-3", VolumeSource: v1.VolumeSource{ConfigMap: &v1.ConfigMapVolumeSource{LocalObjectReference: v1.LocalObjectReference{Name: bigData}}}},
+				{Name: "vol-4", VolumeSource: v1.VolumeSource{ConfigMap: &v1.ConfigMapVolumeSource{LocalObjectReference: v1.LocalObjectReference{Name: bigData}}}},
+				{Name: "vol-5", VolumeSource: v1.VolumeSource{Projected: &v1.ProjectedVolumeSource{
+					Sources: []v1.VolumeProjection{{ServiceAccountToken: &v1.ServiceAccountTokenProjection{Path: "token", ExpirationSeconds: &expSec}}},
+				}}},
+			},
+			Containers: []v1.Container{{
+				Name:  "app",
+				Image: "registry.k8s.io/nginx:1.27",
+				Resources: v1.ResourceRequirements{
+					Requests: v1.ResourceList{
+						v1.ResourceCPU:    resource.MustParse("250m"),
+						v1.ResourceMemory: resource.MustParse("256Mi"),
+					},
+					Limits: v1.ResourceList{
+						v1.ResourceCPU:    resource.MustParse("500m"),
+						v1.ResourceMemory: resource.MustParse("512Mi"),
+					},
+				},
+			}},
+		},
+		Status: v1.PodStatus{
+			Phase:    v1.PodRunning,
+			QOSClass: v1.PodQOSBurstable,
+			PodIP:    "10.244.0.10",
+			PodIPs:   []v1.PodIP{{IP: "10.244.0.10"}},
+			ContainerStatuses: []v1.ContainerStatus{{
+				Name:  "app",
+				Ready: true,
+			}},
+		},
+	}
+	corev1.SetObjectDefaults_Pod(pod)
+	return pod
+}
+
+func TestSplitWireMetaCacheAndLazySubtreeStrategies(t *testing.T) {
+	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.LazyPodEncoding, true)
+	ctx := context.Background()
+	v1Pod := makeLarge45KBPod()
+	rawBytes, err := v1Pod.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+
+	t.Run("MetaCachePreservedAcrossNoOpNamespaceNameAndGenerationBump", func(t *testing.T) {
+		p := lazypod.NewPodFromWire(rawBytes)
+		var meta metav1.ObjectMeta
+		p.BorrowObjectMetaInto(&meta, true)
+		if _, ok := p.Wire().CachedObjectMeta(); !ok {
+			t.Fatalf("expected CachedObjectMeta to be populated")
+		}
+		p.SetNamespace("default")
+		p.SetName("pod-45kb")
+		p.SetGeneration(2)
+		cm, ok := p.Wire().CachedObjectMeta()
+		if !ok {
+			t.Fatalf("expected CachedObjectMeta to stay populated after no-op SetNamespace/SetName and SetGeneration")
+		}
+		if cm.Generation != 2 || p.GetGeneration() != 2 {
+			t.Fatalf("expected cached Generation=2, got cm=%d get=%d", cm.Generation, p.GetGeneration())
+		}
+
+		dst := &lazypod.Pod{}
+		copied, err := p.LazyCopyIntoStorageDestination(dst)
+		if err != nil || !copied || !dst.IsLazy() {
+			t.Fatalf("LazyCopyIntoStorageDestination failed: copied=%v err=%v lazy=%v", copied, err, dst.IsLazy())
+		}
+		if dst.GetGeneration() != 2 || dst.GetNamespace() != "default" {
+			t.Fatalf("unexpected copied pod metadata: gen=%d ns=%q", dst.GetGeneration(), dst.GetNamespace())
+		}
+	})
+
+	t.Run("ContainerImageUpdateStaysLazyAndRejectsInvalidContainerEdit", func(t *testing.T) {
+		oldLazy := lazypod.NewPodFromWire(rawBytes)
+		oldV1 := lazypod.NewV1PodFromWire(rawBytes)
+		mask, ok := oldV1.SpecTagMaskForField("containers")
+		if !ok {
+			t.Fatalf("expected containers SpecTagMaskForField to succeed")
+		}
+		baseObj, err := oldV1.ExtractSubtreePatchBase(false, mask, 0, true)
+		if err != nil {
+			t.Fatalf("ExtractSubtreePatchBase failed: %v", err)
+		}
+		basePod := baseObj.(*v1.Pod)
+		basePod.Spec.Containers[0].Image = "registry.k8s.io/nginx:1.28"
+		corev1.SetObjectDefaults_Pod(basePod)
+		splicedObj, err := oldV1.SpliceSubtreePatchResult(basePod, false, mask, 0)
+		if err != nil {
+			t.Fatalf("SpliceSubtreePatchResult failed: %v", err)
+		}
+		splicedV1 := splicedObj.(*lazypod.V1Pod)
+
+		// Verify split WirePod MarshalToSizedBuffer matches decoded v1.Pod Marshal byte-for-byte.
+		gotBytes := make([]byte, splicedV1.Size())
+		if _, err := splicedV1.MarshalToSizedBuffer(gotBytes); err != nil {
+			t.Fatalf("split MarshalToSizedBuffer failed: %v", err)
+		}
+		var roundTrip v1.Pod
+		if err := roundTrip.Unmarshal(gotBytes); err != nil {
+			t.Fatalf("Unmarshal split wire bytes failed: %v", err)
+		}
+		if roundTrip.Spec.Containers[0].Image != "registry.k8s.io/nginx:1.28" || len(roundTrip.Spec.Volumes) != 5 {
+			t.Fatalf("unexpected roundTrip pod: image=%q vols=%d", roundTrip.Spec.Containers[0].Image, len(roundTrip.Spec.Volumes))
+		}
+
+		var newLazy lazypod.Pod
+		if err := lazypod.Convert_v1_Pod_To_core_Pod(splicedV1, &newLazy, nil); err != nil {
+			t.Fatalf("Convert failed: %v", err)
+		}
+		registrypod.Strategy.PrepareForUpdate(ctx, &newLazy, oldLazy)
+		if !newLazy.IsLazy() {
+			t.Fatalf("expected newLazy to remain lazy after container image PrepareForUpdate")
+		}
+		if newLazy.GetGeneration() != 2 {
+			t.Fatalf("expected generation=2, got %d", newLazy.GetGeneration())
+		}
+		if errs := registrypod.Strategy.ValidateUpdate(ctx, &newLazy, oldLazy); len(errs) > 0 {
+			t.Fatalf("expected valid container image update, got %v", errs)
+		}
+		if !newLazy.IsLazy() || !oldLazy.IsLazy() {
+			t.Fatalf("expected both pods to remain lazy after ValidateUpdate")
+		}
+
+		// Forbidden mutation of container command on main Pod resource must fail validation.
+		badBase := basePod.DeepCopy()
+		badBase.Spec.Containers[0].Command = []string{"/bin/sh"}
+		badSpliced, err := oldV1.SpliceSubtreePatchResult(badBase, false, mask, 0)
+		if err != nil {
+			t.Fatalf("SpliceSubtreePatchResult failed: %v", err)
+		}
+		var badLazy lazypod.Pod
+		_ = lazypod.Convert_v1_Pod_To_core_Pod(badSpliced.(*lazypod.V1Pod), &badLazy, nil)
+		registrypod.Strategy.PrepareForUpdate(ctx, &badLazy, oldLazy.DeepCopy())
+		if errs := registrypod.Strategy.ValidateUpdate(ctx, &badLazy, oldLazy.DeepCopy()); len(errs) == 0 {
+			t.Fatalf("expected forbidden error when mutating container command on main Pod update")
+		}
+	})
+
+	t.Run("ResizeSubresourceStaysLazyAndEnforcesInvariants", func(t *testing.T) {
+		oldLazy := lazypod.NewPodFromWire(rawBytes)
+		oldV1 := lazypod.NewV1PodFromWire(rawBytes)
+		mask, _ := oldV1.SpecTagMaskForField("containers")
+		baseObj, err := oldV1.ExtractSubtreePatchBase(false, mask, 0, true)
+		if err != nil {
+			t.Fatalf("ExtractSubtreePatchBase failed: %v", err)
+		}
+		basePod := baseObj.(*v1.Pod)
+		basePod.Spec.Containers[0].Resources.Requests[v1.ResourceCPU] = resource.MustParse("300m")
+		basePod.Spec.Containers[0].Resources.Limits[v1.ResourceCPU] = resource.MustParse("600m")
+		// Attempt an ignored container image edit on /resize: ResizeStrategy must drop it.
+		basePod.Spec.Containers[0].Image = "registry.k8s.io/ignored:9.9"
+		corev1.SetObjectDefaults_Pod(basePod)
+		splicedObj, err := oldV1.SpliceSubtreePatchResult(basePod, false, mask, 0)
+		if err != nil {
+			t.Fatalf("SpliceSubtreePatchResult failed: %v", err)
+		}
+		var newLazy lazypod.Pod
+		_ = lazypod.Convert_v1_Pod_To_core_Pod(splicedObj.(*lazypod.V1Pod), &newLazy, nil)
+
+		registrypod.ResizeStrategy.PrepareForUpdate(ctx, &newLazy, oldLazy)
+		if !newLazy.IsLazy() {
+			t.Fatalf("expected newLazy to remain lazy after ResizeStrategy.PrepareForUpdate")
+		}
+		if errs := registrypod.ResizeStrategy.ValidateUpdate(ctx, &newLazy, oldLazy); len(errs) > 0 {
+			t.Fatalf("expected valid resize update, got %v", errs)
+		}
+		if !newLazy.IsLazy() || !oldLazy.IsLazy() {
+			t.Fatalf("expected both pods to remain lazy after ResizeStrategy.ValidateUpdate")
+		}
+		dec, err := newLazy.DeepCopy().EnsureDecoded()
+		if err != nil {
+			t.Fatalf("EnsureDecoded failed: %v", err)
+		}
+		if dec.Spec.Containers[0].Image != "registry.k8s.io/nginx:1.27" {
+			t.Fatalf("expected ResizeStrategy to drop image change, got %q", dec.Spec.Containers[0].Image)
+		}
+		if !dec.Spec.Containers[0].Resources.Requests[core.ResourceCPU].Equal(resource.MustParse("300m")) {
+			t.Fatalf("expected resized CPU request=300m, got %v", dec.Spec.Containers[0].Resources.Requests[core.ResourceCPU])
+		}
+
+		// Invalid resize changing QoS class from Burstable to Guaranteed must fail.
+		badQoS := basePod.DeepCopy()
+		badQoS.Spec.Containers[0].Resources.Requests[v1.ResourceCPU] = resource.MustParse("600m")
+		badQoS.Spec.Containers[0].Resources.Limits[v1.ResourceCPU] = resource.MustParse("600m")
+		badQoS.Spec.Containers[0].Resources.Requests[v1.ResourceMemory] = resource.MustParse("512Mi")
+		badQoS.Spec.Containers[0].Resources.Limits[v1.ResourceMemory] = resource.MustParse("512Mi")
+		badSpliced, _ := oldV1.SpliceSubtreePatchResult(badQoS, false, mask, 0)
+		var badLazy lazypod.Pod
+		_ = lazypod.Convert_v1_Pod_To_core_Pod(badSpliced.(*lazypod.V1Pod), &badLazy, nil)
+		registrypod.ResizeStrategy.PrepareForUpdate(ctx, &badLazy, oldLazy.DeepCopy())
+		if errs := registrypod.ResizeStrategy.ValidateUpdate(ctx, &badLazy, oldLazy.DeepCopy()); len(errs) == 0 {
+			t.Fatalf("expected error when resize changes Pod QoS class")
+		}
+	})
+
+	t.Run("EphemeralContainersSubresourceStaysLazy", func(t *testing.T) {
+		oldLazy := lazypod.NewPodFromWire(rawBytes)
+		oldV1 := lazypod.NewV1PodFromWire(rawBytes)
+		mask, _ := oldV1.SpecTagMaskForField("ephemeralContainers")
+		baseObj, err := oldV1.ExtractSubtreePatchBase(false, mask, 0, true)
+		if err != nil {
+			t.Fatalf("ExtractSubtreePatchBase failed: %v", err)
+		}
+		basePod := baseObj.(*v1.Pod)
+		basePod.Spec.EphemeralContainers = []v1.EphemeralContainer{{
+			EphemeralContainerCommon: v1.EphemeralContainerCommon{
+				Name:  "debug-1",
+				Image: "registry.k8s.io/busybox:1.36",
+			},
+		}}
+		corev1.SetObjectDefaults_Pod(basePod)
+		splicedObj, err := oldV1.SpliceSubtreePatchResult(basePod, false, mask, 0)
+		if err != nil {
+			t.Fatalf("SpliceSubtreePatchResult failed: %v", err)
+		}
+		var newLazy lazypod.Pod
+		_ = lazypod.Convert_v1_Pod_To_core_Pod(splicedObj.(*lazypod.V1Pod), &newLazy, nil)
+
+		registrypod.EphemeralContainersStrategy.PrepareForUpdate(ctx, &newLazy, oldLazy)
+		if !newLazy.IsLazy() {
+			t.Fatalf("expected newLazy to remain lazy after EphemeralContainersStrategy.PrepareForUpdate")
+		}
+		if errs := registrypod.EphemeralContainersStrategy.ValidateUpdate(ctx, &newLazy, oldLazy); len(errs) > 0 {
+			t.Fatalf("expected valid ephemeralContainers update, got %v", errs)
+		}
+		if !newLazy.IsLazy() || !oldLazy.IsLazy() {
+			t.Fatalf("expected both pods to remain lazy after EphemeralContainersStrategy.ValidateUpdate")
+		}
+	})
+
+	t.Run("OwnedStorageEnvelopeAndSharedMetaCache", func(t *testing.T) {
+		_, lazyCodecs := newLazyScheme(t)
+		pbCodec := runtime.NewCodec(protobufCodecFor(t, lazyCodecs), protobufCodecFor(t, lazyCodecs))
+
+		srcPod := lazypod.NewPodFromWire(rawBytes)
+		srcPod.SetResourceVersion("")
+		encodedEnvelope, err := runtime.Encode(pbCodec, srcPod)
+		if err != nil {
+			t.Fatalf("runtime.Encode failed: %v", err)
+		}
+
+		into := &lazypod.Pod{}
+		decodedObj, err := runtime.DecodeOwnedStorage(pbCodec, encodedEnvelope, into)
+		if err != nil {
+			t.Fatalf("DecodeOwnedStorage failed: %v", err)
+		}
+		cachedPod := decodedObj.(*lazypod.Pod)
+		cachedPod.SetResourceVersion("100")
+
+		clone1 := cachedPod.DeepCopyObject().(*lazypod.Pod)
+		if gotRaw, ok := clone1.RawStorageBytes(); !ok || !bytes.Equal(gotRaw, encodedEnvelope) {
+			t.Fatalf("expected RawStorageBytes to match encodedEnvelope (ok=%v)", ok)
+		}
+
+		versioner := storage.APIObjectVersioner{}
+		state, err := storage.GetStateFromObject(versioner, pbCodec, clone1, false)
+		if err != nil {
+			t.Fatalf("GetStateFromObject failed: %v", err)
+		}
+		if state.Rev != 100 || !bytes.Equal(state.Data, encodedEnvelope) {
+			t.Fatalf("unexpected ObjState: rev=%d dataEqual=%v", state.Rev, bytes.Equal(state.Data, encodedEnvelope))
+		}
+
+		var meta1 metav1.ObjectMeta
+		clone1.BorrowObjectMetaInto(&meta1, true)
+		if meta1.ResourceVersion != "100" || meta1.Name != "pod-45kb" {
+			t.Fatalf("unexpected borrowed meta1: rv=%q name=%q", meta1.ResourceVersion, meta1.Name)
+		}
+
+		// A fresh clone from the watchCache object must reuse sharedMeta with zero unmarshal allocs.
+		clone2 := cachedPod.DeepCopyObject().(*lazypod.Pod)
+		var meta2 metav1.ObjectMeta
+		allocs := testing.AllocsPerRun(50, func() {
+			clone2.BorrowObjectMetaInto(&meta2, true)
+		})
+		if allocs != 0 {
+			t.Fatalf("expected 0 allocs borrowing sharedMeta on second clone, got %v", allocs)
+		}
+
+		// No-op SetCreationTimestamp preserves RawStorageBytes; mutating SetUID invalidates RawStorageBytes
+		// while keeping cachedMeta populated and EqualModuloManagedFields allocation-free against its clone.
+		clone2.SetCreationTimestamp(clone2.GetCreationTimestamp())
+		if _, ok := clone2.RawStorageBytes(); !ok {
+			t.Fatalf("expected no-op SetCreationTimestamp to preserve RawStorageBytes")
+		}
+		clone2.SetUID("new-uid-999")
+		if _, ok := clone2.RawStorageBytes(); ok {
+			t.Fatalf("expected mutating SetUID to invalidate RawStorageBytes")
+		}
+		if clone2.GetUID() != "new-uid-999" {
+			t.Fatalf("expected GetUID=new-uid-999, got %q", clone2.GetUID())
+		}
+		beforeAdmit := clone2.DeepCopyObject()
+		eqAllocs := testing.AllocsPerRun(50, func() {
+			eq, ok := clone2.EqualModuloManagedFields(beforeAdmit)
+			if !ok || !eq {
+				t.Fatalf("expected EqualModuloManagedFields=(true,true), got (%v,%v)", eq, ok)
+			}
+		})
+		if eqAllocs != 0 {
+			t.Fatalf("expected 0 allocs in EqualModuloManagedFields against unmodified clone, got %v", eqAllocs)
+		}
+
+		t.Log("Concurrent DeepCopyObject + BorrowObjectMetaInto + GetLabels across goroutines must be race-free")
+		warmedPod := cachedPod.DeepCopyObject().(*lazypod.Pod)
+		warmedPod.SetAnnotations(map[string]string{"owned": "true"})
+		var concurrencyGroup sync.WaitGroup
+		for range 8 {
+			concurrencyGroup.Add(1)
+			go func() {
+				defer concurrencyGroup.Done()
+				for range 50 {
+					c1 := cachedPod.DeepCopyObject().(*lazypod.Pod)
+					var m metav1.ObjectMeta
+					c1.BorrowObjectMetaInto(&m, true)
+					c2 := warmedPod.DeepCopyObject().(*lazypod.Pod)
+					_ = c2.GetAnnotations()
+					_ = warmedPod.GetAnnotations()
+				}
+			}()
+		}
+		concurrencyGroup.Wait()
+
+		t.Log("PUT setter ordering (SetUID before GetLabels/GetAnnotations) warms cachedMeta once without re-splicing")
+		putPayload := lazypod.NewPodFromWire(rawBytes)
+		putPayload.SetUID("put-assigned-uid")
+		putPayload.SetResourceVersion(cachedPod.GetResourceVersion())
+		legacyAllocs := testing.AllocsPerRun(50, func() {
+			if putPayload.Wire().HasLegacyInitContainerAnnotations() {
+				t.Fatal("unexpected legacy init container annotation")
+			}
+		})
+		if legacyAllocs != 0 {
+			t.Fatalf("expected 0 allocs in HasLegacyInitContainerAnnotations after SetUID, got %v", legacyAllocs)
+		}
+		_ = putPayload.GetLabels()
+		matchingPeer := cachedPod.DeepCopyObject().(*lazypod.Pod)
+		matchingPeer.SetUID("put-assigned-uid")
+		_ = matchingPeer.GetAnnotations()
+		var borrowed metav1.ObjectMeta
+		postWarmAllocs := testing.AllocsPerRun(50, func() {
+			_ = putPayload.GetAnnotations()
+			putPayload.BorrowObjectMetaInto(&borrowed, true)
+			if eq, ok := putPayload.EqualModuloManagedFields(cachedPod); !ok || eq {
+				t.Fatalf("expected EqualModuloManagedFields=(false,true) against mismatched UID cachedPod, got (%v,%v)", eq, ok)
+			}
+			if eq, ok := putPayload.EqualModuloManagedFields(matchingPeer); !ok || !eq {
+				t.Fatalf("expected EqualModuloManagedFields=(true,true) against matchingPeer, got (%v,%v)", eq, ok)
+			}
+		})
+		if postWarmAllocs != 0 {
+			t.Fatalf("expected 0 allocs after GetLabels warmed cachedMeta on PUT payload, got %v", postWarmAllocs)
+		}
+	})
+}
+
+func BenchmarkLazyPodSubtreeMutations45KB(b *testing.B) {
+	ctx := context.Background()
+	v1Pod := makeLarge45KBPod()
+	rawBytes, err := v1Pod.Marshal()
+	if err != nil {
+		b.Fatalf("Marshal failed: %v", err)
+	}
+	imgPatchJSON := []byte(`{"spec":{"containers":[{"name":"app","image":"registry.k8s.io/nginx:1.28"}]}}`)
+	resizePatchJSON := []byte(`{"spec":{"containers":[{"name":"app","resources":{"requests":{"cpu":"300m"},"limits":{"cpu":"600m"}}}]}}`)
+	ephPatchJSON := []byte(`{"spec":{"ephemeralContainers":[{"name":"dbg","image":"registry.k8s.io/busybox:1.36"}]}}`)
+	schemaRef := &v1.Pod{}
+
+	// Warm up DefaultUnstructuredConverter reflection cache before timed loops.
+	_, _ = runtime.DefaultUnstructuredConverter.ToUnstructured(v1Pod)
+
+	b.Run("ContainerImageSMP/Decoded", func(b *testing.B) {
+		b.ReportAllocs()
+		outBuf := make([]byte, len(rawBytes)+512)
+		for b.Loop() {
+			var oldV1 v1.Pod
+			_ = oldV1.Unmarshal(rawBytes)
+			var patchMap map[string]any
+			_ = json.Unmarshal(imgPatchJSON, &patchMap)
+			origMap, _ := runtime.DefaultUnstructuredConverter.ToUnstructured(&oldV1)
+			patchedMap, err := strategicpatch.StrategicMergeMapPatch(origMap, patchMap, schemaRef)
+			if err != nil {
+				b.Fatal(err)
+			}
+			var updV1 v1.Pod
+			_ = runtime.DefaultUnstructuredConverter.FromUnstructured(patchedMap, &updV1)
+			corev1.SetObjectDefaults_Pod(&updV1)
+			var oldCore, newCore core.Pod
+			_ = corev1.Convert_v1_Pod_To_core_Pod(&oldV1, &oldCore, nil)
+			_ = corev1.Convert_v1_Pod_To_core_Pod(&updV1, &newCore, nil)
+			registrypod.Strategy.PrepareForUpdate(ctx, &newCore, &oldCore)
+			if errs := registrypod.Strategy.ValidateUpdate(ctx, &newCore, &oldCore); len(errs) > 0 {
+				b.Fatal(errs)
+			}
+			var outV1 v1.Pod
+			_ = corev1.Convert_core_Pod_To_v1_Pod(&newCore, &outV1, nil)
+			_, _ = outV1.MarshalToSizedBuffer(outBuf[:outV1.Size()])
+		}
+	})
+
+	b.Run("ContainerImageSMP/Lazy", func(b *testing.B) {
+		b.ReportAllocs()
+		outBuf := make([]byte, len(rawBytes)+512)
+		mask, _ := lazypod.SpecTagMaskForField("containers")
+		for b.Loop() {
+			oldV1 := lazypod.NewV1PodFromWire(rawBytes)
+			var patchMap map[string]any
+			_ = json.Unmarshal(imgPatchJSON, &patchMap)
+			baseObj, _ := oldV1.ExtractSubtreePatchBase(false, mask, 0, true)
+			origMap, _ := runtime.DefaultUnstructuredConverter.ToUnstructuredTopLevel(baseObj, patchMap)
+			patchedMap, err := strategicpatch.StrategicMergeMapPatch(origMap, patchMap, schemaRef)
+			if err != nil {
+				b.Fatal(err)
+			}
+			updV1 := baseObj.(*v1.Pod)
+			_ = runtime.DefaultUnstructuredConverter.FromUnstructured(patchedMap, updV1)
+			corev1.SetObjectDefaults_Pod(updV1)
+			splicedObj, _ := oldV1.SpliceSubtreePatchResult(updV1, false, mask, 0)
+			_, _, _, _ = oldV1.ProjectForUpdate(splicedObj, false, true)
+			var oldCore, newCore lazypod.Pod
+			_ = lazypod.Convert_v1_Pod_To_core_Pod(oldV1, &oldCore, nil)
+			_ = lazypod.Convert_v1_Pod_To_core_Pod(splicedObj.(*lazypod.V1Pod), &newCore, nil)
+			registrypod.Strategy.PrepareForUpdate(ctx, &newCore, &oldCore)
+			if errs := registrypod.Strategy.ValidateUpdate(ctx, &newCore, &oldCore); len(errs) > 0 {
+				b.Fatal(errs)
+			}
+			var outV1 lazypod.V1Pod
+			_ = lazypod.Convert_core_Pod_To_v1_Pod(&newCore, &outV1, nil)
+			_, _ = outV1.MarshalToSizedBuffer(outBuf[:outV1.Size()])
+		}
+	})
+
+	b.Run("PodResizeSMP/Decoded", func(b *testing.B) {
+		b.ReportAllocs()
+		outBuf := make([]byte, len(rawBytes)+512)
+		for b.Loop() {
+			var oldV1 v1.Pod
+			_ = oldV1.Unmarshal(rawBytes)
+			var patchMap map[string]any
+			_ = json.Unmarshal(resizePatchJSON, &patchMap)
+			origMap, _ := runtime.DefaultUnstructuredConverter.ToUnstructured(&oldV1)
+			patchedMap, err := strategicpatch.StrategicMergeMapPatch(origMap, patchMap, schemaRef)
+			if err != nil {
+				b.Fatal(err)
+			}
+			var updV1 v1.Pod
+			_ = runtime.DefaultUnstructuredConverter.FromUnstructured(patchedMap, &updV1)
+			corev1.SetObjectDefaults_Pod(&updV1)
+			var oldCore, newCore core.Pod
+			_ = corev1.Convert_v1_Pod_To_core_Pod(&oldV1, &oldCore, nil)
+			_ = corev1.Convert_v1_Pod_To_core_Pod(&updV1, &newCore, nil)
+			registrypod.ResizeStrategy.PrepareForUpdate(ctx, &newCore, &oldCore)
+			if errs := registrypod.ResizeStrategy.ValidateUpdate(ctx, &newCore, &oldCore); len(errs) > 0 {
+				b.Fatal(errs)
+			}
+			var outV1 v1.Pod
+			_ = corev1.Convert_core_Pod_To_v1_Pod(&newCore, &outV1, nil)
+			_, _ = outV1.MarshalToSizedBuffer(outBuf[:outV1.Size()])
+		}
+	})
+
+	b.Run("PodResizeSMP/Lazy", func(b *testing.B) {
+		b.ReportAllocs()
+		outBuf := make([]byte, len(rawBytes)+512)
+		mask, _ := lazypod.SpecTagMaskForField("containers")
+		for b.Loop() {
+			oldV1 := lazypod.NewV1PodFromWire(rawBytes)
+			var patchMap map[string]any
+			_ = json.Unmarshal(resizePatchJSON, &patchMap)
+			baseObj, _ := oldV1.ExtractSubtreePatchBase(false, mask, 0, true)
+			origMap, _ := runtime.DefaultUnstructuredConverter.ToUnstructuredTopLevel(baseObj, patchMap)
+			patchedMap, err := strategicpatch.StrategicMergeMapPatch(origMap, patchMap, schemaRef)
+			if err != nil {
+				b.Fatal(err)
+			}
+			updV1 := baseObj.(*v1.Pod)
+			_ = runtime.DefaultUnstructuredConverter.FromUnstructured(patchedMap, updV1)
+			corev1.SetObjectDefaults_Pod(updV1)
+			splicedObj, _ := oldV1.SpliceSubtreePatchResult(updV1, false, mask, 0)
+			_, _, _, _ = oldV1.ProjectForUpdate(splicedObj, false, false)
+			var oldCore, newCore lazypod.Pod
+			_ = lazypod.Convert_v1_Pod_To_core_Pod(oldV1, &oldCore, nil)
+			_ = lazypod.Convert_v1_Pod_To_core_Pod(splicedObj.(*lazypod.V1Pod), &newCore, nil)
+			registrypod.ResizeStrategy.PrepareForUpdate(ctx, &newCore, &oldCore)
+			if errs := registrypod.ResizeStrategy.ValidateUpdate(ctx, &newCore, &oldCore); len(errs) > 0 {
+				b.Fatal(errs)
+			}
+			var outV1 lazypod.V1Pod
+			_ = lazypod.Convert_core_Pod_To_v1_Pod(&newCore, &outV1, nil)
+			_, _ = outV1.MarshalToSizedBuffer(outBuf[:outV1.Size()])
+		}
+	})
+
+	b.Run("EphemeralContainersSMP/Decoded", func(b *testing.B) {
+		b.ReportAllocs()
+		outBuf := make([]byte, len(rawBytes)+512)
+		for b.Loop() {
+			var oldV1 v1.Pod
+			_ = oldV1.Unmarshal(rawBytes)
+			var patchMap map[string]any
+			_ = json.Unmarshal(ephPatchJSON, &patchMap)
+			origMap, _ := runtime.DefaultUnstructuredConverter.ToUnstructured(&oldV1)
+			patchedMap, err := strategicpatch.StrategicMergeMapPatch(origMap, patchMap, schemaRef)
+			if err != nil {
+				b.Fatal(err)
+			}
+			var updV1 v1.Pod
+			_ = runtime.DefaultUnstructuredConverter.FromUnstructured(patchedMap, &updV1)
+			corev1.SetObjectDefaults_Pod(&updV1)
+			var oldCore, newCore core.Pod
+			_ = corev1.Convert_v1_Pod_To_core_Pod(&oldV1, &oldCore, nil)
+			_ = corev1.Convert_v1_Pod_To_core_Pod(&updV1, &newCore, nil)
+			registrypod.EphemeralContainersStrategy.PrepareForUpdate(ctx, &newCore, &oldCore)
+			if errs := registrypod.EphemeralContainersStrategy.ValidateUpdate(ctx, &newCore, &oldCore); len(errs) > 0 {
+				b.Fatal(errs)
+			}
+			var outV1 v1.Pod
+			_ = corev1.Convert_core_Pod_To_v1_Pod(&newCore, &outV1, nil)
+			_, _ = outV1.MarshalToSizedBuffer(outBuf[:outV1.Size()])
+		}
+	})
+
+	b.Run("EphemeralContainersSMP/Lazy", func(b *testing.B) {
+		b.ReportAllocs()
+		outBuf := make([]byte, len(rawBytes)+512)
+		mask, _ := lazypod.SpecTagMaskForField("ephemeralContainers")
+		for b.Loop() {
+			oldV1 := lazypod.NewV1PodFromWire(rawBytes)
+			var patchMap map[string]any
+			_ = json.Unmarshal(ephPatchJSON, &patchMap)
+			baseObj, _ := oldV1.ExtractSubtreePatchBase(false, mask, 0, true)
+			origMap, _ := runtime.DefaultUnstructuredConverter.ToUnstructuredTopLevel(baseObj, patchMap)
+			patchedMap, err := strategicpatch.StrategicMergeMapPatch(origMap, patchMap, schemaRef)
+			if err != nil {
+				b.Fatal(err)
+			}
+			updV1 := baseObj.(*v1.Pod)
+			_ = runtime.DefaultUnstructuredConverter.FromUnstructured(patchedMap, updV1)
+			corev1.SetObjectDefaults_Pod(updV1)
+			splicedObj, _ := oldV1.SpliceSubtreePatchResult(updV1, false, mask, 0)
+			_, _, _, _ = oldV1.ProjectForUpdate(splicedObj, false, false)
+			var oldCore, newCore lazypod.Pod
+			_ = lazypod.Convert_v1_Pod_To_core_Pod(oldV1, &oldCore, nil)
+			_ = lazypod.Convert_v1_Pod_To_core_Pod(splicedObj.(*lazypod.V1Pod), &newCore, nil)
+			registrypod.EphemeralContainersStrategy.PrepareForUpdate(ctx, &newCore, &oldCore)
+			if errs := registrypod.EphemeralContainersStrategy.ValidateUpdate(ctx, &newCore, &oldCore); len(errs) > 0 {
+				b.Fatal(errs)
+			}
+			var outV1 lazypod.V1Pod
+			_ = lazypod.Convert_core_Pod_To_v1_Pod(&newCore, &outV1, nil)
+			_, _ = outV1.MarshalToSizedBuffer(outBuf[:outV1.Size()])
 		}
 	})
 }
