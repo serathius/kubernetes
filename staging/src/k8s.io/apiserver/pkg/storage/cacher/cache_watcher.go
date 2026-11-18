@@ -509,6 +509,7 @@ func (c *cacheWatcher) process(ctx context.Context) {
 	defer utilruntime.HandleCrashWithContext(ctx)
 	defer close(c.result)
 	defer c.Stop()
+	defer utilflowcontrol.WatchInitialized(ctx)
 	initialized := false
 	var resourceVersion uint64
 

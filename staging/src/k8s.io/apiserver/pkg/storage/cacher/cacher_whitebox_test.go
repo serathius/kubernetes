@@ -32,6 +32,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
+	grpccodes "google.golang.org/grpc/codes"
+	grpcstatus "google.golang.org/grpc/status"
 
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -3401,6 +3403,80 @@ func TestGetWatchCacheResourceVersion(t *testing.T) {
 			actualResourceVersion, err := cacher.getWatchCacheResourceVersion(context.TODO(), uint64(parsedResourceVersion), scenario.opts)
 			require.NoError(t, err)
 			require.Equal(t, uint64(scenario.expectedWatchResourceVersion), actualResourceVersion, "received unexpected ResourceVersion")
+		})
+	}
+}
+
+func TestWatchStartupGetCurrentRVErrorAndCancel(t *testing.T) {
+	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.WatchList, true)
+	cachertesting.ForceRequestWatchProgressSupport(t)
+
+	scenarios := []struct {
+		name          string
+		getRVErr      error
+		sendInitial   bool
+		expectErrorEv bool
+	}{
+		{
+			name:          "gRPC Canceled on SendInitialEvents=false closes cleanly",
+			getRVErr:      grpcstatus.Error(grpccodes.Canceled, "grpc canceled"),
+			sendInitial:   false,
+			expectErrorEv: false,
+		},
+		{
+			name:          "gRPC Canceled on SendInitialEvents=true closes cleanly",
+			getRVErr:      grpcstatus.Error(grpccodes.Canceled, "grpc canceled"),
+			sendInitial:   true,
+			expectErrorEv: false,
+		},
+		{
+			name:          "Unavailable on SendInitialEvents=false emits watch.Error",
+			getRVErr:      grpcstatus.Error(grpccodes.Unavailable, "etcd unavailable"),
+			sendInitial:   false,
+			expectErrorEv: true,
+		},
+		{
+			name:          "Unavailable on SendInitialEvents=true emits watch.Error",
+			getRVErr:      grpcstatus.Error(grpccodes.Unavailable, "etcd unavailable"),
+			sendInitial:   true,
+			expectErrorEv: true,
+		},
+	}
+
+	for _, scenario := range scenarios {
+		t.Run(scenario.name, func(t *testing.T) {
+			backingStorage := &cachertesting.MockStorage{
+				GetRVFn: func(_ context.Context) (uint64, error) {
+					return 0, scenario.getRVErr
+				},
+			}
+			c, _, err := newTestCacher(backingStorage)
+			require.NoError(t, err)
+			defer c.Stop()
+
+			initSignal := utilflowcontrol.NewInitializationSignal()
+			watchCtx := utilflowcontrol.WithInitializationSignal(context.Background(), initSignal)
+			pred := storage.Everything
+			pred.AllowWatchBookmarks = true
+			w, err := c.Watch(watchCtx, "/pods/ns", storage.ListOptions{
+				SendInitialEvents: &scenario.sendInitial,
+				Recursive:         true,
+				Predicate:         pred,
+			})
+			require.NoError(t, err)
+			defer w.Stop()
+			initSignal.Wait()
+
+			if scenario.expectErrorEv {
+				ev, ok := <-w.ResultChan()
+				require.True(t, ok)
+				require.Equal(t, watch.Error, ev.Type)
+				status, ok := ev.Object.(*metav1.Status)
+				require.True(t, ok)
+				require.Equal(t, int32(500), status.Code)
+			}
+			_, stillOpen := <-w.ResultChan()
+			require.False(t, stillOpen)
 		})
 	}
 }

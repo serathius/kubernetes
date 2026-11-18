@@ -18,6 +18,7 @@ package cacher
 
 import (
 	"context"
+	goerrors "errors"
 	"fmt"
 	"iter"
 	"net/http"
@@ -27,7 +28,9 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
+	grpccodes "google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
+	grpcstatus "google.golang.org/grpc/status"
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -52,6 +55,7 @@ import (
 	"k8s.io/apiserver/pkg/storage/cacher/store"
 	etcdfeature "k8s.io/apiserver/pkg/storage/feature"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	utilflowcontrol "k8s.io/apiserver/pkg/util/flowcontrol"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/component-base/tracing"
 	"k8s.io/klog/v2"
@@ -818,6 +822,10 @@ func (c *Cacher) Watch(ctx context.Context, key string, opts storage.ListOptions
 
 	watcher, err := c.watch(ctx, key, requestedWatchRV, readyGeneration, opts)
 	if err != nil {
+		utilflowcontrol.WatchInitialized(ctx)
+		if ctx.Err() != nil || isCancelError(err) {
+			return newImmediateCloseWatcher(), nil
+		}
 		// To match the uncached watch implementation, once we have passed authn/authz/admission,
 		// and successfully parsed a resource version, other errors must fail with a watch event of type ERROR,
 		// rather than a directly returned error.
@@ -828,6 +836,7 @@ func (c *Cacher) Watch(ctx context.Context, key string, opts storage.ListOptions
 		//
 		// We're simulating the immediate watch termination, which boils down to simply
 		// closing the watcher.
+		utilflowcontrol.WatchInitialized(ctx)
 		return newImmediateCloseWatcher(), nil
 	}
 	if opts.Predicate.ShardingEnabled() {
@@ -930,6 +939,9 @@ func (c *Cacher) watch(ctx context.Context, key string, requestedWatchRV uint64,
 	c.Lock()
 	defer c.Unlock()
 
+	if ctx.Err() != nil {
+		return nil, nil
+	}
 	if generation, _, err := c.ready.checkAndReadGeneration(); generation != readyGeneration || err != nil {
 		// We went unready or are already on a different generation.
 		// Avoid registering and starting the watch as it will have to be
@@ -1783,6 +1795,10 @@ func (c *Cacher) Ready() bool {
 // errWatcher implements watch.Interface to return a single error
 type errWatcher struct {
 	result chan watch.Event
+}
+
+func isCancelError(err error) bool {
+	return goerrors.Is(err, context.Canceled) || grpcstatus.Code(err) == grpccodes.Canceled
 }
 
 func newErrWatcher(err error) *errWatcher {

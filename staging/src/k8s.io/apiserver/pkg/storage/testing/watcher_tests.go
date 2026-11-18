@@ -546,20 +546,54 @@ func RunTestWatchWithUnsafeDelete(ctx context.Context, t *testing.T, store Inter
 }
 
 func RunTestWatchContextCancel(ctx context.Context, t *testing.T, store storage.Interface) {
+	testPropagateStore(ctx, t, store, &example.Pod{ObjectMeta: metav1.ObjectMeta{Name: "foo", Namespace: "not-existing"}})
+
 	canceledCtx, cancel := context.WithCancel(ctx)
 	cancel()
-	// When we watch with a canceled context, we should detect that it's context canceled.
-	// We won't take it as error and also close the watcher.
-	w, err := store.Watch(canceledCtx, "/pods/not-existing", storage.ListOptions{
-		ResourceVersion: "0",
-		Predicate:       storage.Everything,
-		Recursive:       true,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
 
-	testCheckStop(t, w)
+	expiredCtx, cancelExpired := context.WithDeadline(ctx, time.Now().Add(-time.Second))
+	defer cancelExpired()
+
+	predWithBookmarks := storage.Everything
+	predWithBookmarks.AllowWatchBookmarks = true
+
+	// When we watch with a canceled or already-expired context, we should detect that
+	// the caller context is done, emit no watch.Error event, signal initialization,
+	// and close ResultChan() cleanly.
+	for _, doneCtx := range []context.Context{canceledCtx, expiredCtx} {
+		for _, opts := range []storage.ListOptions{
+			{
+				ResourceVersion: "0",
+				Predicate:       storage.Everything,
+				Recursive:       true,
+			},
+			{
+				SendInitialEvents: ptr.To(false),
+				Predicate:         storage.Everything,
+				Recursive:         true,
+			},
+			{
+				ResourceVersionMatch: metav1.ResourceVersionMatchNotOlderThan,
+				SendInitialEvents:    ptr.To(true),
+				Predicate:            predWithBookmarks,
+				Recursive:            true,
+			},
+			{
+				ResourceVersion:      "999999",
+				ResourceVersionMatch: metav1.ResourceVersionMatchNotOlderThan,
+				SendInitialEvents:    ptr.To(true),
+				Predicate:            predWithBookmarks,
+				Recursive:            true,
+			},
+		} {
+			initSignal := utilflowcontrol.NewInitializationSignal()
+			watchCtx := utilflowcontrol.WithInitializationSignal(doneCtx, initSignal)
+			w, err := store.Watch(watchCtx, "/pods/not-existing", opts)
+			require.NoError(t, err)
+			testCheckStop(t, w)
+			initSignal.Wait()
+		}
+	}
 }
 
 func RunTestWatcherTimeout(ctx context.Context, t *testing.T, store storage.Interface) {

@@ -48,6 +48,7 @@ import (
 	etcdfeature "k8s.io/apiserver/pkg/storage/feature"
 	storagetesting "k8s.io/apiserver/pkg/storage/testing"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	utilflowcontrol "k8s.io/apiserver/pkg/util/flowcontrol"
 	featuregatetesting "k8s.io/component-base/featuregate/testing"
 	"k8s.io/component-base/metrics/legacyregistry"
 	"k8s.io/component-base/metrics/testutil"
@@ -296,6 +297,46 @@ func TestTooLargeResourceVersionErrorForWatchList(t *testing.T) {
 	expectedErr.ErrStatus.Details = actualErr.Details
 	if diff := cmp.Diff(*actualErr, expectedErr.ErrStatus); diff != "" {
 		t.Fatalf("Unexpected error returned, diff: %v", diff)
+	}
+}
+
+func TestWatchStartupGetCurrentRVErrorDeliveredAsWatchEvent(t *testing.T) {
+	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.WatchList, true)
+	ctx, store, _ := testSetup(t)
+
+	kvWrapper := newEtcdClientKVWrapper(store.client.KV)
+	kvWrapper.getErr = grpcstatus.Error(grpccodes.Unavailable, "etcd unavailable")
+	store.client.KV = kvWrapper
+
+	for _, sendInitialEvents := range []bool{false, true} {
+		t.Run(fmt.Sprintf("SendInitialEvents=%v", sendInitialEvents), func(t *testing.T) {
+			initSignal := utilflowcontrol.NewInitializationSignal()
+			watchCtx := utilflowcontrol.WithInitializationSignal(ctx, initSignal)
+			pred := storage.Everything
+			pred.AllowWatchBookmarks = true
+			w, err := store.Watch(watchCtx, "/pods/", storage.ListOptions{
+				SendInitialEvents: &sendInitialEvents,
+				Recursive:         true,
+				Predicate:         pred,
+			})
+			if err != nil {
+				t.Fatalf("expected Watch startup storage error to be delivered as watch.Error event, got direct err: %v", err)
+			}
+			defer w.Stop()
+			initSignal.Wait()
+
+			ev, ok := <-w.ResultChan()
+			if !ok || ev.Type != watch.Error {
+				t.Fatalf("expected watch.Error event, got ok=%v event=%#v", ok, ev)
+			}
+			status, ok := ev.Object.(*metav1.Status)
+			if !ok || status.Code != 500 {
+				t.Fatalf("expected 500 InternalError *metav1.Status, got %#v", ev.Object)
+			}
+			if _, stillOpen := <-w.ResultChan(); stillOpen {
+				t.Fatalf("expected ResultChan() to close after terminal watch.Error")
+			}
+		})
 	}
 }
 
@@ -596,6 +637,8 @@ type etcdClientKVWrapper struct {
 	streamKV clientv3.KV
 	// when nonzero, GetStream pins the stream to this revision
 	streamRev int64
+	// when non-nil, Get returns getErr directly
+	getErr error
 	// getReactors is called after the etcd KV's get function is executed.
 	getReactors []func()
 }
@@ -609,6 +652,9 @@ func newEtcdClientKVWrapper(kv clientv3.KV) *etcdClientKVWrapper {
 
 func (ecw *etcdClientKVWrapper) GetStream(ctx context.Context, key string, opts ...clientv3.OpOption) (clientv3.GetStreamChan, error) {
 	ecw.getStreamCallCounter++
+	if ecw.getErr != nil {
+		return nil, ecw.getErr
+	}
 	if ecw.streamKV != nil {
 		return ecw.streamKV.GetStream(ctx, key, opts...)
 	}
@@ -637,6 +683,10 @@ func (unimplementedRangeStream) Recv() (*pb.RangeStreamResponse, error) {
 }
 
 func (ecw *etcdClientKVWrapper) Get(ctx context.Context, key string, opts ...clientv3.OpOption) (*clientv3.GetResponse, error) {
+	if ecw.getErr != nil {
+		ecw.getCallCounter++
+		return nil, ecw.getErr
+	}
 	resp, err := ecw.KV.Get(ctx, key, opts...)
 	ecw.getCallCounter++
 	if err != nil {

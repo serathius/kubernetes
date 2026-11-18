@@ -155,11 +155,15 @@ func (w *watcher) Watch(ctx context.Context, key string, rev int64, opts storage
 			return nil, apierrors.NewInternalError(errors.New("watchWithoutPrevKV requires a reverseKeyFunc"))
 		}
 	}
+	wc := w.createWatchChan(ctx, key, rev, opts.Recursive, opts.ProgressNotify, opts.RecordTimestamps, opts.WatchWithoutPrevKV, opts.Predicate)
 	startWatchRV, err := w.getStartWatchResourceVersion(ctx, rev, opts)
 	if err != nil {
-		return nil, err
+		wc.sendError(err)
+		close(wc.resultChan)
+		utilflowcontrol.WatchInitialized(ctx)
+		return wc, nil
 	}
-	wc := w.createWatchChan(ctx, key, startWatchRV, opts.Recursive, opts.ProgressNotify, opts.RecordTimestamps, opts.WatchWithoutPrevKV, opts.Predicate)
+	wc.initialRev = startWatchRV
 	go wc.run(isInitialEventsEndBookmarkRequired(opts), areInitialEventsRequired(rev, opts))
 
 	// For etcd watch we don't have an easy way to answer whether the watch
@@ -267,7 +271,7 @@ func isCancelError(err error) bool {
 	if err == nil {
 		return false
 	}
-	if err == context.Canceled {
+	if errors.Is(err, context.Canceled) {
 		return true
 	}
 	if etcdErr, ok := err.(etcdError); ok && etcdErr.Code() == grpccodes.Canceled {
@@ -479,7 +483,9 @@ func (wc *watchChan) startWatching(watchClosedCh chan struct{}, initialEventsEnd
 	}
 	if forceInitialEvents {
 		if err := wc.sync(); err != nil {
-			klog.Errorf("failed to sync with latest state: %v", err)
+			if !isCancelError(err) && wc.ctx.Err() == nil {
+				klog.Errorf("failed to sync with latest state: %v", err)
+			}
 			wc.sendError(err)
 			return
 		}
@@ -807,11 +813,12 @@ func transformErrorToEvent(err error) *watch.Event {
 // sendError synchronously puts an error event into resultChan and
 // trigger cancelling all goroutines.
 func (wc *watchChan) sendError(err error) {
+	alreadyDone := wc.ctx.Err() != nil
 	// We use wc.ctx to reap all goroutines. Under whatever condition, we should stop them all.
 	// It's fine to double cancel.
 	defer wc.cancel()
 
-	if isCancelError(err) {
+	if isCancelError(err) || alreadyDone {
 		return
 	}
 	errResult := transformErrorToEvent(err)
