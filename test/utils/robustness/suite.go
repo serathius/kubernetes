@@ -48,6 +48,7 @@ type RobustnessTestSuite struct {
 
 	checkWhenSettled bool
 	quietWindow      time.Duration
+	stabilityWindow  time.Duration
 
 	scenarioFaults map[string][]func(ControllerProfile, *FaultRegistry) []FaultRule
 	scenarioVerify map[string][]func(ControllerProfile, *RobustnessTestFixture)
@@ -75,6 +76,11 @@ func (s *RobustnessTestSuite) Profile() ControllerProfile {
 // AddScenario appends a custom scenario to the matrix.
 func (s *RobustnessTestSuite) AddScenario(scenario ChaosScenario) {
 	s.matrix = append(s.matrix, scenario)
+}
+
+// SetScenarios replaces the scenario matrix with scenarios.
+func (s *RobustnessTestSuite) SetScenarios(scenarios []ChaosScenario) {
+	s.matrix = append([]ChaosScenario(nil), scenarios...)
 }
 
 // AddScenarioFaults registers extra fault rules (typically sensors) for the
@@ -125,6 +131,13 @@ func (s *RobustnessTestSuite) SetLivenessTimeout(timeout time.Duration) {
 func (s *RobustnessTestSuite) CheckWhenSettled(quietWindow time.Duration) {
 	s.checkWhenSettled = true
 	s.quietWindow = quietWindow
+}
+
+// CheckStability enables post-convergence ESR verification: after liveness
+// converges and injected stalls release, the suite verifies that liveness stays
+// true and zero mutating API requests occur across stabilityWindow.
+func (s *RobustnessTestSuite) CheckStability(stabilityWindow time.Duration) {
+	s.stabilityWindow = stabilityWindow
 }
 
 // checkScenarioHooks rejects hooks that name a scenario not in the matrix.
@@ -198,10 +211,19 @@ func (s *RobustnessTestSuite) Run() {
 
 			// 5. Execute the trigger action, then signal completion for phase-gated faults.
 			tCtx.Logf("Executing scenario trigger action...")
-			if err := s.scenarioAction(ctx, fixture); err != nil {
+			action := s.scenarioAction
+			if scenario.Action != nil {
+				action = scenario.Action
+			}
+			if err := action(ctx, fixture); err != nil {
 				tCtx.Fatalf("Scenario trigger action failed: %v", err)
 			}
 			fixture.Registry().Signal(SignalTriggerComplete)
+			if scenario.AfterTrigger != nil {
+				if err := scenario.AfterTrigger(ctx, fixture); err != nil {
+					tCtx.Fatalf("Scenario AfterTrigger hook failed: %v", err)
+				}
+			}
 
 			// 6. Assert convergence (liveness) while safety invariants run in the background.
 			var livenessNames []string
@@ -235,6 +257,12 @@ func (s *RobustnessTestSuite) Run() {
 				} else {
 					fixture.AssertEventually(allLiveness, compositeLiveness, s.livenessTimeout)
 				}
+			}
+
+			// 7b. ESR post-convergence stability and write-quiescence check.
+			if s.stabilityWindow > 0 {
+				tCtx.Logf("Verifying post-convergence stability and write quiescence (%s) for %v...", allLiveness, s.stabilityWindow)
+				fixture.AssertStableAndQuiescent(allLiveness, compositeLiveness, s.stabilityWindow)
 			}
 
 			// 8. Scenario-specific extra assertions, if any.

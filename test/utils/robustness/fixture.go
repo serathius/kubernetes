@@ -347,6 +347,49 @@ func (f *RobustnessTestFixture) AssertWhenSettled(name string, fn Invariant, qui
 	}
 }
 
+// MutationCount returns the number of mutating REST requests observed so far.
+func (f *RobustnessTestFixture) MutationCount() int64 {
+	return f.activity.mutations.Load()
+}
+
+// AssertStableAndQuiescent verifies the ESR post-convergence contract: fn must
+// remain satisfied continuously across stabilityWindow AND the controller must
+// issue zero mutating API requests during that window.
+func (f *RobustnessTestFixture) AssertStableAndQuiescent(name string, fn Invariant, stabilityWindow time.Duration) {
+	f.tCtx.Helper()
+	if stabilityWindow <= 0 {
+		return
+	}
+	startMutations := f.activity.mutations.Load()
+	deadline := time.Now().Add(stabilityWindow)
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		f.mu.RLock()
+		invErr := f.invariantErr
+		f.mu.RUnlock()
+		if invErr != nil {
+			f.tCtx.Fatalf("ESR stability check for %q aborted: continuous invariant was violated: %v", name, invErr)
+		}
+		if err := fn(f.ctx, f.AdminClientSet()); err != nil {
+			f.tCtx.Fatalf("ESR stability violation: %q regressed during %v stability window: %v", name, stabilityWindow, err)
+		}
+		if !time.Now().Before(deadline) {
+			break
+		}
+		select {
+		case <-f.ctx.Done():
+			f.tCtx.Fatalf("ESR stability check for %q interrupted: %v", name, f.ctx.Err())
+		case <-ticker.C:
+		}
+	}
+
+	if delta := f.activity.mutations.Load() - startMutations; delta > 0 {
+		f.tCtx.Fatalf("ESR write-quiescence violation: %d unexpected mutating API request(s) during %v stability window after %q settled", delta, stabilityWindow, name)
+	}
+}
+
 // WaitForBlockingFaults blocks until every fired InjectDelay has released (plus
 // a short margin for the controller to observe the backlog). It reports whether
 // it waited at all. Returns early if the fixture context is cancelled.

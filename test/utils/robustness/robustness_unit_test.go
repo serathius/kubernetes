@@ -888,3 +888,77 @@ func TestControllerRestartLifecycle(t *testing.T) {
 		t.Fatalf("after StopController: exited=%d, want 2", exited)
 	}
 }
+
+func TestESRChaosMatrixHonorsProfile(t *testing.T) {
+	profiles := map[string]ControllerProfile{
+		"minimal": {Root: ResourceRef{Resource: "leases", Name: "n"}, WritesRoot: true},
+		"full":    {Root: ResourceRef{Group: "apps", Resource: "replicasets", Name: "rs-1"}, WritesRootStatus: true, UsesExpectations: true, Child: &ChildResource{Resource: "pods", CreatedByController: true}},
+		"child-not-created": {
+			Root:             ResourceRef{Resource: "nodes", Name: "n"},
+			WritesRootStatus: true,
+			Child:            &ChildResource{Resource: "pods"},
+		},
+	}
+	want := map[string]map[string][]string{
+		"minimal": {
+			"WatchCompactionRelist": {"RootWatchCompactionRelist"},
+			"LostWriteResponse":     {"LoseRootWriteResponse"},
+		},
+		"full": {
+			"WatchCompactionRelist": {"ChildWatchCompactionRelist"},
+			"LostWriteResponse":     {"LoseChildCreateResponse"},
+			"StaleChildSnapshot":    {"ChildCreateObserved", "StallChildWatchForSnapshot", "StaleChildSnapshot"},
+		},
+		"child-not-created": {
+			"WatchCompactionRelist": {"ChildWatchCompactionRelist"},
+			"LostWriteResponse":     {"LoseRootStatusResponse"},
+		},
+	}
+
+	for name, profile := range profiles {
+		t.Run(name, func(t *testing.T) {
+			reg := NewFaultRegistry()
+			for _, scenario := range ESRChaosMatrix() {
+				if scenario.Faults == nil {
+					continue
+				}
+				var got []string
+				for _, rule := range scenario.Faults(profile, reg) {
+					if err := validateFaultDomain(rule); err != nil {
+						t.Errorf("scenario %q produced invalid rule %q: %v", scenario.Name, rule.Name, err)
+					}
+					got = append(got, rule.Name)
+				}
+				if diff := cmp.Diff(want[name][scenario.Name], got, cmpopts.EquateEmpty()); diff != "" {
+					t.Errorf("ESR scenario %q rules for profile %q (-want +got):\n%s", scenario.Name, name, diff)
+				}
+			}
+		})
+	}
+}
+
+func TestAssertStableAndQuiescentPassesWhenIdle(t *testing.T) {
+	tCtx := ktesting.Init(t)
+	ctx, cancel := context.WithCancel(tCtx)
+	defer cancel()
+
+	f := &RobustnessTestFixture{
+		tCtx:     tCtx,
+		ctx:      ctx,
+		cancel:   cancel,
+		activity: &activityTracker{},
+	}
+	f.activity.recordMutation()
+
+	calls := 0
+	f.AssertStableAndQuiescent("steady", func(context.Context, clientset.Interface) error {
+		calls++
+		return nil
+	}, 150*time.Millisecond)
+	if calls < 2 {
+		t.Fatalf("expected multiple stability polls across 150ms, got %d", calls)
+	}
+	if f.MutationCount() != 1 {
+		t.Fatalf("MutationCount = %d, want 1", f.MutationCount())
+	}
+}

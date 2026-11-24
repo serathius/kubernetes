@@ -17,6 +17,7 @@ limitations under the License.
 package robustness
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -28,13 +29,21 @@ import (
 const SignalTriggerComplete = "trigger.action.completed"
 
 // ChaosScenario is one cell of the chaos matrix: a named set of faults derived
-// from the ControllerProfile, plus optional post-convergence verification.
+// from the ControllerProfile, plus optional trigger and post-convergence hooks.
 type ChaosScenario struct {
 	Name string
 
 	// Faults returns the fault rules to inject for this scenario, or nil when
 	// the profile exposes no applicable injection site.
 	Faults func(profile ControllerProfile, registry *FaultRegistry) []FaultRule
+
+	// Action, if non-nil, overrides the suite's default ScenarioActionFn for
+	// this scenario cell.
+	Action ScenarioActionFn
+
+	// AfterTrigger, if non-nil, runs immediately after the trigger action and
+	// SignalTriggerComplete (e.g. to restart the controller mid-reconcile).
+	AfterTrigger ScenarioActionFn
 
 	// Verify, if non-nil, runs after convergence for extra assertions.
 	Verify func(profile ControllerProfile, fixture *RobustnessTestFixture)
@@ -185,6 +194,101 @@ func StandardChaosMatrix() []ChaosScenario {
 					})
 				}
 				return rules
+			},
+		},
+	}
+}
+
+// ESRChaosMatrix returns scenarios targeting Eventually Stable Reconciliation
+// (ESR) failure modes: 410 Gone watch compaction relists, post-commit lost
+// write responses, older single-resource cache snapshots, and mid-reconcile
+// controller restarts.
+func ESRChaosMatrix() []ChaosScenario {
+	return []ChaosScenario{
+		{
+			Name: "WatchCompactionRelist",
+			Faults: func(p ControllerProfile, _ *FaultRegistry) []FaultRule {
+				if p.HasChildCache() {
+					return []FaultRule{{
+						Name:            "ChildWatchCompactionRelist",
+						Match:           p.ChildWatchMatch(),
+						Condition:       TriggerOnOccurrence(1),
+						Action:          ForceWatchCompactionRelist{},
+						ExpectTriggered: true,
+					}}
+				}
+				return []FaultRule{{
+					Name:            "RootWatchCompactionRelist",
+					Match:           p.RootWatchMatch(),
+					Condition:       TriggerOnOccurrence(1),
+					Action:          ForceWatchCompactionRelist{},
+					ExpectTriggered: true,
+				}}
+			},
+		},
+		{
+			Name: "LostWriteResponse",
+			Faults: func(p ControllerProfile, _ *FaultRegistry) []FaultRule {
+				switch {
+				case p.CreatesChildren():
+					return []FaultRule{{
+						Name:            "LoseChildCreateResponse",
+						Match:           p.ChildCreateMatch(),
+						Condition:       TriggerOnOccurrence(1),
+						Action:          LoseResponseAfterCommit{},
+						ExpectTriggered: true,
+					}}
+				case p.WritesRootStatus:
+					return []FaultRule{{
+						Name:            "LoseRootStatusResponse",
+						Match:           p.RootStatusWriteMatch(),
+						Condition:       TriggerOnOccurrence(1),
+						Action:          LoseResponseAfterCommit{},
+						ExpectTriggered: true,
+					}}
+				case p.WritesRoot:
+					return []FaultRule{{
+						Name:            "LoseRootWriteResponse",
+						Match:           p.RootWriteMatch(),
+						Condition:       TriggerOnOccurrence(1),
+						Action:          LoseResponseAfterCommit{},
+						ExpectTriggered: true,
+					}}
+				default:
+					return nil
+				}
+			},
+		},
+		{
+			Name: "StaleChildSnapshot",
+			Faults: func(p ControllerProfile, reg *FaultRegistry) []FaultRule {
+				if !p.HasChildCache() || !p.CreatesChildren() {
+					return nil
+				}
+				return []FaultRule{
+					childCreateSensor(p),
+					{
+						Name:            "StallChildWatchForSnapshot",
+						Match:           p.ChildWatchMatch(),
+						Condition:       TriggerOnOccurrence(1),
+						Action:          InjectDelay{Duration: 600 * time.Millisecond},
+						ExpectTriggered: true,
+					},
+					{
+						Name:            "StaleChildSnapshot",
+						Match:           p.ChildCacheMatch(),
+						Condition:       TriggerWindowAfterRuleHit(reg, "ChildCreateObserved", 500*time.Millisecond),
+						Action:          StaleSnapshot{StepsBack: 1, PinFirst: true},
+						ExpectTriggered: true,
+					},
+				}
+			},
+		},
+		{
+			Name: "ControllerRestartMidReconcile",
+			AfterTrigger: func(_ context.Context, fixture *RobustnessTestFixture) error {
+				fixture.RestartController()
+				return nil
 			},
 		},
 	}
