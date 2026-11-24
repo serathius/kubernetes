@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"slices"
 	"sync"
@@ -71,6 +72,12 @@ type RobustnessTestFixture struct {
 	monitorDone chan struct{}  // closed when the invariant monitor goroutine exits
 	goroutines  sync.WaitGroup // goroutines started via Go
 
+	ctrlMu     sync.Mutex
+	ctrlCtx    context.Context
+	ctrlCancel context.CancelFunc
+	ctrlWG     sync.WaitGroup
+	ctrlSetup  ControllerSetupFn
+
 	mu                   sync.RWMutex
 	continuousInvariants []NamedInvariant
 	invariantErr         error
@@ -93,6 +100,11 @@ func newFixture(tCtx ktesting.TContext, registry *FaultRegistry) *RobustnessTest
 		ModifyServerRunOptions: func(o *options.ServerRunOptions) {
 			// Pods need no service account, and no admission-added node taints.
 			o.Admission.GenericAdmission.DisablePlugins = []string{"ServiceAccount", "TaintNodesByCondition", "Priority", "StorageObjectInUseProtection"}
+			if o.GenericServerRunOptions.AdvertiseAddress == nil {
+				// RFC 5737 TEST-NET-1 avoids /proc/net/route lookup in network-isolated
+				// sandboxes while SecureServing remains bound to 127.0.0.1.
+				o.GenericServerRunOptions.AdvertiseAddress = net.ParseIP("192.0.2.1")
+			}
 		},
 	})
 	ctx, cancel := context.WithCancel(tCtx)
@@ -121,6 +133,74 @@ func newFixture(tCtx ktesting.TContext, registry *FaultRegistry) *RobustnessTest
 // controller that does not stop when its context is cancelled fails its own cell.
 func (f *RobustnessTestFixture) Go(fn func(ctx context.Context)) {
 	f.goroutines.Go(func() { fn(f.ctx) })
+}
+
+// ControllerContext returns the context for the active controller instance, or
+// the fixture context if StartController has not been called.
+func (f *RobustnessTestFixture) ControllerContext() context.Context {
+	f.ctrlMu.Lock()
+	defer f.ctrlMu.Unlock()
+	if f.ctrlCtx != nil {
+		return f.ctrlCtx
+	}
+	return f.ctx
+}
+
+// GoController runs fn with the active controller context in a goroutine
+// joined by StopController and TearDown.
+func (f *RobustnessTestFixture) GoController(fn func(ctx context.Context)) {
+	ctx := f.ControllerContext()
+	f.ctrlWG.Go(func() { fn(ctx) })
+}
+
+// StartController records fn and starts a controller generation with a fresh
+// cancellable child context.
+func (f *RobustnessTestFixture) StartController(fn ControllerSetupFn) {
+	f.tCtx.Helper()
+	f.ctrlMu.Lock()
+	if fn != nil {
+		f.ctrlSetup = fn
+	}
+	setup := f.ctrlSetup
+	f.ctrlCtx, f.ctrlCancel = context.WithCancel(f.ctx)
+	f.ctrlMu.Unlock()
+	if setup == nil {
+		f.tCtx.Fatal("StartController: no ControllerSetupFn registered")
+	}
+	setup(f.tCtx, f)
+}
+
+// StopController cancels the active controller context (stopping informers and
+// GoController goroutines) and waits for them to exit.
+func (f *RobustnessTestFixture) StopController() {
+	f.tCtx.Helper()
+	f.ctrlMu.Lock()
+	cancel := f.ctrlCancel
+	f.ctrlCancel = nil
+	f.ctrlCtx = nil
+	f.ctrlMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	done := make(chan struct{})
+	go func() {
+		f.ctrlWG.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		f.tCtx.Fatalf("controller goroutines started with GoController did not exit within 10s of StopController")
+	}
+}
+
+// RestartController stops the active controller generation and starts a fresh
+// controller instance against the same running API server (simulating a
+// leader-election failover or process restart that wipes in-memory state).
+func (f *RobustnessTestFixture) RestartController() {
+	f.tCtx.Helper()
+	f.StopController()
+	f.StartController(nil)
 }
 
 // TCtx returns the scenario subtest's context.
@@ -167,8 +247,9 @@ func (f *RobustnessTestFixture) WrapIndexer(realIndexer cache.Indexer, name stri
 // StartInformers starts the given InformerFactory and blocks until all informer caches have synced.
 func (f *RobustnessTestFixture) StartInformers(factory informers.SharedInformerFactory) {
 	f.tCtx.Helper()
-	factory.Start(f.ctx.Done())
-	synced := factory.WaitForCacheSync(f.ctx.Done())
+	stopCh := f.ControllerContext().Done()
+	factory.Start(stopCh)
+	synced := factory.WaitForCacheSync(stopCh)
 	for typ, ok := range synced {
 		if !ok {
 			f.tCtx.Fatalf("failed to sync cache for informer: %v", typ)
@@ -357,6 +438,7 @@ func (f *RobustnessTestFixture) TearDown() {
 	<-f.monitorDone
 	done := make(chan struct{})
 	go func() {
+		f.ctrlWG.Wait()
 		f.goroutines.Wait()
 		close(done)
 	}()

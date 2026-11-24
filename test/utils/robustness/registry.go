@@ -20,12 +20,16 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"net/http"
 	"os"
 	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/watch"
 )
 
 // SeedEnvVar pins the FaultRegistry seed for replaying probabilistic faults.
@@ -144,18 +148,21 @@ func wildcard(matcher, fact string) bool { return matcher == "" || matcher == fa
 // ClientFacts describes a REST request seen by the transport, or one event on
 // a watch stream (Verb == VerbWatch, Name/Namespace from the event's object).
 type ClientFacts struct {
-	Verb        string // HTTP method, e.g. "PUT", "POST", or VerbWatch for watch events
-	Group       string // API group, e.g. "apps" ("" for the core group)
-	Resource    string // plural resource, e.g. "daemonsets"
-	Subresource string // e.g. "status" ("" for the main resource)
+	Verb        string          // HTTP method, e.g. "PUT", "POST", or VerbWatch for watch events
+	EventType   watch.EventType // watch event type when Verb == VerbWatch (ADDED, MODIFIED, DELETED, BOOKMARK)
+	Group       string          // API group, e.g. "apps" ("" for the core group)
+	Resource    string          // plural resource, e.g. "daemonsets"
+	Subresource string          // e.g. "status" ("" for the main resource)
 	Namespace   string
 	Name        string
 }
 
 // ClientMatch matches REST requests. Empty fields are wildcards, except
 // Subresource which is matched exactly ("" = main resource only).
+// Watch bookmarks only match when EventTypes explicitly includes watch.Bookmark.
 type ClientMatch struct {
-	Verbs       []string // HTTP methods or VerbWatch, empty matches any
+	Verbs       []string          // HTTP methods or VerbWatch, empty matches any
+	EventTypes  []watch.EventType // watch event types when matching VerbWatch; empty matches non-bookmark events
 	Group       string
 	Resource    string
 	Subresource string
@@ -166,7 +173,11 @@ type ClientMatch struct {
 func (ClientMatch) domain() faultDomain { return domainTransport }
 
 func (m ClientMatch) matches(f ClientFacts) bool {
+	if f.EventType == watch.Bookmark && !slices.Contains(m.EventTypes, watch.Bookmark) {
+		return false
+	}
 	return (len(m.Verbs) == 0 || slices.Contains(m.Verbs, f.Verb)) &&
+		(len(m.EventTypes) == 0 || slices.Contains(m.EventTypes, f.EventType)) &&
 		wildcard(m.Group, f.Group) &&
 		wildcard(m.Resource, f.Resource) &&
 		m.Subresource == f.Subresource &&
@@ -211,11 +222,36 @@ func (m ClockMatch) matches(f ClockFacts) bool { return wildcard(m.Clock, f.Cloc
 // TransportFault returns a synthetic API error for the REST transport (nil passes through).
 type TransportFault interface{ ApplyTransport() *HTTPStatusError }
 
+// PostTransportFault intercepts a REST response after the real transport completes.
+type PostTransportFault interface {
+	ApplyPostTransport(resp *http.Response, err error) (*http.Response, error)
+}
+
+// WatchAction describes how watchEventReader handles a matched watch event.
+type WatchAction struct {
+	Drop                   bool
+	Terminate              bool
+	ForwardBeforeTerminate bool
+	Status                 *metav1.Status
+}
+
+// WatchFault alters a watch stream when an event matches.
+type WatchFault interface {
+	ApplyWatch(ctx context.Context) WatchAction
+}
+
 // CacheFault reports whether an informer cache lookup should simulate a stale read.
 type CacheFault interface{ ApplyCache() (stale bool) }
 
+// CacheSnapshotFault returns a StaleSnapshot policy for serving an older
+// single-resource snapshot from FaultInjectingIndexer.
+type CacheSnapshotFault interface{ ApplyCacheSnapshot() *StaleSnapshot }
+
 // ClockFault returns the time offset to add to a wrapped clock's Now().
 type ClockFault interface{ ApplyClock() time.Duration }
+
+// ClockFreezeFault reports whether a wrapped clock should freeze its base time.
+type ClockFreezeFault interface{ ApplyClockFreeze() bool }
 
 // BlockingFault blocks the calling goroutine and is valid at any injection site.
 type BlockingFault interface{ Block(ctx context.Context) }
@@ -369,62 +405,107 @@ func (r *FaultRegistry) fire(ctx context.Context, domain faultDomain, pred func(
 
 // ResolveTransport returns the first triggered HTTPStatusError matching facts, or nil to pass through.
 func (r *FaultRegistry) ResolveTransport(ctx context.Context, facts ClientFacts) *HTTPStatusError {
+	resp, _ := r.resolveTransport(ctx, facts)
+	return resp
+}
+
+func (r *FaultRegistry) resolveTransport(ctx context.Context, facts ClientFacts) (*HTTPStatusError, PostTransportFault) {
 	var resp *HTTPStatusError
+	var post PostTransportFault
 	r.fire(ctx, domainTransport, func(m FaultMatch) bool {
 		cm, ok := m.(ClientMatch)
 		return ok && cm.matches(facts)
 	}, func(action FaultAction) (bool, bool) {
-		tf, ok := action.(TransportFault)
-		if !ok {
-			return false, false
+		if tf, ok := action.(TransportFault); ok {
+			resp = tf.ApplyTransport()
+			return true, true
 		}
-		resp = tf.ApplyTransport()
-		return true, true
+		if ptf, ok := action.(PostTransportFault); ok {
+			post = ptf
+			return true, true
+		}
+		return false, false
 	})
-	return resp
+	return resp, post
 }
 
-// ResolveWatchEvent evaluates transport rules against one watch event. Only
-// BlockingFault actions have an effect there.
-func (r *FaultRegistry) ResolveWatchEvent(ctx context.Context, facts ClientFacts) {
+// ResolveWatchEvent evaluates transport rules against one watch event.
+func (r *FaultRegistry) ResolveWatchEvent(ctx context.Context, facts ClientFacts) WatchAction {
+	var out WatchAction
 	r.fire(ctx, domainTransport, func(m FaultMatch) bool {
 		cm, ok := m.(ClientMatch)
 		return ok && cm.matches(facts)
-	}, nil)
+	}, func(action FaultAction) (bool, bool) {
+		wf, ok := action.(WatchFault)
+		if !ok {
+			return false, false
+		}
+		act := wf.ApplyWatch(ctx)
+		if !act.Drop && !act.Terminate {
+			return false, false
+		}
+		out = act
+		return true, true
+	})
+	return out
 }
 
 // ResolveCache reports whether any triggered CacheFault matching facts requests a stale read.
 func (r *FaultRegistry) ResolveCache(ctx context.Context, facts CacheFacts) bool {
+	stale, _ := r.ResolveCacheSnapshot(ctx, facts)
+	return stale
+}
+
+// ResolveCacheSnapshot evaluates cache rules, returning either staleEmpty (StaleRead)
+// or a StaleSnapshot policy (older single-resource snapshot).
+func (r *FaultRegistry) ResolveCacheSnapshot(ctx context.Context, facts CacheFacts) (bool, *StaleSnapshot) {
 	var stale bool
+	var snap *StaleSnapshot
 	r.fire(ctx, domainCache, func(m FaultMatch) bool {
 		cm, ok := m.(CacheMatch)
 		return ok && cm.matches(facts)
 	}, func(action FaultAction) (bool, bool) {
-		cf, ok := action.(CacheFault)
-		if !ok {
-			return false, false
+		if cf, ok := action.(CacheFault); ok {
+			stale = cf.ApplyCache()
+			return true, stale
 		}
-		stale = cf.ApplyCache()
-		return true, stale
+		if sf, ok := action.(CacheSnapshotFault); ok {
+			snap = sf.ApplyCacheSnapshot()
+			return snap != nil, snap != nil
+		}
+		return false, false
 	})
-	return stale
+	return stale, snap
 }
 
 // ResolveClock returns the total time shift from all triggered ClockFaults matching facts.
 func (r *FaultRegistry) ResolveClock(ctx context.Context, facts ClockFacts) time.Duration {
+	shift, _ := r.ResolveClockState(ctx, facts)
+	return shift
+}
+
+// ResolveClockState returns the total time shift and whether any triggered
+// ClockFreezeFault requests freezing the clock base time.
+func (r *FaultRegistry) ResolveClockState(ctx context.Context, facts ClockFacts) (time.Duration, bool) {
 	var shift time.Duration
+	var frozen bool
 	r.fire(ctx, domainClock, func(m FaultMatch) bool {
 		cm, ok := m.(ClockMatch)
 		return ok && cm.matches(facts)
 	}, func(action FaultAction) (bool, bool) {
-		cf, ok := action.(ClockFault)
-		if !ok {
-			return false, false
+		if cf, ok := action.(ClockFault); ok {
+			shift += cf.ApplyClock() // shifts accumulate and never decide
+			return true, false
 		}
-		shift += cf.ApplyClock() // shifts accumulate and never decide
-		return true, false
+		if ff, ok := action.(ClockFreezeFault); ok {
+			if ff.ApplyClockFreeze() {
+				frozen = true
+			}
+			return true, false
+		}
+		return false, false
 	})
-	return shift
+	return shift, frozen
 }
 
 // GetHitCount returns the total number of times faults with the specified ruleName were executed.
@@ -543,19 +624,34 @@ func validateFaultDomain(rule FaultRule) error {
 	switch rule.Match.domain() {
 	case domainTransport:
 		if cm, ok := rule.Match.(ClientMatch); ok && slices.Contains(cm.Verbs, VerbWatch) {
-			return fmt.Errorf("ClientMatch with Verb %q targets watch events, which only support BlockingFault actions (e.g. InjectDelay), but got %T", VerbWatch, rule.Action)
+			if _, ok := rule.Action.(WatchFault); !ok {
+				return fmt.Errorf("ClientMatch with Verb %q targets watch events, which only support BlockingFault or WatchFault actions (e.g. InjectDelay, DropEvent, TerminateWatch, ForceWatchCompactionRelist), but got %T", VerbWatch, rule.Action)
+			}
+			return nil
 		}
-		if _, ok := rule.Action.(TransportFault); !ok {
-			return fmt.Errorf("ClientMatch targets the REST transport but action %T is not a TransportFault", rule.Action)
+		if _, ok := rule.Action.(TransportFault); ok {
+			return nil
 		}
+		if _, ok := rule.Action.(PostTransportFault); ok {
+			return nil
+		}
+		return fmt.Errorf("ClientMatch targets the REST transport but action %T is not a TransportFault or PostTransportFault", rule.Action)
 	case domainCache:
-		if _, ok := rule.Action.(CacheFault); !ok {
-			return fmt.Errorf("CacheMatch targets an informer cache but action %T is not a CacheFault", rule.Action)
+		if _, ok := rule.Action.(CacheFault); ok {
+			return nil
 		}
+		if _, ok := rule.Action.(CacheSnapshotFault); ok {
+			return nil
+		}
+		return fmt.Errorf("CacheMatch targets an informer cache but action %T is not a CacheFault or CacheSnapshotFault", rule.Action)
 	case domainClock:
-		if _, ok := rule.Action.(ClockFault); !ok {
-			return fmt.Errorf("ClockMatch targets a clock but action %T is not a ClockFault", rule.Action)
+		if _, ok := rule.Action.(ClockFault); ok {
+			return nil
 		}
+		if _, ok := rule.Action.(ClockFreezeFault); ok {
+			return nil
+		}
+		return fmt.Errorf("ClockMatch targets a clock but action %T is not a ClockFault or ClockFreezeFault", rule.Action)
 	}
 	return nil
 }

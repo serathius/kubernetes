@@ -32,11 +32,14 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/watch"
 	clientset "k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/ktesting"
 	corelisters "k8s.io/client-go/listers/core/v1"
 	restclient "k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/kubernetes/pkg/controller"
+	"k8s.io/utils/clock"
 )
 
 // recordingTransport is a base RoundTripper that fails the test if it is ever
@@ -585,5 +588,303 @@ func TestInjectedConflictIsClassified(t *testing.T) {
 	}
 	if got := se.ErrStatus.Message; got != "object was modified" {
 		t.Errorf("decoded Status.Message = %q, want %q (the Status body was not decoded; is Content-Type set on the synthetic response?)", got, "object was modified")
+	}
+}
+
+type commitTrackingBody struct {
+	io.Reader
+	closed bool
+}
+
+func (b *commitTrackingBody) Close() error {
+	b.closed = true
+	return nil
+}
+
+type commitTrackingTransport struct {
+	commits int
+	status  int
+	bodies  []*commitTrackingBody
+}
+
+func (rt *commitTrackingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	rt.commits++
+	body := &commitTrackingBody{Reader: strings.NewReader(`{}`)}
+	rt.bodies = append(rt.bodies, body)
+	return &http.Response{
+		StatusCode: rt.status,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       body,
+		Request:    req,
+	}, nil
+}
+
+func TestLoseResponseAfterCommit(t *testing.T) {
+	reg := NewFaultRegistry()
+	reg.Register(FaultRule{
+		Name:      "lose-first",
+		Match:     ClientMatch{Verbs: []string{"POST"}, Resource: "pods"},
+		Condition: TriggerOnOccurrence(1),
+		Action:    LoseResponseAfterCommit{},
+	})
+	reg.Register(FaultRule{
+		Name:      "lose-504",
+		Match:     ClientMatch{Verbs: []string{"POST"}, Resource: "pods"},
+		Condition: TriggerOnOccurrence(2),
+		Action:    LoseResponseAfterCommit{StatusCode: http.StatusGatewayTimeout},
+	})
+	if err := validateFaultDomain(FaultRule{
+		Name:      "valid",
+		Match:     ClientMatch{Verbs: []string{"POST"}, Resource: "pods"},
+		Condition: TriggerAlways(),
+		Action:    LoseResponseAfterCommit{},
+	}); err != nil {
+		t.Fatalf("validateFaultDomain rejected LoseResponseAfterCommit: %v", err)
+	}
+	if err := validateFaultDomain(FaultRule{
+		Name:      "invalid-watch",
+		Match:     ClientMatch{Verbs: []string{VerbWatch}, Resource: "pods"},
+		Condition: TriggerAlways(),
+		Action:    LoseResponseAfterCommit{},
+	}); err == nil {
+		t.Fatal("validateFaultDomain accepted LoseResponseAfterCommit on VerbWatch")
+	}
+
+	base := &commitTrackingTransport{status: http.StatusCreated}
+	rt := NewFaultInjectingTransport(base, reg, nil)
+	req, _ := http.NewRequest(http.MethodPost, "http://apiserver/api/v1/namespaces/default/pods", nil)
+
+	if resp, err := rt.RoundTrip(req); !errors.Is(err, context.DeadlineExceeded) || resp != nil {
+		t.Fatalf("1st RoundTrip = (%v, %v), want (nil, context.DeadlineExceeded)", resp, err)
+	}
+	if base.commits != 1 || !base.bodies[0].closed {
+		t.Fatalf("1st RoundTrip: commits=%d bodyClosed=%v, want 1, true", base.commits, base.bodies[0].closed)
+	}
+
+	resp, err := rt.RoundTrip(req)
+	if err != nil || resp == nil || resp.StatusCode != http.StatusGatewayTimeout {
+		t.Fatalf("2nd RoundTrip = (%v, %v), want 504 response", resp, err)
+	}
+	_ = resp.Body.Close()
+	if base.commits != 2 || !base.bodies[1].closed {
+		t.Fatalf("2nd RoundTrip: commits=%d bodyClosed=%v, want 2, true", base.commits, base.bodies[1].closed)
+	}
+
+	reg2 := NewFaultRegistry()
+	reg2.Register(FaultRule{
+		Name:      "lose",
+		Match:     ClientMatch{Verbs: []string{"POST"}, Resource: "pods"},
+		Condition: TriggerAlways(),
+		Action:    LoseResponseAfterCommit{},
+	})
+	base409 := &commitTrackingTransport{status: http.StatusConflict}
+	resp, err = NewFaultInjectingTransport(base409, reg2, nil).RoundTrip(req)
+	if err != nil || resp == nil || resp.StatusCode != http.StatusConflict {
+		t.Fatalf("409 RoundTrip = (%v, %v), want 409 passthrough", resp, err)
+	}
+}
+
+type closeTrackingWatchRT struct {
+	stream string
+	closed bool
+}
+
+type closeTrackingReader struct {
+	io.Reader
+	parent *closeTrackingWatchRT
+}
+
+func (r *closeTrackingReader) Close() error {
+	r.parent.closed = true
+	return nil
+}
+
+func (rt *closeTrackingWatchRT) RoundTrip(*http.Request) (*http.Response, error) {
+	h := make(http.Header)
+	h.Set("Content-Type", "application/json")
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     h,
+		Body:       &closeTrackingReader{Reader: strings.NewReader(rt.stream), parent: rt},
+	}, nil
+}
+
+func TestWatchFaultsDropTerminateAndCompactionRelist(t *testing.T) {
+	ev := func(typ, name string) string {
+		return `{"type":"` + typ + `","object":{"kind":"Pod","apiVersion":"v1","metadata":{"name":"` + name + `","namespace":"default"}}}` + "\n"
+	}
+	bm := `{"type":"BOOKMARK","object":{"kind":"Pod","apiVersion":"v1","metadata":{"resourceVersion":"42","annotations":{"k8s.io/initial-events-end":"true"}}}}` + "\n"
+	stream := ev("ADDED", "p1") + bm + ev("DELETED", "p1") + ev("ADDED", "p2")
+	req, _ := http.NewRequest(http.MethodGet, "http://apiserver/api/v1/namespaces/default/pods?watch=true", nil)
+
+	// 1. ForceWatchCompactionRelist on DELETED invokes Compact and emits 410 Expired.
+	compacted := false
+	reg := NewFaultRegistry()
+	reg.Register(FaultRule{
+		Name:      "compact-410",
+		Match:     ClientMatch{Verbs: []string{VerbWatch}, EventTypes: []watch.EventType{watch.Deleted}, Resource: "pods"},
+		Condition: TriggerOnOccurrence(1),
+		Action: ForceWatchCompactionRelist{
+			Compact: func(context.Context) error { compacted = true; return nil },
+		},
+	})
+	base := &closeTrackingWatchRT{stream: stream}
+	resp, err := NewFaultInjectingTransport(base, reg, nil).RoundTrip(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(got)
+	if !compacted || !base.closed {
+		t.Fatalf("compacted=%v closed=%v, want true, true", compacted, base.closed)
+	}
+	if !strings.Contains(s, `"p1"`) || strings.Contains(s, `"DELETED"`) || strings.Contains(s, `"p2"`) || !strings.Contains(s, `"code":410`) {
+		t.Fatalf("unexpected 410 stream: %s", s)
+	}
+
+	// 2. DropEvent drops DELETED without closing stream, letting p2 through.
+	reg2 := NewFaultRegistry()
+	reg2.Register(FaultRule{
+		Name:      "drop-del",
+		Match:     ClientMatch{Verbs: []string{VerbWatch}, EventTypes: []watch.EventType{watch.Deleted}, Resource: "pods"},
+		Condition: TriggerOnOccurrence(1),
+		Action:    DropEvent{},
+	})
+	resp, err = NewFaultInjectingTransport(&closeTrackingWatchRT{stream: stream}, reg2, nil).RoundTrip(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ = io.ReadAll(resp.Body)
+	s = string(got)
+	if strings.Contains(s, `"DELETED"`) || !strings.Contains(s, `"p2"`) {
+		t.Fatalf("DropEvent stream = %s, want DELETED dropped and p2 delivered", s)
+	}
+
+	// 3. TerminateWatch with ForwardTriggerEvent on BOOKMARK delivers bookmark then EOF.
+	reg3 := NewFaultRegistry()
+	reg3.Register(FaultRule{
+		Name:      "eof-after-bm",
+		Match:     ClientMatch{Verbs: []string{VerbWatch}, EventTypes: []watch.EventType{watch.Bookmark}, Resource: "pods"},
+		Condition: TriggerOnOccurrence(1),
+		Action:    TerminateWatch{ForwardTriggerEvent: true},
+	})
+	base3 := &closeTrackingWatchRT{stream: stream}
+	resp, err = NewFaultInjectingTransport(base3, reg3, nil).RoundTrip(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ = io.ReadAll(resp.Body)
+	if string(got) != ev("ADDED", "p1")+bm || !base3.closed {
+		t.Fatalf("bookmark ForwardTriggerEvent stream = %q, closed=%v", string(got), base3.closed)
+	}
+}
+
+func TestStaleSnapshotServesOlderRevision(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	real := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+	reg := NewFaultRegistry()
+	fi := NewFaultInjectingIndexer(ctx, real, reg, "pods").(*FaultInjectingIndexer)
+
+	p1 := &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "p1", Namespace: "ns", ResourceVersion: "10", Labels: map[string]string{"app": "a"}}}
+	p2 := &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "p2", Namespace: "ns", ResourceVersion: "20", Labels: map[string]string{"app": "a"}}}
+	if err := fi.Add(p1); err != nil {
+		t.Fatal(err)
+	}
+	if err := fi.Add(p2); err != nil {
+		t.Fatal(err)
+	}
+	if err := fi.Delete(p2); err != nil {
+		t.Fatal(err)
+	}
+
+	// Live indexer now has only p1; 1 step back had both p1 and p2 (including deleted p2).
+	lister := corelisters.NewPodLister(fi)
+	if live, err := lister.Pods("ns").List(labels.Everything()); err != nil || len(live) != 1 {
+		t.Fatalf("live lister = %d, %v; want 1, nil", len(live), err)
+	}
+
+	reg.Register(FaultRule{
+		Name:      "stale-snap",
+		Match:     CacheMatch{Cache: "pods"},
+		Condition: TriggerAlways(),
+		Action:    StaleSnapshot{StepsBack: 1},
+	})
+	got, err := lister.Pods("ns").List(labels.Everything())
+	if err != nil || len(got) != 2 {
+		t.Fatalf("StaleSnapshot(StepsBack=1) namespaced List = %d, %v; want 2 (p1 + deleted p2)", len(got), err)
+	}
+	if rv := fi.LastStoreSyncResourceVersion(); rv != "20" {
+		t.Fatalf("StaleSnapshot LastStoreSyncResourceVersion = %q, want %q", rv, "20")
+	}
+}
+
+func TestFreezeTimeExactBoundary(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	reg := NewFaultRegistry()
+	reg.Register(FaultRule{
+		Name:      "freeze",
+		Match:     ClockMatch{Clock: ExpectationsClockName},
+		Condition: TriggerAlways(),
+		Action:    FreezeTime{},
+	})
+	clk := NewFaultInjectingClock(ctx, clock.RealClock{}, reg, ExpectationsClockName)
+	t0 := clk.Now()
+	time.Sleep(5 * time.Millisecond)
+	if d := clk.Since(t0); d != 0 {
+		t.Fatalf("frozen clock advanced by %v, want 0", d)
+	}
+	reg.Register(FaultRule{
+		Name:      "shift-exact",
+		Match:     ClockMatch{Clock: ExpectationsClockName},
+		Condition: TriggerAlways(),
+		Action:    ShiftTime{Offset: controller.ExpectationsTimeout},
+	})
+	if d := clk.Since(t0); d != controller.ExpectationsTimeout {
+		t.Fatalf("frozen+shifted clock Since = %v, want exact %v", d, controller.ExpectationsTimeout)
+	}
+}
+
+func TestControllerRestartLifecycle(t *testing.T) {
+	tCtx := ktesting.Init(t)
+	ctx, cancel := context.WithCancel(tCtx)
+	defer cancel()
+
+	f := &RobustnessTestFixture{
+		tCtx:   tCtx,
+		ctx:    ctx,
+		cancel: cancel,
+	}
+
+	var starts int
+	var exited int
+	f.StartController(func(_ ktesting.TContext, fixture *RobustnessTestFixture) {
+		starts++
+		fixture.GoController(func(cCtx context.Context) {
+			<-cCtx.Done()
+			exited++
+		})
+	})
+	if starts != 1 || exited != 0 {
+		t.Fatalf("after StartController: starts=%d exited=%d, want 1, 0", starts, exited)
+	}
+
+	f.RestartController()
+	if starts != 2 || exited != 1 {
+		t.Fatalf("after RestartController: starts=%d exited=%d, want 2, 1", starts, exited)
+	}
+	if f.Context().Err() != nil {
+		t.Fatalf("fixture Context() was cancelled by RestartController: %v", f.Context().Err())
+	}
+
+	f.StopController()
+	if exited != 2 {
+		t.Fatalf("after StopController: exited=%d, want 2", exited)
 	}
 }

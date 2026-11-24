@@ -191,7 +191,7 @@ func (s *RobustnessTestSuite) Run() {
 			}
 
 			// 4. Start the controller under test, then arm the scenario's faults.
-			s.controllerSetup(tCtx, fixture)
+			fixture.StartController(s.controllerSetup)
 			for _, rule := range rules {
 				fixture.InjectFault(rule)
 			}

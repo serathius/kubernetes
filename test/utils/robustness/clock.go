@@ -18,6 +18,7 @@ package robustness
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"k8s.io/utils/clock"
@@ -32,12 +33,24 @@ func (a ShiftTime) ApplyClock() time.Duration {
 	return a.Offset
 }
 
+// FreezeTime pins a wrapped clock at the timestamp captured on its first
+// frozen read. Combining FreezeTime with ShiftTime{Offset: d} lets scenarios
+// test exact timeout boundaries (e.g. Since(ts) == ExpectationsTimeout).
+type FreezeTime struct{}
+
+func (FreezeTime) ApplyClockFreeze() bool {
+	return true
+}
+
 // FaultInjectingClock wraps k8s.io/utils/clock.Clock and intercepts Now() and Since().
 type FaultInjectingClock struct {
 	clock.Clock
 	ctx      context.Context // bounds BlockingFault actions
 	registry *FaultRegistry
 	name     string
+
+	mu       sync.Mutex
+	frozenAt time.Time
 }
 
 // NewFaultInjectingClock creates a wrapped clock.Clock hooked to the registry.
@@ -52,8 +65,19 @@ func NewFaultInjectingClock(ctx context.Context, realClock clock.Clock, registry
 
 func (c *FaultInjectingClock) Now() time.Time {
 	realNow := c.Clock.Now()
-	shift := c.registry.ResolveClock(c.ctx, ClockFacts{Clock: c.name})
-	return realNow.Add(shift)
+	shift, frozen := c.registry.ResolveClockState(c.ctx, ClockFacts{Clock: c.name})
+	base := realNow
+	c.mu.Lock()
+	if frozen {
+		if c.frozenAt.IsZero() {
+			c.frozenAt = realNow
+		}
+		base = c.frozenAt
+	} else if !c.frozenAt.IsZero() {
+		c.frozenAt = time.Time{}
+	}
+	c.mu.Unlock()
+	return base.Add(shift)
 }
 
 func (c *FaultInjectingClock) Since(t time.Time) time.Duration {

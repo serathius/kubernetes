@@ -34,9 +34,17 @@ func (w *wrappedSharedIndexInformer) GetStore() cache.Store     { return w.index
 
 // WrapSharedIndexInformer decorates a cache.SharedIndexInformer to route its indexer lookups through the fault registry.
 func (f *RobustnessTestFixture) WrapSharedIndexInformer(realInformer cache.SharedIndexInformer, name string) cache.SharedIndexInformer {
+	wrapped := f.WrapIndexer(realInformer.GetIndexer(), name)
+	if fi, ok := wrapped.(*FaultInjectingIndexer); ok {
+		_, _ = realInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+			AddFunc:    func(any) { fi.RecordSnapshot() },
+			UpdateFunc: func(any, any) { fi.RecordSnapshot() },
+			DeleteFunc: func(any) { fi.RecordSnapshot() },
+		})
+	}
 	return &wrappedSharedIndexInformer{
 		SharedIndexInformer: realInformer,
-		indexer:             f.WrapIndexer(realInformer.GetIndexer(), name),
+		indexer:             wrapped,
 	}
 }
 
